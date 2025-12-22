@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+# Build stage - UPDATED to Go 1.25
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o wisdom-house main.go
 
 # Final stage
 FROM alpine:latest
@@ -21,9 +21,8 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /app/main .
-COPY --from=builder /app/.env .
+COPY --from=builder /app/wisdom-house .
 
 EXPOSE 8080
 
-CMD ["./main"]
+CMD ["./wisdom-house"]
