@@ -6,9 +6,9 @@ import (
 
     "github.com/gin-gonic/gin"
     "github.com/google/uuid"
-    "github.com/yourusername/church-api/internal/models"
-    "github.com/yourusername/church-api/internal/service"
-    "github.com/yourusername/church-api/pkg/utils"
+    "wisdomHouse-backend/internal/models"        
+    "wisdomHouse-backend/internal/service"      
+    "wisdomHouse-backend/pkg/utils"             
 )
 
 type TestimonialHandler struct {
