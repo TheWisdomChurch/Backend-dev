@@ -2,8 +2,8 @@ package repository
 
 import (
     "github.com/google/uuid"
-    "github.com/yourusername/church-api/internal/database"
-    "github.com/yourusername/church-api/internal/models"
+    "wisdomHouse-backend/internal/database"
+    "wisdomHouse-backend/internal/models"
 )
 
 type TestimonialRepository interface {
@@ -24,12 +24,12 @@ func NewTestimonialRepository(db *database.Database) TestimonialRepository {
 }
 
 func (r *testimonialRepository) Create(testimonial *models.Testimonial) error {
-    return r.db.Create(testimonial).Error
+    return r.db.DB.Create(testimonial).Error  // Access embedded GORM DB
 }
 
 func (r *testimonialRepository) GetAll(approved bool) ([]models.Testimonial, error) {
     var testimonials []models.Testimonial
-    query := r.db.Order("created_at DESC")
+    query := r.db.DB.Order("created_at DESC")  // Access embedded GORM DB
     
     if approved {
         query = query.Where("approved = ?", true)
@@ -41,7 +41,7 @@ func (r *testimonialRepository) GetAll(approved bool) ([]models.Testimonial, err
 
 func (r *testimonialRepository) GetByID(id uuid.UUID) (*models.Testimonial, error) {
     var testimonial models.Testimonial
-    err := r.db.Where("id = ?", id).First(&testimonial).Error
+    err := r.db.DB.Where("id = ?", id).First(&testimonial).Error  // Access embedded GORM DB
     if err != nil {
         return nil, err
     }
@@ -49,18 +49,18 @@ func (r *testimonialRepository) GetByID(id uuid.UUID) (*models.Testimonial, erro
 }
 
 func (r *testimonialRepository) Update(testimonial *models.Testimonial) error {
-    return r.db.Save(testimonial).Error
+    return r.db.DB.Save(testimonial).Error  // Access embedded GORM DB
 }
 
 func (r *testimonialRepository) Delete(id uuid.UUID) error {
-    return r.db.Delete(&models.Testimonial{}, "id = ?", id).Error
+    return r.db.DB.Delete(&models.Testimonial{}, "id = ?", id).Error  // Access embedded GORM DB
 }
 
 func (r *testimonialRepository) GetPaginated(page, limit int, approved bool) ([]models.Testimonial, int64, error) {
     var testimonials []models.Testimonial
     var total int64
     
-    query := r.db.Model(&models.Testimonial{})
+    query := r.db.DB.Model(&models.Testimonial{})  // Access embedded GORM DB
     
     if approved {
         query = query.Where("approved = ?", true)
