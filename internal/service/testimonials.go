@@ -4,8 +4,8 @@ import (
     "fmt"
 
     "github.com/google/uuid"
-    "github.com/yourusername/church-api/internal/models"
-    "github.com/yourusername/church-api/internal/repository"
+    "wisdomHouse-backend/internal/models"        
+    "wisdomHouse-backend/internal/repository"   
 )
 
 type TestimonialService interface {
