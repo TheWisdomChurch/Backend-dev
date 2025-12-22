@@ -3,42 +3,71 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: church_db
+    container_name: wisdom_house_db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: church_db
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-wisdom_house_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./internal/database/migrations:/docker-entrypoint-initdb.d
     networks:
-      - church_network
+      - wisdom_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: wisdom_house_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - wisdom_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
     build: .
-    container_name: church_api
+    container_name: wisdom_house_api
     ports:
       - "8080:8080"
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: church_db
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-wisdom_house_db}
       DB_SSLMODE: disable
       PORT: 8080
-      GIN_MODE: debug
-      ALLOWED_ORIGINS: http://localhost:3000
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
-      - church_network
+      - wisdom_network
+    restart: unless-stopped
 
 volumes:
   postgres_data:
+  redis_data:
 
 networks:
-  church_network:
+  wisdom_network:
     driver: bridge
