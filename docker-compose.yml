@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: church_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: church_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./internal/database/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - church_network
+
+  api:
+    build: .
+    container_name: church_api
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: church_db
+      DB_SSLMODE: disable
+      PORT: 8080
+      GIN_MODE: debug
+      ALLOWED_ORIGINS: http://localhost:3000
+    depends_on:
+      - postgres
+    networks:
+      - church_network
+
+volumes:
+  postgres_data:
+
+networks:
+  church_network:
+    driver: bridge
