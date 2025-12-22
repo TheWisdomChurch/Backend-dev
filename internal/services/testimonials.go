@@ -18,9 +18,9 @@ type TestimonialService interface {
     ApproveTestimonial(id uuid.UUID) (*models.Testimonial, error)
 }
 
-type testimonialService struct {
-    repo repository.TestimonialRepository
-}
+// type testimonialService struct {
+//     repo repository.TestimonialRepository
+// }
 
 func NewTestimonialService(repo repository.TestimonialRepository) TestimonialService {
     return &testimonialService{repo: repo}
