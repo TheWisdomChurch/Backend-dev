@@ -2,7 +2,7 @@ package middleware
 
 import (
     "github.com/gin-gonic/gin"
-    "github.com/yourusername/church-api/internal/config"
+    "wisdomHouse-backend/internal/config" 
 )
 
 func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
