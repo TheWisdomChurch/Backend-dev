@@ -1,0 +1,30 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go workspace files
+wisdomhouse-backend.exe
+/wisdomhouse-backend
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage.txt
+coverage.out
