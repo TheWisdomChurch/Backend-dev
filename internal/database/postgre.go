@@ -4,7 +4,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/yourusername/church-api/internal/config"
+    "wisdomHouse-backend/internal/config" 
     "gorm.io/driver/postgres"
     "gorm.io/gorm"
     "gorm.io/gorm/logger"
