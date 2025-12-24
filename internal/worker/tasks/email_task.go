@@ -1,21 +1,24 @@
 package tasks
 
 import (
-    "fmt"
-    "time"
-    
-    "wisdom-house-backend/internal/email"
+	"fmt"
+	"time"
+	"wisdomHouse-backend/internal/email"
 )
+
+type Sender interface {
+    SendHTML(to, subject, body string) error
+}
 
 type EmailTask struct {
     To      string
     Subject string
     Body    string
     Retries int
-    sender  *email.Sender
+    sender  Sender
 }
 
-func NewEmailTask(sender *email.Sender, to, subject, body string) *EmailTask {
+func NewEmailTask(sender Sender, to, subject, body string) *EmailTask {
     return &EmailTask{
         To:      to,
         Subject: subject,
