@@ -31,10 +31,10 @@ func (s *testimonialService) CreateTestimonial(req *models.CreateTestimonialRequ
         FirstName:   req.FirstName,
         LastName:    req.LastName,
         FullName:    fmt.Sprintf("%s %s", req.FirstName, req.LastName),
-        ImageURL:    req.ImageURL,
+        ImageURL:    req.ImageURL, 
         Testimony:   req.Testimony,
         IsAnonymous: req.IsAnonymous,
-        IsApproved:  false, // New testimonials need approval
+        IsApproved:  false, 
     }
     
     if err := s.repo.Create(testimonial); err != nil {
@@ -69,7 +69,7 @@ func (s *testimonialService) UpdateTestimonial(id uuid.UUID, req *models.UpdateT
         testimonial.FullName = fmt.Sprintf("%s %s", testimonial.FirstName, testimonial.LastName)
     }
     if req.ImageURL != nil {
-        testimonial.ImageURL = *req.ImageURL
+        testimonial.ImageURL = req.ImageURL 
     }
     if req.Testimony != nil {
         testimonial.Testimony = *req.Testimony

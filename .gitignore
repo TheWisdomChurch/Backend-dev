@@ -1,30 +1,27 @@
-# Binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
 # Environment variables
 .env
 .env.local
-.env.development
-.env.production
+.env.*.local
 
-# IDE files
+# Docker
+docker-compose.override.yml
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Go workspace files
-wisdomhouse-backend.exe
-/wisdomhouse-backend
+# Go
+bin/
+dist/
+*.exe
+*.test
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
 logs/
-
-# Test coverage
-coverage.txt
-coverage.out
