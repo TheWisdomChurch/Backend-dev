@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: wisdom_house_db
+    container_name: wisdom_church_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: OgbaPeter@1996  # 🔥 CHANGE: Use actual password
@@ -12,7 +12,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql  
+      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - wisdom_network
     healthcheck:
@@ -23,7 +23,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: wisdom_house_redis
+    container_name: wisdom_church_redis
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -39,7 +39,7 @@ services:
 
   api:
     build: .
-    container_name: wisdom_house_api
+    container_name: wisdom_church_api
     ports:
       - "8080:8080"
     env_file:  # 🔥 ADD THIS: Load .env file

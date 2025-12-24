@@ -44,11 +44,11 @@ func Load() (*Config, error) {
 
     config := &Config{
         Database: DatabaseConfig{
-            Host:     getEnv("DB_HOST", "localhost"),
+            Host:     getEnv("DB_HOST", "postgres"),           // Changed to match docker service name
             Port:     getEnv("DB_PORT", "5432"),
             User:     getEnv("DB_USER", "postgres"),
-            Password: getEnv("DB_PASSWORD", ""),
-            DBName:   getEnv("DB_NAME", "wisdom_house_db"),
+            Password: getEnv("DB_PASSWORD", "OgbaPeter@1996"), // Make sure this matches
+            DBName:   getEnv("DB_NAME", "wisdom_church_db"),   // Changed to match docker
             SSLMode:  getEnv("DB_SSLMODE", "disable"),
         },
         Server: ServerConfig{
