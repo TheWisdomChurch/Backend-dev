@@ -1,180 +1,156 @@
 ﻿package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
-	"os"
-	"time"
-	
-	"github.com/joho/godotenv"
+
+	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
+	"wisdomHouse-backend/internal/config"
+	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/handlers"
+	"wisdomHouse-backend/internal/middleware"
+	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/service"
 )
 
-type HealthResponse struct {
-	Status    string `json:"status"`
-	Service   string `json:"service"`
-	Timestamp string `json:"timestamp"`
-	Version   string `json:"version"`
-	Port      string `json:"port"`
-}
-
-type PingResponse struct {
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-	Status    string `json:"status"`
-}
-
-type UserResponse struct {
-	Message string        `json:"message"`
-	Data    []interface{} `json:"data"`
-	Count   int           `json:"count"`
-	Status  string        `json:"status"`
-}
-
-type Config struct {
-	Port     string
-	DBHost   string
-	DBPort   string
-	DBName   string
-	DBUser   string
-	DBPass   string
-}
-
-func loadConfig() *Config {
-	// Try to load .env file, but don't fail if it doesn't exist
-	_ = godotenv.Load()
-	
-	return &Config{
-		Port:     getEnv("PORT", "8080"),
-		DBHost:   getEnv("DB_HOST", ""),
-		DBPort:   getEnv("DB_PORT", "5432"),
-		DBName:   getEnv("DB_NAME", ""),
-		DBUser:   getEnv("DB_USER", ""),
-		DBPass:   getEnv("DB_PASSWORD", ""),
-	}
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
+// @title Wisdom House Backend API
+// @version 1.0
+// @description Backend API for Wisdom House Church Testimonials
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
-	config := loadConfig()
-	
-	// Log configuration (mask password in logs)
-	maskedPass := ""
-	if config.DBPass != "" {
-		maskedPass = "****"
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("❌ Failed to load config: %v", err)
 	}
-	
-	log.Printf("🚀 Starting Wisdom House Backend v1.0.0")
-	log.Printf("📡 Server will listen on port: %s", config.Port)
-	log.Printf("🗄️  Database config: %s:%s/%s (user: %s, pass: %s)", 
-		config.DBHost, config.DBPort, config.DBName, config.DBUser, maskedPass)
-	// Setup routes
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Wisdom House Backend API\n")
-		fmt.Fprintf(w, "========================\n")
-		fmt.Fprintf(w, "Version: 1.0.0\n")
-		fmt.Fprintf(w, "Status: Operational\n")
-		fmt.Fprintf(w, "Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(w, "Port: %s\n", config.Port)
-		fmt.Fprintf(w, "\nAvailable Endpoints:\n")
-		fmt.Fprintf(w, "  GET  /health               Health check\n")
-		fmt.Fprintf(w, "  GET  /api/v1/ping          API test\n")
-		fmt.Fprintf(w, "  GET  /api/v1/users         Users endpoint\n")
-		fmt.Fprintf(w, "  POST /api/v1/auth/register User registration\n")
-		fmt.Fprintf(w, "\nDocumentation: Coming soon\n")
-	})
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		
-		response := HealthResponse{
-			Status:    "healthy",
-			Service:   "wisdom-house-backend",
-			Timestamp: time.Now().Format(time.RFC3339),
-			Version:   "1.0.0",
-			Port:      config.Port,
-		}
-		writeJSON(w, http.StatusOK, response)
-	})
+	// Set Gin mode
+	gin.SetMode(cfg.Server.GinMode)
 
-	http.HandleFunc("/api/v1/ping", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		
-		response := PingResponse{
-			Message:   "pong",
-			Timestamp: time.Now().Unix(),
-			Status:    "success",
-		}
-		writeJSON(w, http.StatusOK, response)
-	})
+	log.Println("🚀 Starting Wisdom House Backend API")
+	log.Printf("📡 Port: %s", cfg.Server.Port)
+	log.Printf("🗄️  Database: %s:%s/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.DBName)
 
-	http.HandleFunc("/api/v1/users", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		
-		response := UserResponse{
-			Message: "Users endpoint - ready for implementation",
-			Data:    []interface{}{},
-			Count:   0,
-			Status:  "implemented",
-		}
-		writeJSON(w, http.StatusOK, response)
-	})
+	// 1. Connect to Database
+	log.Println("🔌 Connecting to database...")
+	db, err := database.NewDatabase(&cfg.Database)
+	if err != nil {
+		log.Fatalf("❌ Failed to connect to database: %v", err)
+	}
+	defer db.Close()
 
-	http.HandleFunc("/api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
-				"error": "Method not allowed",
-			})
-			return
-		}
-		
-		writeJSON(w, http.StatusOK, map[string]string{
-			"message": "Registration endpoint ready for implementation",
-			"status":  "success",
+	// 2. Verify database connection
+	log.Println("📊 Verifying database connection...")
+	if err := verifyDatabaseConnection(db); err != nil {
+		log.Fatalf("❌ Database connection failed: %v", err)
+	}
+	log.Println("✅ Database connection verified")
+
+	// 3. Initialize repository, service, and handlers
+	testimonialRepo := repository.NewTestimonialRepository(db)
+	testimonialService := service.NewTestimonialService(testimonialRepo)
+	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
+
+	// 4. Setup Gin router
+	router := gin.New()
+
+	// Middleware
+	router.Use(gin.Recovery())
+	router.Use(middleware.Logger())
+	router.Use(middleware.CORS(&cfg.CORS))
+
+	// 5. Routes
+	setupRoutes(router, testimonialHandler)
+
+	// Swagger documentation
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// 6. Start server
+	log.Printf("✅ Server is ready: http://localhost:%s", cfg.Server.Port)
+	log.Printf("📊 Health check: http://localhost:%s/health", cfg.Server.Port)
+	log.Printf("🗣️  Testimonials: http://localhost:%s/api/v1/testimonials", cfg.Server.Port)
+	log.Printf("📚 Swagger docs: http://localhost:%s/swagger/index.html", cfg.Server.Port)
+
+	if err := router.Run(":" + cfg.Server.Port); err != nil {
+		log.Fatalf("❌ Failed to start server: %v", err)
+	}
+}
+
+// verifyDatabaseConnection checks database connection only
+func verifyDatabaseConnection(db *database.Database) error {
+	// Simple connection test
+	var result int
+	if err := db.Raw("SELECT 1").Scan(&result).Error; err != nil {
+		return fmt.Errorf("database connection failed: %v", err)
+	}
+	return nil
+}
+
+func setupRoutes(router *gin.Engine, testimonialHandler *handlers.TestimonialHandler) {
+	// Health check
+	router.GET("/", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "Wisdom House Backend API",
+			"version": "1.0.0",
+			"status":  "operational",
 		})
 	})
 
-	// Graceful shutdown setup
-	server := &http.Server{
-		Addr:         ":" + config.Port,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":    "healthy",
+			"service":   "wisdom-house-backend",
+			"timestamp": gin.H{},
+			"version":   "1.0.0",
+		})
+	})
 
-	log.Printf("✅ Server is ready: http://localhost:%s", config.Port)
-	log.Printf("📊 Health check: http://localhost:%s/health", config.Port)
-	log.Printf("⚡ Press Ctrl+C to stop the server\n")
-	
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("❌ Server failed to start: %v", err)
+	// API v1 routes
+	api := router.Group("/api/v1")
+	{
+		// Testimonials endpoints
+		testimonials := api.Group("/testimonials")
+		{
+			testimonials.POST("", testimonialHandler.CreateTestimonial)
+			testimonials.GET("", testimonialHandler.GetAllTestimonials)
+			testimonials.GET("paginated", testimonialHandler.GetPaginatedTestimonials)
+			testimonials.GET("/:id", testimonialHandler.GetTestimonialByID)
+			testimonials.PUT("/:id", testimonialHandler.UpdateTestimonial)
+			testimonials.DELETE("/:id", testimonialHandler.DeleteTestimonial)
+			testimonials.PATCH("/:id/approve", testimonialHandler.ApproveTestimonial)
+		}
+
+		// Simple ping endpoint
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message":   "pong",
+				"timestamp": gin.H{},
+				"status":    "success",
+			})
+		})
+
+		// Placeholder endpoints
+		api.GET("/users", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message": "Users endpoint - ready for implementation",
+				"data":    []any{},
+				"count":   0,
+				"status":  "implemented",
+			})
+		})
+
+		api.POST("/auth/register", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"message": "Registration endpoint ready for implementation",
+				"status":  "success",
+			})
+		})
 	}
 }

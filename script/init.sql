@@ -13,12 +13,14 @@ CREATE TABLE IF NOT EXISTS testimonials (
     is_anonymous BOOLEAN DEFAULT FALSE,
     is_approved BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP WITH TIME ZONE -- ADD THIS LINE
 );
 
 -- Indexes
 CREATE INDEX idx_testimonials_approved ON testimonials(is_approved);
 CREATE INDEX idx_testimonials_created_at ON testimonials(created_at DESC);
+CREATE INDEX idx_testimonials_deleted_at ON testimonials(deleted_at); -- ADD THIS LINE
 
 -- Updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()

@@ -1,18 +1,18 @@
-version: '3.8'
+﻿version: '3.8'
 
 services:
   postgres:
     image: postgres:15-alpine
     container_name: wisdom_church_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: OgbaPeter@1996  # 🔥 CHANGE: Use actual password
-      POSTGRES_DB: wisdom_church_db      # 🔥 CHANGE: Match your .env
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - wisdom_network
     healthcheck:
@@ -42,23 +42,8 @@ services:
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
-    env_file:  # 🔥 ADD THIS: Load .env file
+    env_file:
       - .env
-    environment:
-      # These will be loaded from .env automatically
-      DB_HOST: postgres  # 🔥 CHANGE: Use service name, not localhost
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: OgbaPeter@1996
-      DB_NAME: wisdom_church_db
-      DB_SSLMODE: disable
-      PORT: 8080
-      REDIS_URL: redis://redis:6379
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASS: ${SMTP_PASS}
-      SMTP_FROM: ${SMTP_FROM}
     depends_on:
       postgres:
         condition: service_healthy
