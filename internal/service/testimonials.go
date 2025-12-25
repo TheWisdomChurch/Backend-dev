@@ -28,15 +28,13 @@ func NewTestimonialService(repo repository.TestimonialRepository) TestimonialSer
 
 func (s *testimonialService) CreateTestimonial(req *models.CreateTestimonialRequest) (*models.Testimonial, error) {
     testimonial := &models.Testimonial{
-        FirstName: req.FirstName,
-        LastName:  req.LastName,
-        FullName:  fmt.Sprintf("%s %s", req.FirstName, req.LastName),
-        Role:      req.Role,
-        Image:     req.Image,
-        Testimony: req.Testimony,
-        Rating:    req.Rating,
-        Anonymous: req.Anonymous,
-        Approved:  false, // New testimonials need approval
+        FirstName:   req.FirstName,
+        LastName:    req.LastName,
+        FullName:    fmt.Sprintf("%s %s", req.FirstName, req.LastName),
+        ImageURL:    req.ImageURL, 
+        Testimony:   req.Testimony,
+        IsAnonymous: req.IsAnonymous,
+        IsApproved:  false, 
     }
     
     if err := s.repo.Create(testimonial); err != nil {
@@ -70,23 +68,17 @@ func (s *testimonialService) UpdateTestimonial(id uuid.UUID, req *models.UpdateT
     if req.FirstName != nil || req.LastName != nil {
         testimonial.FullName = fmt.Sprintf("%s %s", testimonial.FirstName, testimonial.LastName)
     }
-    if req.Role != nil {
-        testimonial.Role = *req.Role
-    }
-    if req.Image != nil {
-        testimonial.Image = *req.Image
+    if req.ImageURL != nil {
+        testimonial.ImageURL = req.ImageURL 
     }
     if req.Testimony != nil {
         testimonial.Testimony = *req.Testimony
     }
-    if req.Rating != nil {
-        testimonial.Rating = *req.Rating
+    if req.IsAnonymous != nil {
+        testimonial.IsAnonymous = *req.IsAnonymous
     }
-    if req.Anonymous != nil {
-        testimonial.Anonymous = *req.Anonymous
-    }
-    if req.Approved != nil {
-        testimonial.Approved = *req.Approved
+    if req.IsApproved != nil {
+        testimonial.IsApproved = *req.IsApproved
     }
     
     if err := s.repo.Update(testimonial); err != nil {
@@ -117,7 +109,7 @@ func (s *testimonialService) ApproveTestimonial(id uuid.UUID) (*models.Testimoni
         return nil, err
     }
     
-    testimonial.Approved = true
+    testimonial.IsApproved = true
     
     if err := s.repo.Update(testimonial); err != nil {
         return nil, err
