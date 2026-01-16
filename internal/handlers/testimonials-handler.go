@@ -83,7 +83,8 @@ func (h *TestimonialHandler) GetPaginatedTestimonials(c *gin.Context) {
         return
     }
     
-    utils.PaginatedSuccessResponse(c, http.StatusOK, testimonials, page, limit, total)
+    // Convert int64 to int for the response function
+    utils.PaginatedSuccessResponse(c, http.StatusOK, testimonials, page, limit, int(total))
 }
 
 // GetTestimonialByID godoc

@@ -1,106 +1,165 @@
+// internal/config/config.go
 package config
 
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Database DatabaseConfig
-	Server   ServerConfig
-	Redis    RedisConfig
-	SMTP     SMTPConfig
-	CORS     CORSConfig
-	JWT      JWTConfig
-	App      AppConfig
+	Database DatabaseConfig `json:"database"`
+	Server   ServerConfig   `json:"server"`
+	Redis    RedisConfig    `json:"redis"`
+	SMTP     SMTPConfig     `json:"smtp"`
+	CORS     CORSConfig     `json:"cors"`
+	JWT      JWTConfig      `json:"jwt"`
+	App      AppConfig      `json:"app"`
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
+	Host     string `json:"host" env:"DATABASE_HOST,required"`
+	Port     string `json:"port" env:"DATABASE_PORT,required"`
+	User     string `json:"user" env:"DATABASE_USERNAME,required"`
+	Password string `json:"-" env:"DATABASE_PASSWORD,required"`
+	DBName   string `json:"dbname" env:"DATABASE_DBNAME,required"`
+	SSLMode  string `json:"sslmode" env:"DATABASE_SSLMODE"`
+	// Connection pool settings
+	MaxIdleConns    int           `json:"max_idle_conns" env:"DATABASE_MAX_IDLE_CONNS"`
+	MaxOpenConns    int           `json:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
+	ConnMaxLifetime time.Duration `json:"conn_max_lifetime" env:"DATABASE_CONN_MAX_LIFETIME"`
 }
 
 type ServerConfig struct {
-	Port    string
-	GinMode string
+	Port           string        `json:"port" env:"SERVER_PORT,required"`
+	GinMode        string        `json:"gin_mode" env:"SERVER_GIN_MODE"`
+	ReadTimeout    time.Duration `json:"read_timeout" env:"SERVER_READ_TIMEOUT"`
+	WriteTimeout   time.Duration `json:"write_timeout" env:"SERVER_WRITE_TIMEOUT"`
+	MaxHeaderBytes int           `json:"max_header_bytes" env:"SERVER_MAX_HEADER_BYTES"`
 }
 
 type RedisConfig struct {
-	URL      string
-	Password string
+	URL           string        `json:"url" env:"REDIS_URL"`
+	Password      string        `json:"-" env:"REDIS_PASSWORD"`
+	DB            int           `json:"db" env:"REDIS_DB"`
+	PoolSize      int           `json:"pool_size" env:"REDIS_POOL_SIZE"`
+	MinIdleConns  int           `json:"min_idle_conns" env:"REDIS_MIN_IDLE_CONNS"`
+	DialTimeout   time.Duration `json:"dial_timeout" env:"REDIS_DIAL_TIMEOUT"`
+	ReadTimeout   time.Duration `json:"read_timeout" env:"REDIS_READ_TIMEOUT"`
+	WriteTimeout  time.Duration `json:"write_timeout" env:"REDIS_WRITE_TIMEOUT"`
+	PoolTimeout   time.Duration `json:"pool_timeout" env:"REDIS_POOL_TIMEOUT"`
+	IdleTimeout   time.Duration `json:"idle_timeout" env:"REDIS_IDLE_TIMEOUT"`
 }
 
 type SMTPConfig struct {
-	Host string
-	Port string
-	User string
-	Pass string
-	From string
+	Host     string `json:"host" env:"SMTP_HOST"`
+	Port     string `json:"port" env:"SMTP_PORT"`
+	User     string `json:"user" env:"SMTP_USER"`
+	Password string `json:"-" env:"SMTP_PASS"`
+	From     string `json:"from" env:"SMTP_FROM"`
+	TLS      bool   `json:"tls" env:"SMTP_TLS"`
 }
 
 type CORSConfig struct {
-	AllowedOrigins []string
+	AllowedOrigins   []string `json:"allowed_origins" env:"CORS_ALLOW_ORIGIN"`
+	AllowedMethods   []string `json:"allowed_methods" env:"CORS_ALLOW_METHODS"`
+	AllowedHeaders   []string `json:"allowed_headers" env:"CORS_ALLOW_HEADERS"`
+	AllowCredentials bool     `json:"allow_credentials" env:"CORS_ALLOW_CREDENTIALS"`
+	ExposedHeaders   []string `json:"exposed_headers" env:"CORS_EXPOSED_HEADERS"`
+	MaxAge           int      `json:"max_age" env:"CORS_MAX_AGE"`
 }
 
 type JWTConfig struct {
-	Secret string
+	Secret     string        `json:"-" env:"JWT_SECRET,required"`
+	Expiration time.Duration `json:"expiration" env:"JWT_EXPIRATION"`
 }
 
 type AppConfig struct {
-	Environment string
-	LogLevel    string
+	Environment string `json:"environment" env:"ENVIRONMENT"`
+	LogLevel    string `json:"log_level" env:"LOG_LEVEL"`
+	Name        string `json:"name" env:"APP_NAME"`
+	Version     string `json:"version" env:"APP_VERSION"`
+	Debug       bool   `json:"debug" env:"APP_DEBUG"`
 }
 
+// Load loads configuration from environment variables
 func Load() (*Config, error) {
 	// Try to load .env file
-	if err := godotenv.Load(); err != nil {
-		fmt.Println("⚠️ No .env file found, using environment variables")
-	}
+	_ = godotenv.Load()
 
-	return &Config{
+	cfg := &Config{
 		Database: DatabaseConfig{
-			Host:     getEnv("DB_HOST", "postgres"),
-			Port:     getEnv("DB_PORT", "5432"),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", ""),
-			DBName:   getEnv("DB_NAME", "wisdom_church_db"),
-			SSLMode:  getEnv("DB_SSLMODE", "disable"),
+			Host:            getEnv("DATABASE_HOST", "localhost"),
+			Port:            getEnv("DATABASE_PORT", "5432"),
+			User:            getEnv("DATABASE_USERNAME", "postgres"),
+			Password:        getEnv("DATABASE_PASSWORD", ""),
+			DBName:          getEnv("DATABASE_DBNAME", "wisdom_church_db"),
+			SSLMode:         getEnv("DATABASE_SSLMODE", "disable"),
+			MaxIdleConns:    getEnvAsInt("DATABASE_MAX_IDLE_CONNS", 10),
+			MaxOpenConns:    getEnvAsInt("DATABASE_MAX_OPEN_CONNS", 100),
+			ConnMaxLifetime: getEnvAsDuration("DATABASE_CONN_MAX_LIFETIME", time.Hour),
 		},
 		Server: ServerConfig{
-			Port:    getEnv("PORT", "8080"),
-			GinMode: getEnv("GIN_MODE", "debug"),
+			Port:           getEnv("SERVER_PORT", "8080"),
+			GinMode:        getEnv("SERVER_GIN_MODE", "debug"),
+			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 10*time.Second),
+			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
+			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20), // 1 MB
 		},
 		Redis: RedisConfig{
-			URL:      getEnv("REDIS_URL", "redis://redis:6379"),
-			Password: getEnv("REDIS_PASSWORD", ""),
+			URL:           getEnv("REDIS_URL", "redis://localhost:6379"),
+			Password:      getEnv("REDIS_PASSWORD", ""),
+			DB:            getEnvAsInt("REDIS_DB", 0),
+			PoolSize:      getEnvAsInt("REDIS_POOL_SIZE", 10),
+			MinIdleConns:  getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
+			DialTimeout:   getEnvAsDuration("REDIS_DIAL_TIMEOUT", 5*time.Second),
+			ReadTimeout:   getEnvAsDuration("REDIS_READ_TIMEOUT", 3*time.Second),
+			WriteTimeout:  getEnvAsDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
+			PoolTimeout:   getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
+			IdleTimeout:   getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
 		},
 		SMTP: SMTPConfig{
-			Host: getEnv("SMTP_HOST", ""),
-			Port: getEnv("SMTP_PORT", "587"),
-			User: getEnv("SMTP_USER", ""),
-			Pass: getEnv("SMTP_PASS", ""),
-			From: getEnv("SMTP_FROM", ""),
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     getEnv("SMTP_PORT", "587"),
+			User:     getEnv("SMTP_USER", ""),
+			Password: getEnv("SMTP_PASS", ""),
+			From:     getEnv("SMTP_FROM", ""),
+			TLS:      getEnvAsBool("SMTP_TLS", true),
 		},
 		CORS: CORSConfig{
-			AllowedOrigins: strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:3000"), ","),
+			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
+			AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
+			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
+			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
+			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count"}),
+			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400), // 24 hours
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET", ""),
+			Secret:     getEnv("JWT_SECRET", ""),
+			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
 		App: AppConfig{
 			Environment: getEnv("ENVIRONMENT", "development"),
 			LogLevel:    getEnv("LOG_LEVEL", "info"),
+			Name:        getEnv("APP_NAME", "Wisdom House Backend"),
+			Version:     getEnv("APP_VERSION", "1.0.0"),
+			Debug:       getEnvAsBool("APP_DEBUG", false),
 		},
-	}, nil
+	}
+
+	// Validate required configurations
+	if err := validateConfig(cfg); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return cfg, nil
 }
 
+// ConnectionString returns PostgreSQL connection string
 func (c *DatabaseConfig) ConnectionString() string {
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
@@ -108,9 +167,80 @@ func (c *DatabaseConfig) ConnectionString() string {
 	)
 }
 
+// DSN returns formatted DSN without password (for logging)
+func (c *DatabaseConfig) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s@%s:%s/%s?sslmode=%s",
+		c.User, c.Host, c.Port, c.DBName, c.SSLMode,
+	)
+}
+
+// Validate configuration
+func validateConfig(cfg *Config) error {
+	// Validate JWT secret
+	if cfg.JWT.Secret == "" {
+		return fmt.Errorf("JWT_SECRET is required")
+	}
+
+	// Validate database password in production
+	if cfg.App.Environment == "production" && cfg.Database.Password == "" {
+		return fmt.Errorf("DATABASE_PASSWORD is required in production")
+	}
+
+	// Validate SMTP configuration if provided
+	if cfg.SMTP.Host != "" && cfg.SMTP.User == "" {
+		return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
+	}
+
+	return nil
+}
+
+// Helper functions
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
+			return duration
+		}
+	}
+	return defaultValue
+}
+
+func splitEnv(key string, defaultValue []string) []string {
+	if value := os.Getenv(key); value != "" {
+		// Split by comma and trim spaces
+		parts := strings.Split(value, ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+		return result
 	}
 	return defaultValue
 }
