@@ -89,9 +89,110 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "User retrieved successfully", user)
 }
 
+// UpdateProfile handles user profile updates
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+
+	var req struct {
+		FirstName string `json:"first_name" binding:"omitempty,min=2,max=50"`
+		LastName  string `json:"last_name" binding:"omitempty,min=2,max=50"`
+		Email     string `json:"email" binding:"omitempty,email"`
+		Username  string `json:"username" binding:"omitempty,min=3,max=30"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Update user profile
+	updatedUser, err := h.service.UpdateProfile(userID.(string), req.FirstName, req.LastName, req.Email, req.Username)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", updatedUser)
+}
+
+// ChangePassword handles password change
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"currentPassword" binding:"required,min=6"`
+		NewPassword     string `json:"newPassword" binding:"required,min=6"`
+		ConfirmPassword string `json:"confirmPassword" binding:"required,min=6"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Validate password confirmation
+	if req.NewPassword != req.ConfirmPassword {
+		utils.ErrorResponse(c, http.StatusBadRequest, "New passwords do not match")
+		return
+	}
+
+	// Change password
+	err := h.service.ChangePassword(userID.(string), req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Password changed successfully", nil)
+}
+
+// DeleteAccount handles account deletion
+func (h *AuthHandler) DeleteAccount(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+
+	// Delete account
+	err := h.service.DeleteAccount(userID.(string))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Account deleted successfully", nil)
+}
+
+// ClearData handles user data clearing
+func (h *AuthHandler) ClearData(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+		return
+	}
+
+	// Clear user data
+	err := h.service.ClearData(userID.(string))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "User data cleared successfully", nil)
+}
+
 // RefreshToken refreshes JWT token
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
-	// Implement token refresh logic
+	// TODO: Implement token refresh logic
 	utils.SuccessResponse(c, http.StatusOK, "Token refresh endpoint", gin.H{
 		"message": "Token refresh logic to be implemented",
 	})
@@ -99,6 +200,6 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// Implement logout logic (e.g., blacklist token)
+	// TODO: Implement logout logic (e.g., blacklist token)
 	utils.SuccessResponse(c, http.StatusOK, "Logout successful", nil)
 }

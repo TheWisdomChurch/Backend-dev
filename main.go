@@ -219,83 +219,93 @@ func setupRouter(
 		})
 	})
 
-	// API v1 routes
-	api := router.Group("/api/v1")
-	{
-		// ========== PUBLIC ENDPOINTS ==========
-		// Testimonials endpoints (public - for website)
-		testimonials := api.Group("/testimonials")
-		{
-			testimonials.GET("", testimonialHandler.GetAllTestimonials)
-			testimonials.GET("/paginated", testimonialHandler.GetPaginatedTestimonials)
-			testimonials.GET("/:id", testimonialHandler.GetTestimonialByID)
-			testimonials.POST("", testimonialHandler.CreateTestimonial) // Public submission
-		}
+// API v1 routes
+api := router.Group("/api/v1")
+{
+    // ========== PUBLIC ENDPOINTS ==========
+    // Testimonials endpoints (public - for website)
+    testimonials := api.Group("/testimonials")
+    {
+        testimonials.GET("", testimonialHandler.GetAllTestimonials)
+        testimonials.GET("/paginated", testimonialHandler.GetPaginatedTestimonials)
+        testimonials.GET("/:id", testimonialHandler.GetTestimonialByID)
+        testimonials.POST("", testimonialHandler.CreateTestimonial) // Public submission
+    }
 
-		// Auth endpoints (public)
-		auth := api.Group("/auth")
-		{
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/refresh", authHandler.RefreshToken)
-			auth.POST("/logout", authHandler.Logout)
-			auth.GET("/me", middleware.AuthMiddleware(cfg.JWT.Secret), authHandler.GetCurrentUser)
-		}
+    // Auth endpoints
+    auth := api.Group("/auth")
+    {
+        // Public auth endpoints (no auth required)
+        auth.POST("/login", authHandler.Login)
+        auth.POST("/register", authHandler.Register)
+        auth.POST("/refresh", authHandler.RefreshToken)
+        auth.POST("/logout", authHandler.Logout)
+        
+        // Protected auth endpoints (require auth)
+        protected := auth.Group("")
+        protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+        {
+            protected.GET("/me", authHandler.GetCurrentUser)
+            protected.PUT("/update-profile", authHandler.UpdateProfile)
+            protected.POST("/change-password", authHandler.ChangePassword)
+            protected.DELETE("/delete-account", authHandler.DeleteAccount)
+            protected.POST("/clear-data", authHandler.ClearData)
+        }
+    }
 
-		// ========== PROTECTED ENDPOINTS ==========
-		// Admin endpoints (protected - JWT required)
-		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
-		admin.Use(middleware.RoleMiddleware("admin")) // Require admin role
-		{
-			// Testimonial management (admin only)
-			admin.PUT("/testimonials/:id", testimonialHandler.UpdateTestimonial)
-			admin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
-			admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
-			
-			// Admin dashboard
-			admin.GET("/dashboard", adminHandler.GetDashboardStats)
-			admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
-			
-			// User management (admin only)
-			admin.GET("/users", adminHandler.GetAllUsers)
-			admin.GET("/users/:id", adminHandler.GetUserByID)
-			admin.POST("/users", adminHandler.CreateUser)
-			admin.PUT("/users/:id", adminHandler.UpdateUser)
-			admin.DELETE("/users/:id", adminHandler.DeleteUser)
-		}
+    // ========== PROTECTED ENDPOINTS ==========
+    // Admin endpoints (protected - JWT required)
+    admin := api.Group("/admin")
+    admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+    admin.Use(middleware.RoleMiddleware("admin")) // Require admin role
+    {
+        // Testimonial management (admin only)
+        admin.PUT("/testimonials/:id", testimonialHandler.UpdateTestimonial)
+        admin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
+        admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
+        
+        // Admin dashboard
+        admin.GET("/dashboard", adminHandler.GetDashboardStats)
+        admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
+        
+        // User management (admin only)
+        admin.GET("/users", adminHandler.GetAllUsers)
+        admin.GET("/users/:id", adminHandler.GetUserByID)
+        admin.POST("/users", adminHandler.CreateUser)
+        admin.PUT("/users/:id", adminHandler.UpdateUser)
+        admin.DELETE("/users/:id", adminHandler.DeleteUser)
+    }
 
-		// System endpoints (public)
-		api.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message":   "pong",
-				"timestamp": time.Now().UTC().Unix(),
-				"status":    "success",
-				"service":   cfg.App.Name,
-			})
-		})
+    // System endpoints (public)
+    api.GET("/ping", func(c *gin.Context) {
+        c.JSON(http.StatusOK, gin.H{
+            "message":   "pong",
+            "timestamp": time.Now().UTC().Unix(),
+            "status":    "success",
+            "service":   cfg.App.Name,
+        })
+    })
 
-		// Config endpoint (public - non-sensitive info only)
-		api.GET("/config", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"app": gin.H{
-					"name":        cfg.App.Name,
-					"version":     cfg.App.Version,
-					"environment": cfg.App.Environment,
-				},
-				"api": gin.H{
-					"base_path": "/api/v1",
-					"version":   "1.0.0",
-				},
-				"features": gin.H{
-					"testimonials": true,
-					"authentication": cfg.JWT.Secret != "",
-					"admin_panel":   true,
-				},
-			})
-		})
-	}
-
+    // Config endpoint (public - non-sensitive info only)
+    api.GET("/config", func(c *gin.Context) {
+        c.JSON(http.StatusOK, gin.H{
+            "app": gin.H{
+                "name":        cfg.App.Name,
+                "version":     cfg.App.Version,
+                "environment": cfg.App.Environment,
+            },
+            "api": gin.H{
+                "base_path": "/api/v1",
+                "version":   "1.0.0",
+            },
+            "features": gin.H{
+                "testimonials": true,
+                "authentication": cfg.JWT.Secret != "",
+                "admin_panel":   true,
+            },
+        })
+    })
+} 
 	// Swagger documentation (only in development)
 	if cfg.App.Environment == "development" {
 		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
