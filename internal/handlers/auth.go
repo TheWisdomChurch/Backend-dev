@@ -1,10 +1,14 @@
-// internal/handlers/auth.go
 package handlers
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
 )
@@ -17,11 +21,29 @@ func NewAuthHandler(service service.AuthService) *AuthHandler {
 	return &AuthHandler{service: service}
 }
 
+func generateToken(user *models.User) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return "", fmt.Errorf("JWT_SECRET not configured")
+	}
+
+	claims := jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"role":    user.Role,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}
+
 // Login handles user login
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
-		Email    string `json:"email" binding:"required,email"`
-		Password string `json:"password" binding:"required,min=6"`
+		Email      string `json:"email" binding:"required,email"`
+		Password   string `json:"password" binding:"required,min=6"`
+		RememberMe bool   `json:"rememberMe"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -30,19 +52,39 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Call service
-	token, user, err := h.service.Login(req.Email, req.Password)
+	token, userData, err := h.service.Login(req.Email, req.Password)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
-	// Return response with token
+	user := userData.(*models.User)
+
+	// Set HttpOnly cookie
+	maxAge := 0 // Session cookie
+	if req.RememberMe {
+		maxAge = int(time.Hour * 24 * 30 / time.Second) // 30 days
+	}
+	secure := os.Getenv("ENVIRONMENT") == "production"
+
+	cookie := &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		MaxAge:   maxAge,
+		Path:     "/",
+		Domain:   "",
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(c.Writer, cookie)
+
+	// Return response without token
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Login successful",
 		"data": gin.H{
-			"token": token,
-			"user":  user,
+			"user": user,
 		},
 	})
 }
@@ -50,11 +92,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // Register handles user registration
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
-		FirstName string `json:"first_name" binding:"required"`
-		LastName  string `json:"last_name" binding:"required"`
-		Email     string `json:"email" binding:"required,email"`
-		Password  string `json:"password" binding:"required,min=6"`
-		Role      string `json:"role" binding:"required,oneof=user admin"`
+		FirstName  string `json:"first_name" binding:"required"`
+		LastName   string `json:"last_name" binding:"required"`
+		Email      string `json:"email" binding:"required,email"`
+		Password   string `json:"password" binding:"required,min=6"`
+		Role       string `json:"role" binding:"required,oneof=user admin"`
+		RememberMe bool   `json:"rememberMe"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,11 +106,39 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Call service
-	user, err := h.service.Register(req.FirstName, req.LastName, req.Email, req.Password, req.Role)
+	userData, err := h.service.Register(req.FirstName, req.LastName, req.Email, req.Password, req.Role)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	user := userData.(*models.User)
+
+	// Generate JWT for auto-login
+	token, err := generateToken(user)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
+		return
+	}
+
+	// Set HttpOnly cookie
+	maxAge := 0 // Session cookie
+	if req.RememberMe {
+		maxAge = int(time.Hour * 24 * 30 / time.Second) // 30 days
+	}
+	secure := os.Getenv("ENVIRONMENT") == "production"
+
+	cookie := &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		MaxAge:   maxAge,
+		Path:     "/",
+		Domain:   "",
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(c.Writer, cookie)
 
 	utils.SuccessResponse(c, http.StatusCreated, "Registration successful", user)
 }
@@ -80,13 +151,13 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.service.GetUserByID(userID.(string))
+	userData, err := h.service.GetUserByID(userID.(string))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusNotFound, "User not found")
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "User retrieved successfully", user)
+	utils.SuccessResponse(c, http.StatusOK, "User retrieved successfully", userData)
 }
 
 // UpdateProfile handles user profile updates
@@ -110,13 +181,13 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	// Update user profile
-	updatedUser, err := h.service.UpdateProfile(userID.(string), req.FirstName, req.LastName, req.Email, req.Username)
+	updatedUserData, err := h.service.UpdateProfile(userID.(string), req.FirstName, req.LastName, req.Email, req.Username)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", updatedUser)
+	utils.SuccessResponse(c, http.StatusOK, "Profile updated successfully", updatedUserData)
 }
 
 // ChangePassword handles password change
@@ -169,6 +240,9 @@ func (h *AuthHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 
+	// Clear cookie on delete
+	c.SetCookie("auth_token", "", -1, "/", "", false, true)
+
 	utils.SuccessResponse(c, http.StatusOK, "Account deleted successfully", nil)
 }
 
@@ -200,6 +274,6 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// TODO: Implement logout logic (e.g., blacklist token)
+	c.SetCookie("auth_token", "", -1, "/", "", false, true)
 	utils.SuccessResponse(c, http.StatusOK, "Logout successful", nil)
 }
