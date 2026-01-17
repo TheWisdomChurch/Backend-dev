@@ -1,22 +1,21 @@
-﻿version: '3.8'
-
+﻿
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: wisdom_church_db
+    container_name: wisdom_church_backend
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_DBNAME}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  
     networks:
       - wisdom_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]  # Use variable
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,6 +41,9 @@ services:
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
+    environment:
+      # CRITICAL: Override DB_HOST to use container name
+      DB_HOST: wisdom_church_backend
     env_file:
       - .env
     depends_on:
