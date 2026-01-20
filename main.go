@@ -40,17 +40,14 @@ import (
 // @in header
 // @name X-API-Key
 func main() {
-	// Initialize structured logger
 	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
 
-	// Load configuration
 	logger.Println("Loading configuration...")
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Fatalf("❌ Failed to load configuration: %v", err)
 	}
 
-	// Print configuration summary (without sensitive data)
 	logger.Println("📋 Configuration Summary:")
 	logger.Printf("   Environment: %s", cfg.App.Environment)
 	logger.Printf("   Server Port: %s", cfg.Server.Port)
@@ -59,13 +56,12 @@ func main() {
 	logger.Printf("   JWT Configured: %v", cfg.JWT.Secret != "")
 	logger.Printf("   Log Level: %s", cfg.App.LogLevel)
 
-	// Set Gin mode based on environment
 	gin.SetMode(cfg.Server.GinMode)
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	// 1. Connect to Database
+	// 1) DB
 	logger.Println("🔌 Connecting to database...")
 	db, err := database.NewDatabase(&cfg.Database)
 	if err != nil {
@@ -78,70 +74,83 @@ func main() {
 		logger.Println("✅ Database connection closed")
 	}()
 
-	// 2. Verify database connection
+	// 2) Verify DB
 	logger.Println("📊 Verifying database connection...")
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
 	logger.Println("✅ Database connection verified")
 
-	// 3. Initialize Redis client (optional)
-	// redisClient := redis.NewClient(&cfg.Redis)
-
-	// 4. Initialize repository, service, and handlers
+	// 3) Init repos/services/handlers
 	logger.Println("🔄 Initializing application layers...")
-	
-	// Initialize repositories
+
+	// Existing repositories
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 
-	// Initialize services
+	// NEW repositories
+	eventRepo := repository.NewEventRepository(db)
+	reelRepo := repository.NewReelRepository(db)
+
+	// Existing services
 	testimonialService := service.NewTestimonialService(testimonialRepo)
 	authService := service.NewAuthService(userRepo, cfg.JWT.Secret, cfg.JWT.Expiration)
 	adminService := service.NewAdminService(adminRepo, testimonialRepo)
 
-	// Initialize handlers
+	// Existing handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
 
-	// 5. Setup Gin router with middleware
-	logger.Println("🚦 Setting up router and middleware...")
-	router := setupRouter(cfg, testimonialHandler, authHandler, adminHandler)
+	// NEW handlers
+	eventHandler := handlers.NewEventHandler(eventRepo)
+	reelHandler := handlers.NewReelHandler(reelRepo)
+	analyticsHandler := handlers.NewAnalyticsHandler(db) // uses db for aggregate queries
 
-	// 6. Create HTTP server with timeouts
+	// 4) Router
+	logger.Println("🚦 Setting up router and middleware...")
+	router := setupRouter(cfg,
+		testimonialHandler,
+		authHandler,
+		adminHandler,
+		eventHandler,
+		reelHandler,
+		analyticsHandler,
+	)
+
+	// 5) Server
 	server := &http.Server{
 		Addr:           ":" + cfg.Server.Port,
 		Handler:        router,
 		ReadTimeout:    cfg.Server.ReadTimeout,
 		WriteTimeout:   cfg.Server.WriteTimeout,
 		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
-		IdleTimeout:    120 * time.Second, // Added for better connection management
+		IdleTimeout:    120 * time.Second,
 	}
 
-	// 7. Graceful shutdown setup
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		// FIXED: Use the actual host address for URLs
 		host := "localhost"
 		if cfg.App.Environment == "production" {
 			host = "0.0.0.0"
 		}
-		
+
 		logger.Printf("✅ Server starting on http://%s:%s", host, cfg.Server.Port)
 		logger.Printf("📊 Health check: http://%s:%s/health", host, cfg.Server.Port)
 		logger.Printf("🗣️  Testimonials: http://%s:%s/api/v1/testimonials", host, cfg.Server.Port)
 		logger.Printf("🔐 Auth: http://%s:%s/api/v1/auth/login", host, cfg.Server.Port)
 		logger.Printf("👨‍💼 Admin: http://%s:%s/api/v1/admin/dashboard", host, cfg.Server.Port)
-		
-		// Only show Swagger in development
+		logger.Printf("📅 Events: http://%s:%s/api/v1/events", host, cfg.Server.Port)
+		logger.Printf("🎬 Reels: http://%s:%s/api/v1/reels", host, cfg.Server.Port)
+		logger.Printf("📈 Analytics: http://%s:%s/api/v1/admin/analytics", host, cfg.Server.Port)
+
 		if cfg.App.Environment == "development" {
 			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
 		}
-		
+
 		logger.Printf("⚙️  Environment: %s", cfg.App.Environment)
 		logger.Printf("📈 Auto-migration: Enabled")
 		logger.Printf("🗄️  Database: %s", cfg.Database.DBName)
@@ -151,19 +160,15 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
 	sig := <-quit
 	logger.Printf("🛑 Received signal: %v", sig)
 
-	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	logger.Println("🔄 Shutting down server gracefully...")
-	
-	// Disable keep-alive connections
 	server.SetKeepAlivesEnabled(false)
-	
+
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Fatalf("❌ Server forced to shutdown: %v", err)
 	}
@@ -171,7 +176,6 @@ func main() {
 	logger.Println("👋 Server exited gracefully")
 }
 
-// verifyDatabaseConnection checks database connection only
 func verifyDatabaseConnection(db *database.Database) error {
 	var result int
 	if err := db.Raw("SELECT 1").Scan(&result).Error; err != nil {
@@ -180,22 +184,25 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return nil
 }
 
-// setupRouter configures all routes and middleware
+// UPDATED: accept new handlers
 func setupRouter(
 	cfg *config.Config,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
+	eventHandler *handlers.EventHandler,
+	reelHandler *handlers.ReelHandler,
+	analyticsHandler *handlers.AnalyticsHandler,
 ) *gin.Engine {
 	router := gin.New()
 
-	// Global middleware (order matters)
+	// Global middleware
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.RequestID())
-	router.Use(middleware.RateLimiter()) // Added rate limiting
+	router.Use(middleware.RateLimiter())
 
 	// Basic routes
 	router.GET("/", func(c *gin.Context) {
@@ -212,6 +219,8 @@ func setupRouter(
 				"testimonials": "/api/v1/testimonials",
 				"auth":         "/api/v1/auth",
 				"admin":        "/api/v1/admin",
+				"events":       "/api/v1/events",
+				"reels":        "/api/v1/reels",
 			},
 		})
 	})
@@ -227,29 +236,25 @@ func setupRouter(
 		})
 	})
 
-	// API v1 routes
 	api := router.Group("/api/v1")
 	{
 		// ========== PUBLIC ENDPOINTS ==========
-		// Testimonials endpoints (public - for website)
 		testimonials := api.Group("/testimonials")
 		{
 			testimonials.GET("", testimonialHandler.GetAllTestimonials)
 			testimonials.GET("/paginated", testimonialHandler.GetPaginatedTestimonials)
 			testimonials.GET("/:id", testimonialHandler.GetTestimonialByID)
-			testimonials.POST("", testimonialHandler.CreateTestimonial) // Public submission
+			testimonials.POST("", testimonialHandler.CreateTestimonial)
 		}
 
 		// Auth endpoints
 		auth := api.Group("/auth")
 		{
-			// Public auth endpoints (no auth required)
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.POST("/logout", authHandler.Logout)
-			
-			// Protected auth endpoints (require auth)
+
 			protected := auth.Group("")
 			protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
 			{
@@ -262,26 +267,52 @@ func setupRouter(
 		}
 
 		// ========== PROTECTED ENDPOINTS ==========
-		// Admin endpoints (protected - JWT required)
+
+		// Admin endpoints
 		admin := api.Group("/admin")
 		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
-		admin.Use(middleware.RoleMiddleware("admin")) // Require admin role
+		admin.Use(middleware.RoleMiddleware("admin"))
 		{
-			// Testimonial management (admin only)
+			// Testimonial management
 			admin.PUT("/testimonials/:id", testimonialHandler.UpdateTestimonial)
 			admin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
 			admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
-			
+
 			// Admin dashboard
 			admin.GET("/dashboard", adminHandler.GetDashboardStats)
 			admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
-			
-			// User management (admin only)
+
+			// User management
 			admin.GET("/users", adminHandler.GetAllUsers)
 			admin.GET("/users/:id", adminHandler.GetUserByID)
 			admin.POST("/users", adminHandler.CreateUser)
 			admin.PUT("/users/:id", adminHandler.UpdateUser)
 			admin.DELETE("/users/:id", adminHandler.DeleteUser)
+
+			// NEW: analytics
+			admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
+		}
+
+		// NEW: Events endpoints (admin-only)
+		events := api.Group("/events")
+		events.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+		events.Use(middleware.RoleMiddleware("admin"))
+		{
+			events.GET("", eventHandler.List)
+			events.POST("", eventHandler.Create)
+			events.GET("/:id", eventHandler.Get)
+			events.PUT("/:id", eventHandler.Update)
+			events.DELETE("/:id", eventHandler.Delete)
+		}
+
+		// NEW: Reels endpoints (admin-only)
+		reels := api.Group("/reels")
+		reels.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+		reels.Use(middleware.RoleMiddleware("admin"))
+		{
+			reels.GET("", reelHandler.List)
+			reels.POST("", reelHandler.Create)
+			reels.DELETE("/:id", reelHandler.Delete)
 		}
 
 		// System endpoints (public)
@@ -294,7 +325,6 @@ func setupRouter(
 			})
 		})
 
-		// Config endpoint (public - non-sensitive info only)
 		api.GET("/config", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"app": gin.H{
@@ -307,32 +337,32 @@ func setupRouter(
 					"version":   "1.0.0",
 				},
 				"features": gin.H{
-					"testimonials": true,
-					"authentication": cfg.JWT.Secret != "",
-					"admin_panel":   true,
+					"testimonials":    true,
+					"authentication":  cfg.JWT.Secret != "",
+					"admin_panel":     true,
+					"events":          true,
+					"reels":           true,
+					"admin_analytics": true,
 				},
 			})
 		})
 	}
 
-	// Swagger documentation (only in development)
 	if cfg.App.Environment == "development" {
 		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 
-	// 404 handler
 	router.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error":        "Not Found",
-			"message":      fmt.Sprintf("Route %s %s not found", c.Request.Method, c.Request.URL.Path),
-			"path":         c.Request.URL.Path,
-			"method":       c.Request.Method,
-			"timestamp":    time.Now().UTC().Unix(),
+			"error":         "Not Found",
+			"message":       fmt.Sprintf("Route %s %s not found", c.Request.Method, c.Request.URL.Path),
+			"path":          c.Request.URL.Path,
+			"method":        c.Request.Method,
+			"timestamp":     time.Now().UTC().Unix(),
 			"documentation": "/swagger/index.html",
 		})
 	})
 
-	// Add route debugging in development
 	if cfg.App.Environment == "development" {
 		setupRouteDebugging(router)
 	}
@@ -342,7 +372,6 @@ func setupRouter(
 
 var startTime = time.Now()
 
-// setupRouteDebugging prints all registered routes in development
 func setupRouteDebugging(router *gin.Engine) {
 	router.Use(func(c *gin.Context) {
 		if !routesPrinted {
@@ -355,21 +384,11 @@ func setupRouteDebugging(router *gin.Engine) {
 
 var routesPrinted bool
 
-// printRoutes prints all registered routes
 func printRoutes(router *gin.Engine) {
 	fmt.Println("\n📋 Registered Routes:")
 	fmt.Println("===================")
-	routes := router.Routes()
-	for _, route := range routes {
+	for _, route := range router.Routes() {
 		fmt.Printf("  %-6s %s\n", route.Method, route.Path)
 	}
 	fmt.Println("===================\n")
-	
-	// Also print the specific routes we're looking for
-	fmt.Println("🔍 Checking for specific routes:")
-	fmt.Println("  PUT    /api/v1/auth/update-profile")
-	fmt.Println("  POST   /api/v1/auth/change-password")
-	fmt.Println("  DELETE /api/v1/auth/delete-account")
-	fmt.Println("  POST   /api/v1/auth/clear-data")
-	fmt.Println()
 }

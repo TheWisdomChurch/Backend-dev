@@ -63,8 +63,10 @@ func AutoMigrate(db *gorm.DB) error {
 	// ✅ List all models - GORM will create tables if they don't exist
 	err := db.AutoMigrate(
 		&models.User{},           // Creates "users" table
-		&models.Testimonial{},    // Creates "testimonials" table
-		// Add other models here as you create them
+		&models.Testimonial{}, 
+		&models.Event{},
+		&models.Reel{},   // Creates "testimonials" table
+		
 	)
 	
 	if err != nil {
