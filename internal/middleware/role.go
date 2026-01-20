@@ -1,4 +1,3 @@
-// internal/middleware/role.go
 package middleware
 
 import (
@@ -7,14 +6,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RoleMiddleware checks if user has required role
 func RoleMiddleware(requiredRole string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userRole, exists := c.Get("role")
+		roleVal, exists := c.Get("role")
 		if !exists {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "Forbidden",
-				"message": "User role not found",
+				"error":      "Forbidden",
+				"message":    "User role not found",
+				"statusCode": http.StatusForbidden,
+			})
+			c.Abort()
+			return
+		}
+
+		userRole, ok := roleVal.(string)
+		if !ok || userRole == "" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":      "Forbidden",
+				"message":    "Invalid role format",
+				"statusCode": http.StatusForbidden,
 			})
 			c.Abort()
 			return
@@ -22,10 +32,11 @@ func RoleMiddleware(requiredRole string) gin.HandlerFunc {
 
 		if userRole != requiredRole && userRole != "super_admin" {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error":   "Forbidden",
-				"message": "Insufficient permissions",
+				"error":         "Forbidden",
+				"message":       "Insufficient permissions",
 				"required_role": requiredRole,
-				"user_role": userRole,
+				"user_role":     userRole,
+				"statusCode":    http.StatusForbidden,
 			})
 			c.Abort()
 			return
