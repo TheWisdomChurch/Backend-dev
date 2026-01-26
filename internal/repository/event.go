@@ -52,12 +52,34 @@ func (r *EventRepository) List(offset, limit int) ([]models.Event, int64, error)
 	return items, total, nil
 }
 
-// ✅ NEW: save CDN url + object key for an event image
-func (r *EventRepository) UpdateImage(id string, imageURL string, imageKey string) error {
+// ✅ NEW: Set event image CDN URL (stores into the existing `image` column)
+func (r *EventRepository) SetImage(id string, imageURL string, imageKey *string) error {
+	updates := map[string]any{
+		"image": imageURL, // matches models.Event.Image
+	}
+
+	// Optional: only if you added `image_key` column in DB
+	if imageKey != nil {
+		updates["image_key"] = *imageKey
+	}
+
 	return r.db.Model(&models.Event{}).
 		Where("id = ?", id).
-		Updates(map[string]any{
-			"image_url": imageURL,
-			"image_key": imageKey,
-		}).Error
+		Updates(updates).Error
+}
+
+// ✅ OPTIONAL: Set event banner CDN URL (stores into the existing `banner_image` column)
+func (r *EventRepository) SetBannerImage(id string, bannerURL string, bannerKey *string) error {
+	updates := map[string]any{
+		"banner_image": bannerURL, // matches models.Event.BannerImage
+	}
+
+	// Optional: only if you added `banner_image_key` column in DB
+	if bannerKey != nil {
+		updates["banner_image_key"] = *bannerKey
+	}
+
+	return r.db.Model(&models.Event{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }
