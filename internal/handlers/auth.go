@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -83,11 +84,34 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	// Track inactivity (30 minutes)
+	now := time.Now()
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "last_activity",
+		Value:    now.UTC().Format(time.RFC3339),
+		Path:     "/",
+		MaxAge:   int((30 * time.Minute) / time.Second),
+		Expires:  now.Add(30 * time.Minute),
+		Secure:   h.secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
+		Value:    "",
+		Path:     "/",
+		Domain:   "",
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   h.secure,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "last_activity",
 		Value:    "",
 		Path:     "/",
 		Domain:   "",
@@ -116,19 +140,33 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	_, userData, err := h.service.Login(req.Email, req.Password)
+	meta := service.LoginMetadata{
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}
+
+	result, err := h.service.Login(req.Email, req.Password, meta)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid email or password")
+		status := http.StatusUnauthorized
+		if errors.Is(err, service.ErrAdminPending) {
+			status = http.StatusForbidden
+		}
+		utils.ErrorResponse(c, status, err.Error())
 		return
 	}
 
-	user, ok := userData.(*models.User)
-	if !ok || user == nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user data")
+	if result.OTPRequired {
+		utils.SuccessResponse(c, http.StatusAccepted, "Additional verification required", gin.H{
+			"otp_required": true,
+			"purpose":      result.OTPPurpose,
+			"expires_at":   result.OTPExpiresAt,
+			"action_url":   result.OTPActionURL,
+			"email":        req.Email,
+		})
 		return
 	}
 
-	token, err := h.generateToken(user)
+	token, err := h.generateToken(result.User)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -141,14 +179,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		"message": "Login successful",
 		"data": gin.H{
 			"user": gin.H{
-				"id":         user.ID,
-				"first_name": user.FirstName,
-				"last_name":  user.LastName,
-				"email":      user.Email,
-				"role":       user.Role,
-				"is_active":  user.IsActive,
-				"created_at": user.CreatedAt,
-				"updated_at": user.UpdatedAt,
+				"id":         result.User.ID,
+				"first_name": result.User.FirstName,
+				"last_name":  result.User.LastName,
+				"email":      result.User.Email,
+				"role":       result.User.Role,
+				"is_active":  result.User.IsActive,
+				"created_at": result.User.CreatedAt,
+				"updated_at": result.User.UpdatedAt,
 			},
 		},
 	})
@@ -161,7 +199,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		LastName  string `json:"last_name" binding:"required,min=2,max=50"`
 		Email     string `json:"email" binding:"required,email"`
 		Password  string `json:"password" binding:"required,min=6"`
-		Role      string `json:"role" binding:"required,oneof=user admin"`
+		Role      string `json:"role" binding:"required,oneof=admin super_admin"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -431,5 +469,96 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Logout successful",
+	})
+}
+
+func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	resp, err := h.service.RequestPasswordReset(req.Email, "")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Password reset email sent", resp)
+}
+
+func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
+	var req struct {
+		Email           string `json:"email" binding:"required,email"`
+		Code            string `json:"code" binding:"required,len=6"`
+		Purpose         string `json:"purpose" binding:"required"`
+		NewPassword     string `json:"newPassword" binding:"required,min=6"`
+		ConfirmPassword string `json:"confirmPassword"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	if req.ConfirmPassword != "" && req.NewPassword != req.ConfirmPassword {
+		utils.ErrorResponse(c, http.StatusBadRequest, "New passwords do not match")
+		return
+	}
+
+	if err := h.service.ResetPasswordWithOTP(req.Email, req.Code, req.Purpose, req.NewPassword); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Password reset successful", nil)
+}
+
+func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
+	var req struct {
+		Email      string `json:"email" binding:"required,email"`
+		Code       string `json:"code" binding:"required,len=6"`
+		Purpose    string `json:"purpose" binding:"required"`
+		RememberMe bool   `json:"rememberMe"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	user, err := h.service.VerifyLoginOTP(req.Email, req.Code, req.Purpose)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	token, err := h.generateToken(user)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
+		return
+	}
+
+	h.setAuthCookie(c, token, req.RememberMe)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Login verified",
+		"data": gin.H{
+			"user": gin.H{
+				"id":         user.ID,
+				"first_name": user.FirstName,
+				"last_name":  user.LastName,
+				"email":      user.Email,
+				"role":       user.Role,
+				"is_active":  user.IsActive,
+				"created_at": user.CreatedAt,
+				"updated_at": user.UpdatedAt,
+			},
+		},
 	})
 }

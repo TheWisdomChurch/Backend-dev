@@ -1,0 +1,111 @@
+package handlers
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/pkg/utils"
+)
+
+type NotificationHandler struct {
+	svc service.NotificationService
+}
+
+func NewNotificationHandler(svc service.NotificationService) *NotificationHandler {
+	return &NotificationHandler{svc: svc}
+}
+
+func (h *NotificationHandler) Subscribe(c *gin.Context) {
+	var req models.SubscribeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+
+	subscriber, err := h.svc.Subscribe(&req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Subscription saved", subscriber)
+}
+
+func (h *NotificationHandler) Unsubscribe(c *gin.Context) {
+	var req models.UnsubscribeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+
+	if err := h.svc.Unsubscribe(req.Email); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Subscriber not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Unsubscribed successfully", nil)
+}
+
+func (h *NotificationHandler) UnsubscribeByLink(c *gin.Context) {
+	emailAddr := c.Query("email")
+	if emailAddr == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Email is required")
+		return
+	}
+
+	if err := h.svc.Unsubscribe(emailAddr); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Subscriber not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<html><body style="font-family:Arial,sans-serif;padding:24px;"><h3>You have been unsubscribed.</h3><p>You will no longer receive updates from us.</p></body></html>`))
+}
+
+func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	items, total, err := h.svc.ListSubscribers(page, limit)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load subscribers")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       items,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
+func (h *NotificationHandler) SendNotification(c *gin.Context) {
+	var req models.SendNotificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+
+	result, err := h.svc.SendNotification(&req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Notification sent", result)
+}

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,7 +31,17 @@ func RoleMiddleware(requiredRole string) gin.HandlerFunc {
 			return
 		}
 
-		if userRole != requiredRole && userRole != "super_admin" {
+		normalize := func(v string) string {
+			v = strings.ToLower(strings.TrimSpace(v))
+			v = strings.ReplaceAll(v, "-", "_")
+			v = strings.ReplaceAll(v, " ", "_")
+			return v
+		}
+
+		userRoleNormalized := normalize(userRole)
+		requiredRoleNormalized := normalize(requiredRole)
+
+		if userRoleNormalized != requiredRoleNormalized && userRoleNormalized != "super_admin" {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":         "Forbidden",
 				"message":       "Insufficient permissions",

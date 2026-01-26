@@ -19,6 +19,17 @@ type Config struct {
 	CORS     CORSConfig     `json:"cors"`
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
+
+	// ✅ NEW: BunnyCDN / Bunny Storage config
+	Bunny BunnyConfig `json:"bunny"`
+}
+
+type BunnyConfig struct {
+	StorageZone   string `json:"storage_zone" env:"BUNNYCDN_STORAGE_ZONE"`
+	StorageKey    string `json:"-" env:"BUNNYCDN_STORAGE_KEY"`
+	StorageRegion string `json:"storage_region" env:"BUNNYCDN_STORAGE_REGION"`
+	PullZone      string `json:"pull_zone" env:"BUNNYCDN_PULL_ZONE"`
+	BasePath      string `json:"base_path" env:"BUNNYCDN_BASE_PATH"`
 }
 
 type DatabaseConfig struct {
@@ -43,16 +54,16 @@ type ServerConfig struct {
 }
 
 type RedisConfig struct {
-	URL           string        `json:"url" env:"REDIS_URL"`
-	Password      string        `json:"-" env:"REDIS_PASSWORD"`
-	DB            int           `json:"db" env:"REDIS_DB"`
-	PoolSize      int           `json:"pool_size" env:"REDIS_POOL_SIZE"`
-	MinIdleConns  int           `json:"min_idle_conns" env:"REDIS_MIN_IDLE_CONNS"`
-	DialTimeout   time.Duration `json:"dial_timeout" env:"REDIS_DIAL_TIMEOUT"`
-	ReadTimeout   time.Duration `json:"read_timeout" env:"REDIS_READ_TIMEOUT"`
-	WriteTimeout  time.Duration `json:"write_timeout" env:"REDIS_WRITE_TIMEOUT"`
-	PoolTimeout   time.Duration `json:"pool_timeout" env:"REDIS_POOL_TIMEOUT"`
-	IdleTimeout   time.Duration `json:"idle_timeout" env:"REDIS_IDLE_TIMEOUT"`
+	URL          string        `json:"url" env:"REDIS_URL"`
+	Password     string        `json:"-" env:"REDIS_PASSWORD"`
+	DB           int           `json:"db" env:"REDIS_DB"`
+	PoolSize     int           `json:"pool_size" env:"REDIS_POOL_SIZE"`
+	MinIdleConns int           `json:"min_idle_conns" env:"REDIS_MIN_IDLE_CONNS"`
+	DialTimeout  time.Duration `json:"dial_timeout" env:"REDIS_DIAL_TIMEOUT"`
+	ReadTimeout  time.Duration `json:"read_timeout" env:"REDIS_READ_TIMEOUT"`
+	WriteTimeout time.Duration `json:"write_timeout" env:"REDIS_WRITE_TIMEOUT"`
+	PoolTimeout  time.Duration `json:"pool_timeout" env:"REDIS_POOL_TIMEOUT"`
+	IdleTimeout  time.Duration `json:"idle_timeout" env:"REDIS_IDLE_TIMEOUT"`
 }
 
 type SMTPConfig struct {
@@ -79,11 +90,17 @@ type JWTConfig struct {
 }
 
 type AppConfig struct {
-	Environment string `json:"environment" env:"ENVIRONMENT"`
-	LogLevel    string `json:"log_level" env:"LOG_LEVEL"`
-	Name        string `json:"name" env:"APP_NAME"`
-	Version     string `json:"version" env:"APP_VERSION"`
-	Debug       bool   `json:"debug" env:"APP_DEBUG"`
+	Environment    string `json:"environment" env:"ENVIRONMENT"`
+	LogLevel       string `json:"log_level" env:"LOG_LEVEL"`
+	Name           string `json:"name" env:"APP_NAME"`
+	Version        string `json:"version" env:"APP_VERSION"`
+	Debug          bool   `json:"debug" env:"APP_DEBUG"`
+	PublicURL      string `json:"public_url" env:"APP_PUBLIC_URL"`
+	FrontendURL    string `json:"frontend_url" env:"APP_FRONTEND_URL"`
+	LogoURL        string `json:"logo_url" env:"APP_LOGO_URL"`
+	PastorName     string `json:"pastor_name" env:"APP_PASTOR_NAME"`
+	SupportEmail   string `json:"support_email" env:"APP_SUPPORT_EMAIL"`
+	AdminPortalURL string `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
 }
 
 // Load loads configuration from environment variables
@@ -111,16 +128,16 @@ func Load() (*Config, error) {
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20), // 1 MB
 		},
 		Redis: RedisConfig{
-			URL:           getEnv("REDIS_URL", "redis://localhost:6379"),
-			Password:      getEnv("REDIS_PASSWORD", ""),
-			DB:            getEnvAsInt("REDIS_DB", 0),
-			PoolSize:      getEnvAsInt("REDIS_POOL_SIZE", 10),
-			MinIdleConns:  getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
-			DialTimeout:   getEnvAsDuration("REDIS_DIAL_TIMEOUT", 5*time.Second),
-			ReadTimeout:   getEnvAsDuration("REDIS_READ_TIMEOUT", 3*time.Second),
-			WriteTimeout:  getEnvAsDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
-			PoolTimeout:   getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
-			IdleTimeout:   getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
+			URL:          getEnv("REDIS_URL", "redis://localhost:6379"),
+			Password:     getEnv("REDIS_PASSWORD", ""),
+			DB:           getEnvAsInt("REDIS_DB", 0),
+			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
+			MinIdleConns: getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
+			DialTimeout:  getEnvAsDuration("REDIS_DIAL_TIMEOUT", 5*time.Second),
+			ReadTimeout:  getEnvAsDuration("REDIS_READ_TIMEOUT", 3*time.Second),
+			WriteTimeout: getEnvAsDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
+			PoolTimeout:  getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
+			IdleTimeout:  getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
 		},
 		SMTP: SMTPConfig{
 			Host:     getEnv("SMTP_HOST", ""),
@@ -143,11 +160,26 @@ func Load() (*Config, error) {
 			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
 		App: AppConfig{
-			Environment: getEnv("ENVIRONMENT", "development"),
-			LogLevel:    getEnv("LOG_LEVEL", "info"),
-			Name:        getEnv("APP_NAME", "Wisdom House Backend"),
-			Version:     getEnv("APP_VERSION", "1.0.0"),
-			Debug:       getEnvAsBool("APP_DEBUG", false),
+			Environment:    getEnv("ENVIRONMENT", "development"),
+			LogLevel:       getEnv("LOG_LEVEL", "info"),
+			Name:           getEnv("APP_NAME", "Wisdom House Backend"),
+			Version:        getEnv("APP_VERSION", "1.0.0"),
+			Debug:          getEnvAsBool("APP_DEBUG", false),
+			PublicURL:      getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
+			FrontendURL:    getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
+			LogoURL:        getEnv("APP_LOGO_URL", ""),
+			PastorName:     getEnv("APP_PASTOR_NAME", "Senior Pastor"),
+			SupportEmail:   getEnv("APP_SUPPORT_EMAIL", ""),
+			AdminPortalURL: getEnv("APP_ADMIN_PORTAL_URL", ""),
+		},
+
+		// ✅ NEW: Bunny config
+		Bunny: BunnyConfig{
+			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),
+			StorageKey:    getEnv("BUNNYCDN_STORAGE_KEY", ""),
+			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
+			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
+			BasePath:      strings.Trim(getEnv("BUNNYCDN_BASE_PATH", "uploads"), "/"),
 		},
 	}
 
@@ -192,6 +224,17 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
 	}
 
+	// ✅ Bunny config validation:
+	// Only enforce if any Bunny var is set (so dev env can run without Bunny)
+	if cfg.Bunny.StorageZone != "" || cfg.Bunny.PullZone != "" || cfg.Bunny.StorageKey != "" {
+		if cfg.Bunny.StorageZone == "" ||
+			cfg.Bunny.StorageKey == "" ||
+			cfg.Bunny.StorageRegion == "" ||
+			cfg.Bunny.PullZone == "" {
+			return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_STORAGE_REGION, BUNNYCDN_PULL_ZONE")
+		}
+	}
+
 	return nil
 }
 
@@ -232,7 +275,6 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 
 func splitEnv(key string, defaultValue []string) []string {
 	if value := os.Getenv(key); value != "" {
-		// Split by comma and trim spaces
 		parts := strings.Split(value, ",")
 		result := make([]string, 0, len(parts))
 		for _, part := range parts {
