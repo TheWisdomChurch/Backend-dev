@@ -160,11 +160,6 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 				_ = c.Close()
 				return fmt.Errorf("STARTTLS failed: %w", err)
 			}
-			// Re-HELO after TLS
-			if err := c.Hello(helo); err != nil {
-				_ = c.Close()
-				return fmt.Errorf("SMTP hello after STARTTLS failed: %w", err)
-			}
 		}
 
 		if s.requireTLS && !startTLSSupported {

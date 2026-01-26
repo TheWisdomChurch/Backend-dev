@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,9 @@ func (h *OTPHandler) SendOTP(c *gin.Context) {
 
 	resp, err := h.svc.SendOTP(&req)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		// Log for debugging SMTP/config issues
+		log.Printf("OTP send failed for %s (purpose=%s): %v", req.Email, req.Purpose, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 

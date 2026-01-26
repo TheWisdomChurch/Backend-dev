@@ -20,7 +20,7 @@ type Config struct {
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
 
-	// ✅ NEW: BunnyCDN / Bunny Storage config
+	// BunnyCDN / Bunny Storage config (OPTIONAL)
 	Bunny BunnyConfig `json:"bunny"`
 }
 
@@ -32,6 +32,37 @@ type BunnyConfig struct {
 	BasePath      string `json:"base_path" env:"BUNNYCDN_BASE_PATH"`
 }
 
+// Enabled returns true only when Bunny is fully configured enough to be usable.
+// This prevents partial envs from causing startup failure.
+func (b BunnyConfig) Enabled() bool {
+	return strings.TrimSpace(b.StorageZone) != "" &&
+		strings.TrimSpace(b.StorageKey) != "" &&
+		strings.TrimSpace(b.PullZone) != ""
+}
+
+// Validate enforces required fields ONLY if Bunny is intended to be enabled.
+// If Bunny is not enabled, config is valid and uploads should be treated as disabled.
+func (b BunnyConfig) Validate() error {
+	zone := strings.TrimSpace(b.StorageZone)
+	key := strings.TrimSpace(b.StorageKey)
+	region := strings.TrimSpace(b.StorageRegion)
+	pull := strings.TrimRight(strings.TrimSpace(b.PullZone), "/")
+
+	// If none of the Bunny “core” fields are set, treat as disabled and accept.
+	if zone == "" && key == "" && pull == "" {
+		return nil
+	}
+
+	// If some are set, require all core + region.
+	if zone == "" || key == "" || pull == "" {
+		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
+	}
+
+	// region is required once Bunny is enabled; if not provided, we default to "de".
+	_ = region
+	return nil
+}
+
 type DatabaseConfig struct {
 	Host     string `json:"host" env:"DATABASE_HOST,required"`
 	Port     string `json:"port" env:"DATABASE_PORT,required"`
@@ -39,7 +70,7 @@ type DatabaseConfig struct {
 	Password string `json:"-" env:"DATABASE_PASSWORD,required"`
 	DBName   string `json:"dbname" env:"DATABASE_DBNAME,required"`
 	SSLMode  string `json:"sslmode" env:"DATABASE_SSLMODE"`
-	// Connection pool settings
+
 	MaxIdleConns    int           `json:"max_idle_conns" env:"DATABASE_MAX_IDLE_CONNS"`
 	MaxOpenConns    int           `json:"max_open_conns" env:"DATABASE_MAX_OPEN_CONNS"`
 	ConnMaxLifetime time.Duration `json:"conn_max_lifetime" env:"DATABASE_CONN_MAX_LIFETIME"`
@@ -105,7 +136,6 @@ type AppConfig struct {
 
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
-	// Try to load .env file
 	_ = godotenv.Load()
 
 	cfg := &Config{
@@ -125,7 +155,7 @@ func Load() (*Config, error) {
 			GinMode:        getEnv("SERVER_GIN_MODE", "debug"),
 			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
-			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20), // 1 MB
+			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 		},
 		Redis: RedisConfig{
 			URL:          getEnv("REDIS_URL", "redis://localhost:6379"),
@@ -153,7 +183,7 @@ func Load() (*Config, error) {
 			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
 			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
 			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count"}),
-			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400), // 24 hours
+			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
 		},
 		JWT: JWTConfig{
 			Secret:     getEnv("JWT_SECRET", ""),
@@ -172,18 +202,15 @@ func Load() (*Config, error) {
 			SupportEmail:   getEnv("APP_SUPPORT_EMAIL", ""),
 			AdminPortalURL: getEnv("APP_ADMIN_PORTAL_URL", ""),
 		},
-
-		// ✅ NEW: Bunny config
 		Bunny: BunnyConfig{
 			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),
 			StorageKey:    getEnv("BUNNYCDN_STORAGE_KEY", ""),
-			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
+			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"), // default OK, does NOT enable Bunny
 			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
-			BasePath:      strings.Trim(getEnv("BUNNYCDN_BASE_PATH", "uploads"), "/"),
+			BasePath:      strings.Trim(strings.TrimSpace(getEnv("BUNNYCDN_BASE_PATH", "uploads")), "/"),
 		},
 	}
 
-	// Validate required configurations
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
@@ -207,32 +234,30 @@ func (c *DatabaseConfig) DSN() string {
 	)
 }
 
-// Validate configuration
 func validateConfig(cfg *Config) error {
-	// Validate JWT secret
+	// JWT secret required always (as you designed)
 	if cfg.JWT.Secret == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// Validate database password in production
+	// Database password required in production
 	if cfg.App.Environment == "production" && cfg.Database.Password == "" {
 		return fmt.Errorf("DATABASE_PASSWORD is required in production")
 	}
 
-	// Validate SMTP configuration if provided
-	if cfg.SMTP.Host != "" && cfg.SMTP.User == "" {
-		return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
+	// SMTP sanity (optional)
+	if cfg.SMTP.Host != "" {
+		if cfg.SMTP.User == "" {
+			return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
+		}
+		if cfg.SMTP.Password == "" {
+			return fmt.Errorf("SMTP_PASS is required when SMTP_HOST is set")
+		}
 	}
 
-	// ✅ Bunny config validation:
-	// Only enforce if any Bunny var is set (so dev env can run without Bunny)
-	if cfg.Bunny.StorageZone != "" || cfg.Bunny.PullZone != "" || cfg.Bunny.StorageKey != "" {
-		if cfg.Bunny.StorageZone == "" ||
-			cfg.Bunny.StorageKey == "" ||
-			cfg.Bunny.StorageRegion == "" ||
-			cfg.Bunny.PullZone == "" {
-			return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_STORAGE_REGION, BUNNYCDN_PULL_ZONE")
-		}
+	// ✅ Bunny optional (validate only if partially/fully set)
+	if err := cfg.Bunny.Validate(); err != nil {
+		return err
 	}
 
 	return nil

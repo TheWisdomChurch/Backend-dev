@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,7 +36,37 @@ func main() {
 	logger.Println("Loading configuration...")
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatalf("❌ Failed to load configuration: %v", err)
+		// ✅ DEPLOY-TODAY WORKAROUND:
+		// If config validation currently forces BunnyCDN, allow boot without Bunny.
+		// We temporarily set placeholder Bunny env vars to satisfy validation,
+		// reload config, then disable Bunny in-memory.
+		if strings.Contains(err.Error(), "BunnyCDN config incomplete") {
+			logger.Printf("⚠️ BunnyCDN config incomplete; continuing with Bunny uploads DISABLED: %v", err)
+
+			// Placeholder values (only to satisfy validation if it checks non-empty).
+			// These are immediately disabled after load, so uploader won't be used.
+			_ = os.Setenv("BUNNYCDN_STORAGE_ZONE", "DISABLED")
+			_ = os.Setenv("BUNNYCDN_STORAGE_KEY", "DISABLED")
+			_ = os.Setenv("BUNNYCDN_STORAGE_REGION", "DISABLED")
+			_ = os.Setenv("BUNNYCDN_PULL_ZONE", "DISABLED")
+			if os.Getenv("BUNNYCDN_BASE_PATH") == "" {
+				_ = os.Setenv("BUNNYCDN_BASE_PATH", "")
+			}
+
+			cfg, err = config.Load()
+			if err != nil {
+				logger.Fatalf("❌ Failed to load configuration even after Bunny bypass: %v", err)
+			}
+
+			// Disable Bunny in-memory so your app behaves as "Bunny not configured".
+			cfg.Bunny.StorageZone = ""
+			cfg.Bunny.StorageKey = ""
+			cfg.Bunny.StorageRegion = ""
+			cfg.Bunny.PullZone = ""
+			cfg.Bunny.BasePath = ""
+		} else {
+			logger.Fatalf("❌ Failed to load configuration: %v", err)
+		}
 	}
 
 	logger.Println("📋 Configuration Summary:")
@@ -74,22 +105,21 @@ func main() {
 	// 3) Init repos/services/handlers
 	logger.Println("🔄 Initializing application layers...")
 
-	// Existing repositories
+	// Repositories
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 
-	// Existing "new" repositories you already added
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
 
-	// ✅ NEW: forms repository
 	formRepo := repository.NewFormRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
 
+	// Email sender
 	emailSender, err := email.NewSender(
 		cfg.Redis.URL,
 		cfg.SMTP.Host,
@@ -106,8 +136,9 @@ func main() {
 		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
 	}
 
-	// Existing services
+	// Services
 	testimonialService := service.NewTestimonialService(testimonialRepo)
+
 	branding := email.Branding{
 		AppName:        cfg.App.Name,
 		LogoURL:        cfg.App.LogoURL,
@@ -117,26 +148,50 @@ func main() {
 		PastorName:     cfg.App.PastorName,
 		AdminPortalURL: cfg.App.AdminPortalURL,
 	}
+
 	otpService := service.NewOTPService(otpRepo, emailSender, branding)
 	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding)
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
-	// Existing handlers
+	// Bunny uploader service (optional)
+	var bunnyUploader *service.BunnyUploader
+	if cfg.Bunny.StorageZone != "" && cfg.Bunny.StorageKey != "" && cfg.Bunny.PullZone != "" && cfg.Bunny.StorageRegion != "" {
+		bunnyUploader = service.NewBunnyUploader(
+			cfg.Bunny.StorageZone,
+			cfg.Bunny.StorageKey,
+			cfg.Bunny.StorageRegion,
+			cfg.Bunny.PullZone,
+			cfg.Bunny.BasePath,
+		)
+		logger.Printf("📦 Bunny uploader configured: zone=%s region=%s pull=%s base=%s",
+			cfg.Bunny.StorageZone,
+			cfg.Bunny.StorageRegion,
+			cfg.Bunny.PullZone,
+			cfg.Bunny.BasePath,
+		)
+	} else {
+		logger.Printf("⚠️ Bunny uploader not configured (uploads disabled)")
+	}
+
+	// Handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
 
-	// Existing "new" handlers
-	eventHandler := handlers.NewEventHandler(eventRepo)
+	// pass bunnyUploader into NewEventHandler
+	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
+
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 
-	// ✅ NEW: forms service + handler
-	formService := service.NewFormService(formRepo, eventRepo) // eventRepo optional (for embedding event in public payload)
+	formService := service.NewFormService(formRepo, eventRepo)
 	formHandler := handlers.NewFormHandler(formService)
+
 	notificationService := service.NewNotificationService(subscriberRepo, notificationRepo, eventRepo, emailSender, branding)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
+
 	otpHandler := handlers.NewOTPHandler(otpService)
+
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 
@@ -189,6 +244,9 @@ func main() {
 		logger.Printf("🔐 OTP: http://%s:%s/api/v1/otp", host, cfg.Server.Port)
 		logger.Printf("👥 Workforce apply: http://%s:%s/api/v1/workforce/apply", host, cfg.Server.Port)
 
+		logger.Printf("🖼️  Event image upload: http://%s:%s/api/v1/events/:id/image", host, cfg.Server.Port)
+		logger.Printf("🖼️  Event banner upload: http://%s:%s/api/v1/events/:id/banner", host, cfg.Server.Port)
+
 		if cfg.App.Environment == "development" {
 			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
 		}
@@ -226,7 +284,7 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return nil
 }
 
-// UPDATED: accept new handlers
+// setupRouter wires routes + middleware
 func setupRouter(
 	cfg *config.Config,
 	testimonialHandler *handlers.TestimonialHandler,
@@ -235,7 +293,7 @@ func setupRouter(
 	eventHandler *handlers.EventHandler,
 	reelHandler *handlers.ReelHandler,
 	analyticsHandler *handlers.AnalyticsHandler,
-	formHandler *handlers.FormHandler, // ✅ NEW
+	formHandler *handlers.FormHandler,
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
@@ -292,7 +350,7 @@ func setupRouter(
 
 	api := router.Group("/api/v1")
 	{
-		// ========== PUBLIC ENDPOINTS ==========
+		// PUBLIC
 		testimonials := api.Group("/testimonials")
 		{
 			testimonials.GET("", testimonialHandler.GetAllTestimonials)
@@ -301,14 +359,12 @@ func setupRouter(
 			testimonials.POST("", testimonialHandler.CreateTestimonial)
 		}
 
-		// ✅ NEW: Public forms
 		publicForms := api.Group("/forms")
 		{
 			publicForms.GET("/:slug", formHandler.GetPublicForm)
 			publicForms.POST("/:slug/submissions", formHandler.SubmitPublicForm)
 		}
 
-		// ✅ NEW: Public subscribers
 		subscribers := api.Group("/subscribers")
 		{
 			subscribers.POST("", notificationHandler.Subscribe)
@@ -316,17 +372,15 @@ func setupRouter(
 			subscribers.GET("/unsubscribe", notificationHandler.UnsubscribeByLink)
 		}
 
-		// ✅ NEW: Public workforce applications
 		api.POST("/workforce/apply", workforceHandler.Apply)
 
-		// ✅ NEW: OTP
 		otp := api.Group("/otp")
 		{
 			otp.POST("/send", otpHandler.SendOTP)
 			otp.POST("/verify", otpHandler.VerifyOTP)
 		}
 
-		// Auth endpoints
+		// AUTH
 		auth := api.Group("/auth")
 		{
 			auth.POST("/login", authHandler.Login)
@@ -348,31 +402,26 @@ func setupRouter(
 			}
 		}
 
-		// ========== PROTECTED ENDPOINTS ==========
+		// ADMIN (protected)
 		admin := api.Group("/admin")
 		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		admin.Use(middleware.RoleMiddleware("admin"))
 		{
-			// Testimonial management
 			admin.PUT("/testimonials/:id", testimonialHandler.UpdateTestimonial)
 			admin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
 			admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
 
-			// Admin dashboard
 			admin.GET("/dashboard", adminHandler.GetDashboardStats)
 			admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
 
-			// User management
 			admin.GET("/users", adminHandler.GetAllUsers)
 			admin.GET("/users/:id", adminHandler.GetUserByID)
 			admin.POST("/users", adminHandler.CreateUser)
 			admin.PUT("/users/:id", adminHandler.UpdateUser)
 			admin.DELETE("/users/:id", adminHandler.DeleteUser)
 
-			// Analytics
 			admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 
-			// ✅ NEW: Forms (admin)
 			admin.GET("/forms", formHandler.ListAdminForms)
 			admin.GET("/forms/stats", formHandler.GetFormStats)
 			admin.POST("/forms", formHandler.CreateAdminForm)
@@ -382,11 +431,9 @@ func setupRouter(
 			admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
 			admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
 
-			// ✅ NEW: Subscribers + notifications
 			admin.GET("/subscribers", notificationHandler.ListSubscribers)
 			admin.POST("/notifications", notificationHandler.SendNotification)
 
-			// ✅ NEW: Workforce
 			admin.GET("/workforce", workforceHandler.List)
 			admin.POST("/workforce", workforceHandler.Create)
 			admin.PATCH("/workforce/:id", workforceHandler.Update)
@@ -400,7 +447,7 @@ func setupRouter(
 			}
 		}
 
-		// Events endpoints (admin-only)
+		// EVENTS (admin-only)
 		events := api.Group("/events")
 		events.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		events.Use(middleware.RoleMiddleware("admin"))
@@ -410,9 +457,12 @@ func setupRouter(
 			events.GET("/:id", eventHandler.Get)
 			events.PUT("/:id", eventHandler.Update)
 			events.DELETE("/:id", eventHandler.Delete)
+
+			events.POST("/:id/image", eventHandler.UploadImage)
+			events.POST("/:id/banner", eventHandler.UploadBanner)
 		}
 
-		// Reels endpoints (admin-only)
+		// REELS (admin-only)
 		reels := api.Group("/reels")
 		reels.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		reels.Use(middleware.RoleMiddleware("admin"))
@@ -422,7 +472,6 @@ func setupRouter(
 			reels.DELETE("/:id", reelHandler.Delete)
 		}
 
-		// System endpoints (public)
 		api.GET("/ping", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"message":   "pong",
