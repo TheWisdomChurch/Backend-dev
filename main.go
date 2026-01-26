@@ -1,4 +1,4 @@
-﻿// cmd/api/main.go
+// cmd/api/main.go
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/handlers"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/repository"
@@ -25,20 +26,9 @@ import (
 
 // @title Wisdom House Backend API
 // @version 1.0.0
-// @description Backend API for Wisdom House Church Testimonials
-// @contact.name API Support
-// @contact.url http://wisdomhousechurch.com/support
-// @contact.email support@wisdomhousechurch.com
-// @license.name MIT
-// @license.url https://opensource.org/licenses/MIT
+// @description Backend API for Wisdom House Church
 // @host localhost:8080
 // @BasePath /api/v1
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
-// @securityDefinitions.apikey ApiKeyAuth
-// @in header
-// @name X-API-Key
 func main() {
 	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
 
@@ -89,24 +79,66 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
 
-	// NEW repositories
+	// Existing "new" repositories you already added
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
 
+	// ✅ NEW: forms repository
+	formRepo := repository.NewFormRepository(db)
+	subscriberRepo := repository.NewSubscriberRepository(db)
+	notificationRepo := repository.NewNotificationRepository(db)
+	otpRepo := repository.NewOTPRepository(db)
+	workforceRepo := repository.NewWorkforceRepository(db)
+
+	emailSender, err := email.NewSender(
+		cfg.Redis.URL,
+		cfg.SMTP.Host,
+		cfg.SMTP.Port,
+		cfg.SMTP.User,
+		cfg.SMTP.Password,
+		cfg.SMTP.From,
+		cfg.SMTP.TLS,
+	)
+	if err != nil {
+		if cfg.App.Environment == "production" {
+			logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
+		}
+		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
+	}
+
 	// Existing services
 	testimonialService := service.NewTestimonialService(testimonialRepo)
-	authService := service.NewAuthService(userRepo, cfg.JWT.Secret, cfg.JWT.Expiration)
-	adminService := service.NewAdminService(adminRepo, testimonialRepo)
+	branding := email.Branding{
+		AppName:        cfg.App.Name,
+		LogoURL:        cfg.App.LogoURL,
+		PublicURL:      cfg.App.PublicURL,
+		FrontendURL:    cfg.App.FrontendURL,
+		SupportEmail:   cfg.App.SupportEmail,
+		PastorName:     cfg.App.PastorName,
+		AdminPortalURL: cfg.App.AdminPortalURL,
+	}
+	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding)
+	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
 	// Existing handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
 
-	// NEW handlers
+	// Existing "new" handlers
 	eventHandler := handlers.NewEventHandler(eventRepo)
 	reelHandler := handlers.NewReelHandler(reelRepo)
-	analyticsHandler := handlers.NewAnalyticsHandler(db) // uses db for aggregate queries
+	analyticsHandler := handlers.NewAnalyticsHandler(db)
+
+	// ✅ NEW: forms service + handler
+	formService := service.NewFormService(formRepo, eventRepo) // eventRepo optional (for embedding event in public payload)
+	formHandler := handlers.NewFormHandler(formService)
+	notificationService := service.NewNotificationService(subscriberRepo, notificationRepo, eventRepo, emailSender, branding)
+	notificationHandler := handlers.NewNotificationHandler(notificationService)
+	otpHandler := handlers.NewOTPHandler(otpService)
+	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 
 	// 4) Router
 	logger.Println("🚦 Setting up router and middleware...")
@@ -117,6 +149,10 @@ func main() {
 		eventHandler,
 		reelHandler,
 		analyticsHandler,
+		formHandler,
+		notificationHandler,
+		otpHandler,
+		workforceHandler,
 	)
 
 	// 5) Server
@@ -146,6 +182,12 @@ func main() {
 		logger.Printf("📅 Events: http://%s:%s/api/v1/events", host, cfg.Server.Port)
 		logger.Printf("🎬 Reels: http://%s:%s/api/v1/reels", host, cfg.Server.Port)
 		logger.Printf("📈 Analytics: http://%s:%s/api/v1/admin/analytics", host, cfg.Server.Port)
+		logger.Printf("🧾 Forms (admin): http://%s:%s/api/v1/admin/forms", host, cfg.Server.Port)
+		logger.Printf("🧾 Forms (public): http://%s:%s/api/v1/forms/:slug", host, cfg.Server.Port)
+		logger.Printf("📬 Subscribers: http://%s:%s/api/v1/subscribers", host, cfg.Server.Port)
+		logger.Printf("📬 Notifications: http://%s:%s/api/v1/admin/notifications", host, cfg.Server.Port)
+		logger.Printf("🔐 OTP: http://%s:%s/api/v1/otp", host, cfg.Server.Port)
+		logger.Printf("👥 Workforce apply: http://%s:%s/api/v1/workforce/apply", host, cfg.Server.Port)
 
 		if cfg.App.Environment == "development" {
 			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
@@ -193,8 +235,13 @@ func setupRouter(
 	eventHandler *handlers.EventHandler,
 	reelHandler *handlers.ReelHandler,
 	analyticsHandler *handlers.AnalyticsHandler,
+	formHandler *handlers.FormHandler, // ✅ NEW
+	notificationHandler *handlers.NotificationHandler,
+	otpHandler *handlers.OTPHandler,
+	workforceHandler *handlers.WorkforceHandler,
 ) *gin.Engine {
 	router := gin.New()
+	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
 
 	// Global middleware
 	router.Use(gin.Recovery())
@@ -213,14 +260,21 @@ func setupRouter(
 			"status":      "operational",
 			"timestamp":   time.Now().UTC(),
 			"endpoints": gin.H{
-				"health":       "/health",
-				"api_docs":     "/swagger/index.html",
-				"api_v1":       "/api/v1",
-				"testimonials": "/api/v1/testimonials",
-				"auth":         "/api/v1/auth",
-				"admin":        "/api/v1/admin",
-				"events":       "/api/v1/events",
-				"reels":        "/api/v1/reels",
+				"health":          "/health",
+				"api_docs":        "/swagger/index.html",
+				"api_v1":          "/api/v1",
+				"testimonials":    "/api/v1/testimonials",
+				"auth":            "/api/v1/auth",
+				"admin":           "/api/v1/admin",
+				"events":          "/api/v1/events",
+				"reels":           "/api/v1/reels",
+				"forms_admin":     "/api/v1/admin/forms",
+				"forms_public":    "/api/v1/forms/:slug",
+				"subscribers":     "/api/v1/subscribers",
+				"notifications":   "/api/v1/admin/notifications",
+				"otp_send":        "/api/v1/otp/send",
+				"otp_verify":      "/api/v1/otp/verify",
+				"workforce_apply": "/api/v1/workforce/apply",
 			},
 		})
 	})
@@ -247,16 +301,44 @@ func setupRouter(
 			testimonials.POST("", testimonialHandler.CreateTestimonial)
 		}
 
+		// ✅ NEW: Public forms
+		publicForms := api.Group("/forms")
+		{
+			publicForms.GET("/:slug", formHandler.GetPublicForm)
+			publicForms.POST("/:slug/submissions", formHandler.SubmitPublicForm)
+		}
+
+		// ✅ NEW: Public subscribers
+		subscribers := api.Group("/subscribers")
+		{
+			subscribers.POST("", notificationHandler.Subscribe)
+			subscribers.POST("/unsubscribe", notificationHandler.Unsubscribe)
+			subscribers.GET("/unsubscribe", notificationHandler.UnsubscribeByLink)
+		}
+
+		// ✅ NEW: Public workforce applications
+		api.POST("/workforce/apply", workforceHandler.Apply)
+
+		// ✅ NEW: OTP
+		otp := api.Group("/otp")
+		{
+			otp.POST("/send", otpHandler.SendOTP)
+			otp.POST("/verify", otpHandler.VerifyOTP)
+		}
+
 		// Auth endpoints
 		auth := api.Group("/auth")
 		{
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.POST("/logout", authHandler.Logout)
+			auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
+			auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
 
 			protected := auth.Group("")
-			protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+			protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 			{
 				protected.GET("/me", authHandler.GetCurrentUser)
 				protected.PUT("/update-profile", authHandler.UpdateProfile)
@@ -267,10 +349,8 @@ func setupRouter(
 		}
 
 		// ========== PROTECTED ENDPOINTS ==========
-
-		// Admin endpoints
 		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		admin.Use(middleware.RoleMiddleware("admin"))
 		{
 			// Testimonial management
@@ -289,13 +369,40 @@ func setupRouter(
 			admin.PUT("/users/:id", adminHandler.UpdateUser)
 			admin.DELETE("/users/:id", adminHandler.DeleteUser)
 
-			// NEW: analytics
+			// Analytics
 			admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
+
+			// ✅ NEW: Forms (admin)
+			admin.GET("/forms", formHandler.ListAdminForms)
+			admin.GET("/forms/stats", formHandler.GetFormStats)
+			admin.POST("/forms", formHandler.CreateAdminForm)
+			admin.GET("/forms/:id", formHandler.GetAdminForm)
+			admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
+			admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
+			admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
+			admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
+
+			// ✅ NEW: Subscribers + notifications
+			admin.GET("/subscribers", notificationHandler.ListSubscribers)
+			admin.POST("/notifications", notificationHandler.SendNotification)
+
+			// ✅ NEW: Workforce
+			admin.GET("/workforce", workforceHandler.List)
+			admin.POST("/workforce", workforceHandler.Create)
+			admin.PATCH("/workforce/:id", workforceHandler.Update)
+			admin.GET("/workforce/stats", workforceHandler.Stats)
+
+			superAdmin := admin.Group("")
+			superAdmin.Use(middleware.RoleMiddleware("super_admin"))
+			{
+				superAdmin.PATCH("/users/:id/approve", adminHandler.ApproveUser)
+				superAdmin.PATCH("/workforce/:id/approve", workforceHandler.Approve)
+			}
 		}
 
-		// NEW: Events endpoints (admin-only)
+		// Events endpoints (admin-only)
 		events := api.Group("/events")
-		events.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+		events.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		events.Use(middleware.RoleMiddleware("admin"))
 		{
 			events.GET("", eventHandler.List)
@@ -305,9 +412,9 @@ func setupRouter(
 			events.DELETE("/:id", eventHandler.Delete)
 		}
 
-		// NEW: Reels endpoints (admin-only)
+		// Reels endpoints (admin-only)
 		reels := api.Group("/reels")
-		reels.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+		reels.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
 		reels.Use(middleware.RoleMiddleware("admin"))
 		{
 			reels.GET("", reelHandler.List)
@@ -343,6 +450,9 @@ func setupRouter(
 					"events":          true,
 					"reels":           true,
 					"admin_analytics": true,
+					"forms":           true,
+					"notifications":   true,
+					"otp":             true,
 				},
 			})
 		})

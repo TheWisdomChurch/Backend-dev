@@ -26,10 +26,12 @@ func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (i
 func NewAdminService(
 	adminRepo repository.AdminRepository,
 	testimonialRepo repository.TestimonialRepository,
+	userRepo repository.UserRepository,
 ) AdminService {
 	return &adminServiceImpl{
 		adminRepo:       adminRepo,
 		testimonialRepo: testimonialRepo,
+		userRepo:        userRepo,
 	}
 }
 
@@ -50,17 +52,25 @@ func (s *adminServiceImpl) GetPendingTestimonials() (interface{}, error) {
 }
 
 func (s *adminServiceImpl) GetAllUsers() (interface{}, error) {
-	// For now, return empty array
-	// You'll need to inject userRepo to make this work
-	return []interface{}{}, nil
+	if s.userRepo == nil {
+		return []interface{}{}, nil
+	}
+	return s.userRepo.FindAll()
 }
 
 func (s *adminServiceImpl) GetUserByID(userID string) (interface{}, error) {
-	// For now, return empty data
-	return map[string]interface{}{}, nil
+	if s.userRepo == nil {
+		return map[string]interface{}{}, nil
+	}
+	return s.userRepo.FindByID(userID)
 }
 
 func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role string) (interface{}, error) {
+	role, err := normalizeRole(role)
+	if err != nil {
+		return nil, err
+	}
+
 	// For now, return placeholder
 	return map[string]interface{}{
 		"id":         "user-id",
@@ -69,5 +79,24 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role
 		"email":      email,
 		"role":       role,
 		"created_at": "2024-01-14",
-	}, nil 
+	}, nil
+}
+
+func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
+	if s.userRepo == nil {
+		return nil, nil
+	}
+	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if user.Role != "admin" {
+		return nil, nil
+	}
+	user.AdminApproved = true
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+	user.Password = ""
+	return user, nil
 }

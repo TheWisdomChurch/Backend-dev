@@ -51,3 +51,13 @@ func (r *EventRepository) List(offset, limit int) ([]models.Event, int64, error)
 
 	return items, total, nil
 }
+
+// ✅ NEW: save CDN url + object key for an event image
+func (r *EventRepository) UpdateImage(id string, imageURL string, imageKey string) error {
+	return r.db.Model(&models.Event{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"image_url": imageURL,
+			"image_key": imageKey,
+		}).Error
+}

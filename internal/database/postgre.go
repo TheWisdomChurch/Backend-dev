@@ -59,20 +59,29 @@ func NewDatabase(cfg *config.DatabaseConfig) (*Database, error) {
 // ✅ PERFECT: AutoMigrate creates all tables automatically
 func AutoMigrate(db *gorm.DB) error {
 	log.Println("🔄 Running database migrations...")
-	
+
 	// ✅ List all models - GORM will create tables if they don't exist
 	err := db.AutoMigrate(
-		&models.User{},           // Creates "users" table
-		&models.Testimonial{}, 
+		&models.User{}, // Creates "users" table
+		&models.Testimonial{},
 		&models.Event{},
-		&models.Reel{},   // Creates "testimonials" table
-		
+		&models.Reel{},
+		&models.Form{},
+		&models.FormField{},
+		&models.FormSubmission{},
+		&models.Subscriber{},
+		&models.Notification{},
+		&models.NotificationDelivery{},
+		&models.OTP{},
+		&models.WorkforceMember{},
+		// Creates "testimonials" table
+
 	)
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate: %w", err)
 	}
-	
+
 	log.Println("✅ Database migrations completed successfully")
 	return nil
 }
