@@ -7,15 +7,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
 )
 
 type EventHandler struct {
-	repo *repository.EventRepository
+	repo  *repository.EventRepository
+	bunny *service.BunnyUploader
 }
 
-func NewEventHandler(repo *repository.EventRepository) *EventHandler {
-	return &EventHandler{repo: repo}
+// ✅ updated constructor (inject bunny)
+func NewEventHandler(repo *repository.EventRepository, bunny *service.BunnyUploader) *EventHandler {
+	return &EventHandler{repo: repo, bunny: bunny}
 }
 
 func (h *EventHandler) List(c *gin.Context) {
@@ -84,7 +87,6 @@ func (h *EventHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Patch-like update (keep it simple)
 	existing.Title = req.Title
 	existing.ShortDescription = req.ShortDescription
 	existing.Description = req.Description
@@ -116,4 +118,95 @@ func (h *EventHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Event deleted"})
+}
+
+// =======================
+// ✅ NEW: Upload endpoints
+// =======================
+
+func (h *EventHandler) UploadImage(c *gin.Context) {
+	h.uploadEventAsset(c, "image")
+}
+
+func (h *EventHandler) UploadBanner(c *gin.Context) {
+	h.uploadEventAsset(c, "banner")
+}
+
+func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
+	if h.bunny == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "CDN uploader not configured")
+		return
+	}
+
+	eventID := c.Param("id")
+
+	fh, err := c.FormFile("file")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	// Size limit: 10MB (adjust as needed)
+	const maxBytes = 10 << 20
+	if fh.Size > maxBytes {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file too large (max 10MB)")
+		return
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to open file")
+		return
+	}
+	defer src.Close()
+
+	ct := fh.Header.Get("Content-Type")
+	ext := ""
+	switch ct {
+	case "image/png":
+		ext = "png"
+	case "image/jpeg":
+		ext = "jpg"
+	case "image/webp":
+		ext = "webp"
+	default:
+		utils.ErrorResponse(c, http.StatusBadRequest, "only png, jpg, webp allowed")
+		return
+	}
+
+	objectKey, err := h.bunny.BuildEventAssetKey(eventID, kind, ext)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
+		return
+	}
+
+	cdnURL, err := h.bunny.Upload(c.Request.Context(), objectKey, ct, src)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to CDN failed")
+		return
+	}
+
+	key := objectKey
+
+	switch kind {
+	case "image":
+		if err := h.repo.SetImage(eventID, cdnURL, &key); err != nil {
+			utils.ErrorResponse(c, http.StatusInternalServerError, "failed to save image url")
+			return
+		}
+	case "banner":
+		if err := h.repo.SetBannerImage(eventID, cdnURL, &key); err != nil {
+			utils.ErrorResponse(c, http.StatusInternalServerError, "failed to save banner url")
+			return
+		}
+	default:
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid asset type")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"eventId": eventID,
+		"kind":    kind,
+		"url":     cdnURL,
+	})
 }

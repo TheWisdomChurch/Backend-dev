@@ -39,13 +39,13 @@ type Event struct {
 	Speaker      *string  `gorm:"type:varchar(120)" json:"speaker,omitempty"`
 	ContactPhone *string  `gorm:"type:varchar(40)" json:"contactPhone,omitempty"`
 
-	// ✅ These store the CDN URLs
+	// CDN URLs
 	Image       *string `gorm:"type:text" json:"image,omitempty"`
 	BannerImage *string `gorm:"type:text" json:"bannerImage,omitempty"`
 
-	// ✅ Optional: store Bunny object keys (useful for later deletes/cleanup)
-	ImageKey       *string `gorm:"type:text" json:"-"`
-	BannerImageKey *string `gorm:"type:text" json:"-"`
+	// Optional Bunny object keys (DB columns required)
+	ImageKey       *string `gorm:"column:image_key;type:text" json:"-"`
+	BannerImageKey *string `gorm:"column:banner_image_key;type:text" json:"-"`
 
 	Attendees int `gorm:"not null;default:0" json:"attendees"`
 

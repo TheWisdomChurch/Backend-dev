@@ -9,26 +9,33 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 )
 
 // BunnyUploader handles uploads to BunnyCDN storage and returns the public Pull Zone URL.
 type BunnyUploader struct {
 	StorageZone   string
 	StorageKey    string
-	StorageRegion string // e.g. "de"
-	PullZone      string // e.g. "https://wisdom-church.b-cdn.net"
-	BasePath      string // e.g. "uploads"
+	StorageRegion string
+	PullZone      string
+	BasePath      string
+
+	httpClient *http.Client
 }
 
 func NewBunnyUploader(zone, key, region, pullZone, basePath string) *BunnyUploader {
 	basePath = strings.Trim(basePath, "/")
 	pullZone = strings.TrimRight(pullZone, "/")
+
 	return &BunnyUploader{
 		StorageZone:   zone,
 		StorageKey:    key,
 		StorageRegion: region,
 		PullZone:      pullZone,
 		BasePath:      basePath,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second, // production-safe default
+		},
 	}
 }
 
@@ -41,7 +48,7 @@ func randHex(n int) (string, error) {
 }
 
 // Upload streams the reader to Bunny Storage and returns the pull-zone URL.
-func (b *BunnyUploader) Upload(ctx context.Context, objectKey string, contentType string, r io.Reader) (cdnURL string, err error) {
+func (b *BunnyUploader) Upload(ctx context.Context, objectKey string, contentType string, r io.Reader) (string, error) {
 	objectKey = strings.TrimLeft(objectKey, "/")
 
 	uploadURL := fmt.Sprintf("https://%s.storage.bunnycdn.com/%s/%s", b.StorageRegion, b.StorageZone, objectKey)
@@ -56,7 +63,7 @@ func (b *BunnyUploader) Upload(ctx context.Context, objectKey string, contentTyp
 		req.Header.Set("Content-Type", contentType)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -66,20 +73,21 @@ func (b *BunnyUploader) Upload(ctx context.Context, objectKey string, contentTyp
 		return "", fmt.Errorf("bunny upload failed: status=%d", resp.StatusCode)
 	}
 
-	cdnURL = b.PullZone + "/" + objectKey
-	return cdnURL, nil
+	return b.PullZone + "/" + objectKey, nil
 }
 
-// BuildEventImageKey produces a randomized object key under the configured base path.
-func (b *BunnyUploader) BuildEventImageKey(eventID, ext string) (string, error) {
+// BuildEventAssetKey produces a randomized object key under base path, separated by kind (image/banner).
+func (b *BunnyUploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {
 	token, err := randHex(16)
 	if err != nil {
 		return "", err
 	}
 
-	fileName := token + "." + strings.TrimLeft(ext, ".")
+	ext = strings.TrimLeft(ext, ".")
+	fileName := token + "." + ext
+
 	if b.BasePath == "" {
-		return path.Join("events", eventID, fileName), nil
+		return path.Join("events", eventID, kind, fileName), nil
 	}
-	return path.Join(b.BasePath, "events", eventID, fileName), nil
+	return path.Join(b.BasePath, "events", eventID, kind, fileName), nil
 }
