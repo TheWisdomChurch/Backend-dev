@@ -1,7 +1,7 @@
-// internal/middleware/cors.go
 package middleware
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -12,38 +12,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CORS returns a CORS middleware configured from application config
 func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
-	// Clean and validate origins
-	origins := cleanStringSlice(cfg.AllowedOrigins)
-	
-	// Clean and validate methods (convert to uppercase)
-	methods := cleanStringSlice(cfg.AllowedMethods)
-	for i, method := range methods {
-		methods[i] = strings.ToUpper(method)
-	}
-	
-	// Clean and validate headers
-	headers := cleanStringSlice(cfg.AllowedHeaders)
-	
-	// Clean and validate exposed headers
+	allowedOrigins := cleanStringSlice(cfg.AllowedOrigins)
+	allowedMethods := upperAll(cleanStringSlice(cfg.AllowedMethods))
+	allowedHeaders := cleanStringSlice(cfg.AllowedHeaders)
 	exposedHeaders := cleanStringSlice(cfg.ExposedHeaders)
 
-	// Create CORS config
+	allowCredentials := cfg.AllowCredentials
+
+	// IMPORTANT: if credentials are allowed, wildcard origins are invalid.
+	if allowCredentials {
+		allowedOrigins = filterOutWildcard(allowedOrigins)
+	}
+
+	originValidator := createOriginValidator(allowedOrigins, allowCredentials)
+
 	corsConfig := cors.Config{
-		AllowOrigins:     origins,
-		AllowMethods:     methods,
-		AllowHeaders:     headers,
+		AllowMethods:     allowedMethods,
+		AllowHeaders:     allowedHeaders,
 		ExposeHeaders:    exposedHeaders,
-		AllowCredentials: cfg.AllowCredentials,
+		AllowCredentials: allowCredentials,
 		MaxAge:           time.Duration(cfg.MaxAge) * time.Second,
-		AllowOriginFunc:  createOriginValidator(origins),
+
+		// We validate origins with a function; do not rely on "*" in AllowOrigins.
+		AllowOriginFunc: originValidator,
 	}
 
 	return cors.New(corsConfig)
 }
 
-// cleanStringSlice removes whitespace and empty strings from slice
 func cleanStringSlice(slice []string) []string {
 	cleaned := make([]string, 0, len(slice))
 	for _, item := range slice {
@@ -54,45 +51,93 @@ func cleanStringSlice(slice []string) []string {
 	return cleaned
 }
 
-// createOriginValidator creates a function to validate origins
-func createOriginValidator(allowedOrigins []string) func(string) bool {
+func upperAll(slice []string) []string {
+	out := make([]string, len(slice))
+	for i, v := range slice {
+		out[i] = strings.ToUpper(v)
+	}
+	return out
+}
+
+func filterOutWildcard(origins []string) []string {
+	out := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if o == "*" {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+func normalizeOrigin(origin string) string {
+	// Browsers send origins like "https://example.com"
+	origin = strings.TrimSpace(origin)
+	return origin
+}
+
+func createOriginValidator(allowedOrigins []string, allowCredentials bool) func(string) bool {
+	// Precompile wildcard patterns
+	type wildcard struct {
+		raw     string
+		pattern *regexp.Regexp
+	}
+	wildcards := make([]wildcard, 0)
+
+	exact := make(map[string]struct{}, len(allowedOrigins))
+	allowAll := false
+
+	for _, o := range allowedOrigins {
+		o = normalizeOrigin(o)
+		if o == "" {
+			continue
+		}
+
+		if o == "*" {
+			// Only permissible when credentials are NOT used.
+			if !allowCredentials {
+				allowAll = true
+			}
+			continue
+		}
+
+		if strings.Contains(o, "*") {
+			// Convert e.g. https://*.example.com to regex
+			escaped := regexp.QuoteMeta(o)
+			escaped = strings.ReplaceAll(escaped, "\\*", ".*")
+			re := regexp.MustCompile("^" + escaped + "$")
+			wildcards = append(wildcards, wildcard{raw: o, pattern: re})
+			continue
+		}
+
+		exact[o] = struct{}{}
+	}
+
 	return func(origin string) bool {
-		// Allow all origins if specified
-		for _, allowedOrigin := range allowedOrigins {
-			if allowedOrigin == "*" {
-				return true
-			}
+		origin = normalizeOrigin(origin)
+		if origin == "" {
+			return false
 		}
 
-		// Check exact match
-		for _, allowedOrigin := range allowedOrigins {
-			if origin == allowedOrigin {
-				return true
-			}
+		// Must be a valid origin URL
+		if _, err := url.Parse(origin); err != nil {
+			return false
 		}
 
-		// Check pattern matching (e.g., *.example.com)
-		for _, allowedOrigin := range allowedOrigins {
-			if strings.Contains(allowedOrigin, "*") {
-				pattern := strings.ReplaceAll(allowedOrigin, "*", ".*")
-				if matched, _ := regexp.MatchString("^"+pattern+"$", origin); matched {
-					return true
-				}
+		if allowAll {
+			return true
+		}
+
+		if _, ok := exact[origin]; ok {
+			return true
+		}
+
+		for _, w := range wildcards {
+			if w.pattern.MatchString(origin) {
+				return true
 			}
 		}
 
 		return false
 	}
-}
-
-// CORSOptions returns CORS middleware with default options
-func CORSOptions() gin.HandlerFunc {
-	return cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: false,
-		MaxAge:           12 * time.Hour,
-	})
 }
