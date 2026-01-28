@@ -1,28 +1,26 @@
-# Build stage - UPDATED to Go 1.25
+# Multi-stage Dockerfile for both dev and prod
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
-
-# Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Copy source code
 COPY . .
-
-# Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o wisdom-house main.go
 
-# Final stage
-FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates
-
-WORKDIR /root/
-
-# Copy the binary from builder
-COPY --from=builder /app/wisdom-house .
-
+# Development stage - includes Air for hot reload
+FROM golang:1.25-alpine AS development
+WORKDIR /app
+RUN go install github.com/air-verse/air@latest
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
 EXPOSE 8080
+CMD ["air", "-c", ".air.toml"]
 
+# Production stage - minimal Alpine image
+FROM alpine:latest AS production
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/wisdom-house .
+EXPOSE 8080
 CMD ["./wisdom-house"]
