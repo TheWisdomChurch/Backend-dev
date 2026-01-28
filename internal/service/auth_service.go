@@ -25,6 +25,8 @@ type authServiceImpl struct {
 	jwtExpiration time.Duration
 	sender        EmailSender
 	branding      email.Branding
+	security      SecurityService
+	trustedDevs   repository.TrustedDeviceRepository
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -35,6 +37,7 @@ const (
 	loginOTPPurposePrefix = "login:"
 	otpEntryPath          = "/verify-otp"
 	resetEntryPath        = "/reset-password"
+	trustedDeviceTTL      = 30 * 24 * time.Hour
 )
 
 var allowedRoles = map[string]string{
@@ -46,7 +49,7 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding) AuthService {
+func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository) AuthService {
 	return &authServiceImpl{
 		userRepo:      userRepo,
 		otp:           otp,
@@ -54,6 +57,8 @@ func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecre
 		jwtExpiration: jwtExpiration,
 		sender:        sender,
 		branding:      branding,
+		security:      security,
+		trustedDevs:   trustedDevs,
 	}
 }
 
@@ -88,36 +93,48 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 	user.FailedLoginCount = 0
 	user.LastFailedLoginAt = nil
 
-	// TEMP: OTP enforcement disabled; keep block for later re-enable.
-	// if s.otp != nil && isAdminRole(user.Role) {
-	// 	challenge, err := generateLoginChallenge()
-	// 	if err != nil {
-	// 		return nil, errors.New("failed to start verification")
-	// 	}
-	// 	purpose := loginOTPPurposePrefix + challenge
-	// 	actionURL := s.buildOTPLink(otpEntryPath, purpose, user.Email)
-	//
-	// 	resp, err := s.otp.SendOTP(&models.SendOTPRequest{
-	// 		Email:       user.Email,
-	// 		Purpose:     purpose,
-	// 		ActionURL:   actionURL,
-	// 		ActionLabel: "Approve admin login",
-	// 	})
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	//
-	// 	_ = s.userRepo.Update(user)
-	//
-	// 	expires := resp.ExpiresAt
-	// 	return &LoginResult{
-	// 		User:         sanitizeUser(user),
-	// 		OTPRequired:  true,
-	// 		OTPPurpose:   purpose,
-	// 		OTPExpiresAt: &expires,
-	// 		OTPActionURL: actionURL,
-	// 	}, nil
-	// }
+	needOTP := true
+
+	// Step-up: untrusted/new/expired device requires OTP
+	if s.trustedDevs != nil && meta.DeviceID != "" {
+		if dev, err := s.trustedDevs.Find(user.ID, meta.DeviceID); err == nil && dev != nil && dev.Trusted && dev.ExpiresAt.After(time.Now().UTC()) {
+			needOTP = false
+		}
+	}
+
+	if s.otp != nil && needOTP {
+		challenge, err := generateLoginChallenge()
+		if err != nil {
+			return nil, errors.New("failed to start verification")
+		}
+		purpose := loginOTPPurposePrefix + challenge
+		actionURL := s.buildOTPLink(otpEntryPath, purpose, user.Email)
+
+		resp, err := s.otp.SendOTP(&models.SendOTPRequest{
+			Email:       user.Email,
+			Purpose:     purpose,
+			ActionURL:   actionURL,
+			ActionLabel: "Approve sign-in",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		_ = s.userRepo.Update(user)
+
+		expires := resp.ExpiresAt
+		if s.security != nil {
+			s.security.RecordEvent("otp_challenge", user, meta, map[string]interface{}{"purpose": purpose})
+		}
+
+		return &LoginResult{
+			User:         sanitizeUser(user),
+			OTPRequired:  true,
+			OTPPurpose:   purpose,
+			OTPExpiresAt: &expires,
+			OTPActionURL: actionURL,
+		}, nil
+	}
 
 	now := time.Now().UTC()
 	user.LastLoginAt = &now
@@ -125,12 +142,17 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 		return nil, errors.New("failed to update profile")
 	}
 
-	return &LoginResult{
+	res := &LoginResult{
 		User: sanitizeUser(user),
-	}, nil
+	}
+
+	// Persist/refresh trusted device
+	s.upsertTrustedDevice(user, meta, true)
+
+	return res, nil
 }
 
-func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string) (*models.User, error) {
+func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string, meta LoginMetadata) (*models.User, error) {
 	if s.otp == nil {
 		return nil, errors.New("otp service not configured")
 	}
@@ -175,6 +197,8 @@ func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string) (*models.U
 		return nil, errors.New("failed to update profile")
 	}
 
+	s.upsertTrustedDevice(user, meta, true)
+
 	return sanitizeUser(user), nil
 }
 
@@ -192,8 +216,17 @@ func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadat
 	user.LastFailedLoginAt = &now
 	_ = s.userRepo.Update(user)
 
+	if s.security != nil {
+		s.security.RecordEvent("failed_login", user, meta, map[string]interface{}{
+			"failed_count": user.FailedLoginCount,
+		})
+	}
+
 	if user.FailedLoginCount == failedLoginThreshold {
 		s.sendFailedLoginAlert(user, meta)
+		if s.security != nil {
+			s.security.NotifySuspiciousLogin(user, meta, "Multiple failed login attempts")
+		}
 	}
 }
 
@@ -334,6 +367,36 @@ func (s *authServiceImpl) buildOTPLink(path, purpose, email string) string {
 	parsed.RawQuery = q.Encode()
 
 	return parsed.String()
+}
+
+func (s *authServiceImpl) upsertTrustedDevice(user *models.User, meta LoginMetadata, trusted bool) {
+	if s.trustedDevs == nil || user == nil || meta.DeviceID == "" {
+		return
+	}
+	dev := &models.TrustedDevice{
+		UserID:     user.ID,
+		DeviceID:   meta.DeviceID,
+		LastIP:     meta.IP,
+		UserAgent:  meta.UserAgent,
+		Trusted:    trusted,
+		LastSeenAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(trustedDeviceTTL),
+	}
+	_ = s.trustedDevs.Upsert(dev)
+	if s.security != nil {
+		s.security.RecordEvent("trusted_device_updated", user, meta, map[string]interface{}{"trusted": trusted})
+	}
+}
+
+func (s *authServiceImpl) UntrustDevice(userID, deviceID string) error {
+	if s.trustedDevs == nil || userID == "" || deviceID == "" {
+		return nil
+	}
+	err := s.trustedDevs.MarkUntrusted(userID, deviceID)
+	if s.security != nil {
+		s.security.RecordEvent("trusted_device_untrusted", &models.User{ID: userID}, LoginMetadata{DeviceID: deviceID}, nil)
+	}
+	return err
 }
 
 func generateLoginChallenge() (string, error) {
