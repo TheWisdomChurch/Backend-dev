@@ -1,5 +1,4 @@
-﻿
-services:
+﻿services:
   postgres:
     image: postgres:15-alpine
     container_name: wisdom_church_backend
@@ -15,7 +14,7 @@ services:
     networks:
       - wisdom_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]  # Use variable
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,15 +36,22 @@ services:
       retries: 5
 
   api:
-    build: .
+    build:
+      context: .
+      target: development  # 🔥 Uses dev stage with hot reload
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
     environment:
-      # CRITICAL: Override DB_HOST to use container name
       DB_HOST: wisdom_church_backend
     env_file:
       - .env
+    volumes:
+      # 🔥 CRITICAL: Syncs your local code changes into container
+      - .:/app
+      # Exclude temp directories for better performance
+      - /app/tmp
+      - /app/.git
     depends_on:
       postgres:
         condition: service_healthy

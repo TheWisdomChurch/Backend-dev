@@ -69,7 +69,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		LastName  string `json:"last_name" binding:"required"`
 		Email     string `json:"email" binding:"required,email"`
 		Password  string `json:"password" binding:"required,min=6"`
-		Role      string `json:"role" binding:"required,oneof=user admin"`
+		Role      string `json:"role" binding:"required,oneof=admin super_admin"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -96,4 +96,15 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 func (h *AdminHandler) DeleteUser(c *gin.Context) {
 	// Implementation
 	utils.SuccessResponse(c, http.StatusOK, "Delete user endpoint", nil)
+}
+
+// ApproveUser approves pending admin accounts (super_admin only)
+func (h *AdminHandler) ApproveUser(c *gin.Context) {
+	userID := c.Param("id")
+	approvedUser, err := h.service.ApproveUser(userID)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "User approved", approvedUser)
 }

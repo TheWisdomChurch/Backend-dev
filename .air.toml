@@ -1,0 +1,17 @@
+# .air.toml - Place this in your project root
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  bin = "./tmp/main"
+  cmd = "go build -o ./tmp/main ."
+  delay = 1000
+  exclude_dir = ["tmp", "vendor", ".git", "node_modules"]
+  include_ext = ["go", "tmpl", "tpl", "html"]
+  kill_delay = "0s"
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

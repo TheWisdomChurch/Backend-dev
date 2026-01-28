@@ -1,4 +1,3 @@
-// internal/middleware/requestid.go
 package middleware
 
 import (
@@ -6,16 +5,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// RequestID adds a unique request ID to each request
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		requestID := c.Request.Header.Get("X-Request-ID")
-		if requestID == "" {
-			requestID = uuid.New().String()
+		id := c.GetHeader("X-Request-ID")
+		if id == "" {
+			id = uuid.NewString()
 		}
-		
-		c.Set("X-Request-ID", requestID)
-		c.Header("X-Request-ID", requestID)
+		c.Set("request_id", id)
+		c.Header("X-Request-ID", id)
 		c.Next()
 	}
 }
