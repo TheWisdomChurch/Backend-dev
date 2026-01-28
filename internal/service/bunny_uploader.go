@@ -91,3 +91,19 @@ func (b *BunnyUploader) BuildEventAssetKey(eventID, kind, ext string) (string, e
 	}
 	return path.Join(b.BasePath, "events", eventID, kind, fileName), nil
 }
+
+// BuildTestimonialImageKey produces a randomized object key for testimonial images.
+func (b *BunnyUploader) BuildTestimonialImageKey(ext string) (string, error) {
+	token, err := randHex(16)
+	if err != nil {
+		return "", err
+	}
+
+	ext = strings.TrimLeft(ext, ".")
+	fileName := token + "." + ext
+
+	if b.BasePath == "" {
+		return path.Join("testimonials", fileName), nil
+	}
+	return path.Join(b.BasePath, "testimonials", fileName), nil
+}

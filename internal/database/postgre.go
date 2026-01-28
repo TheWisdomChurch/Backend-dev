@@ -17,16 +17,14 @@ type Database struct {
 	*gorm.DB
 }
 
-func NewDatabase(cfg *config.DatabaseConfig) (*Database, error) {
+func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	dsn := cfg.ConnectionString()
 
 	log.Printf("🔌 Connecting to database at %s:%s...", cfg.Host, cfg.Port)
 
-	// ✅ PERFECT for auto-migration
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // Good for seeing migration SQL
+		Logger: logger.Default.LogMode(logger.Info),
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -36,33 +34,59 @@ func NewDatabase(cfg *config.DatabaseConfig) (*Database, error) {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
 
-	// ✅ Good connection pool settings
+	// Connection pool settings
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	// ✅ Test connection
+	// Test connection
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	log.Println("✅ Database connection established successfully")
 
-	// ✅ PERFECT: AutoMigrate will create ALL tables automatically
-	if err := AutoMigrate(db); err != nil {
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	// Ensure extensions needed by your schema/defaults exist.
+	// - uuid_generate_v4() => uuid-ossp
+	// - gen_random_uuid()  => pgcrypto
+	if err := ensureExtensions(db); err != nil {
+		return nil, fmt.Errorf("failed to ensure database extensions: %w", err)
+	}
+
+	// ✅ Dev convenience, Prod safety
+	if appEnv != "production" {
+		if err := AutoMigrate(db); err != nil {
+			return nil, fmt.Errorf("failed to run automigrate: %w", err)
+		}
+	} else {
+		log.Println("ℹ️ Production mode: AutoMigrate is DISABLED. Run SQL migrations with the migrate service/CI step.")
 	}
 
 	return &Database{db}, nil
 }
 
-// ✅ PERFECT: AutoMigrate creates all tables automatically
-func AutoMigrate(db *gorm.DB) error {
-	log.Println("🔄 Running database migrations...")
+func ensureExtensions(db *gorm.DB) error {
+	log.Println("🧩 Ensuring required Postgres extensions...")
 
-	// ✅ List all models - GORM will create tables if they don't exist
+	// Important: extensions require sufficient privileges.
+	// In managed Postgres you may need to enable them via provider UI, but in Docker you can run these.
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`).Error; err != nil {
+		return fmt.Errorf(`create extension "uuid-ossp": %w`, err)
+	}
+
+	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`).Error; err != nil {
+		return fmt.Errorf(`create extension "pgcrypto": %w`, err)
+	}
+
+	log.Println("✅ Extensions ready")
+	return nil
+}
+
+func AutoMigrate(db *gorm.DB) error {
+	log.Println("🔄 Running database AutoMigrate (non-production)...")
+
 	err := db.AutoMigrate(
-		&models.User{}, // Creates "users" table
+		&models.User{},
 		&models.Testimonial{},
 		&models.Event{},
 		&models.Reel{},
@@ -74,21 +98,15 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.NotificationDelivery{},
 		&models.OTP{},
 		&models.WorkforceMember{},
-		// Creates "testimonials" table
-
+		&models.SecurityEvent{},
+		&models.TrustedDevice{},
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate: %w", err)
 	}
 
-	log.Println("✅ Database migrations completed successfully")
+	log.Println("✅ AutoMigrate completed successfully")
 	return nil
-}
-
-// ✅ Good: Separate Migrate method for manual use
-func (d *Database) Migrate() error {
-	return AutoMigrate(d.DB)
 }
 
 func (d *Database) Close() error {

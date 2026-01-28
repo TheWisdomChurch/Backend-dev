@@ -84,7 +84,8 @@ func main() {
 
 	// 1) DB
 	logger.Println("🔌 Connecting to database...")
-	db, err := database.NewDatabase(&cfg.Database)
+	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
+
 	if err != nil {
 		logger.Fatalf("❌ Failed to connect to database: %v", err)
 	}
@@ -118,6 +119,8 @@ func main() {
 	notificationRepo := repository.NewNotificationRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
+	securityEventRepo := repository.NewSecurityEventRepository(db)
+	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
 	// Email sender
 	emailSender, err := email.NewSender(
@@ -135,23 +138,6 @@ func main() {
 		}
 		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
 	}
-
-	// Services
-	testimonialService := service.NewTestimonialService(testimonialRepo)
-
-	branding := email.Branding{
-		AppName:        cfg.App.Name,
-		LogoURL:        cfg.App.LogoURL,
-		PublicURL:      cfg.App.PublicURL,
-		FrontendURL:    cfg.App.FrontendURL,
-		SupportEmail:   cfg.App.SupportEmail,
-		PastorName:     cfg.App.PastorName,
-		AdminPortalURL: cfg.App.AdminPortalURL,
-	}
-
-	otpService := service.NewOTPService(otpRepo, emailSender, branding)
-	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding)
-	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
 	// Bunny uploader service (optional)
 	var bunnyUploader *service.BunnyUploader
@@ -172,6 +158,23 @@ func main() {
 	} else {
 		logger.Printf("⚠️ Bunny uploader not configured (uploads disabled)")
 	}
+
+	// Services
+	branding := email.Branding{
+		AppName:        cfg.App.Name,
+		LogoURL:        cfg.App.LogoURL,
+		PublicURL:      cfg.App.PublicURL,
+		FrontendURL:    cfg.App.FrontendURL,
+		SupportEmail:   cfg.App.SupportEmail,
+		PastorName:     cfg.App.PastorName,
+		AdminPortalURL: cfg.App.AdminPortalURL,
+	}
+
+	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	securityService := service.NewSecurityService(securityEventRepo, trustedDeviceRepo, emailSender, branding, cfg.App.FrontendURL)
+	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding, securityService, trustedDeviceRepo)
+	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
 	// Handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
@@ -303,6 +306,7 @@ func setupRouter(
 
 	// Global middleware
 	router.Use(gin.Recovery())
+	router.Use(middleware.DeviceFingerprint(cfg.App.Environment == "production"))
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.SecurityHeaders())

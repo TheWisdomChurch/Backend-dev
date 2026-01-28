@@ -10,14 +10,34 @@
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  
+      # ❌ REMOVE init.sql mount (migrations own schema)
+      # - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - wisdom_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d ${DATABASE_DBNAME}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  # ✅ One-off migration runner (versioned migrations)
+  migrate:
+    image: migrate/migrate:4
+    container_name: wisdom_church_migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    networks:
+      - wisdom_network
+    entrypoint: [
+      "migrate",
+      "-path", "/migrations",
+      "-database",
+      "postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable",
+      "up"
+    ]
 
   redis:
     image: redis:7-alpine
@@ -38,18 +58,14 @@
   api:
     build:
       context: .
-      target: development  # 🔥 Uses dev stage with hot reload
+      target: development  # dev stage with hot reload
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
-    environment:
-      DB_HOST: wisdom_church_backend
     env_file:
       - .env
     volumes:
-      # 🔥 CRITICAL: Syncs your local code changes into container
       - .:/app
-      # Exclude temp directories for better performance
       - /app/tmp
       - /app/.git
     depends_on:
@@ -57,6 +73,9 @@
         condition: service_healthy
       redis:
         condition: service_healthy
+      # ✅ If you want API to wait until migrations finish,
+      # don't depend_on migrate (compose doesn't track completion well).
+      # Instead run migrations explicitly before `up` (commands below).
     networks:
       - wisdom_network
     restart: unless-stopped
