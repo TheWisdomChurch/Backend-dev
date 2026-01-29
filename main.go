@@ -69,21 +69,12 @@ func main() {
 		}
 	}
 
-	logger.Println("📋 Configuration Summary:")
-	logger.Printf("   Environment: %s", cfg.App.Environment)
-	logger.Printf("   Server Port: %s", cfg.Server.Port)
-	logger.Printf("   Database: %s", cfg.Database.DSN())
-	logger.Printf("   CORS Origins: %v", cfg.CORS.AllowedOrigins)
-	logger.Printf("   JWT Configured: %v", cfg.JWT.Secret != "")
-	logger.Printf("   Log Level: %s", cfg.App.LogLevel)
-
 	gin.SetMode(cfg.Server.GinMode)
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	// 1) DB
-	logger.Println("🔌 Connecting to database...")
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
 
 	if err != nil {
@@ -97,14 +88,10 @@ func main() {
 	}()
 
 	// 2) Verify DB
-	logger.Println("📊 Verifying database connection...")
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
-	logger.Println("✅ Database connection verified")
-
 	// 3) Init repos/services/handlers
-	logger.Println("🔄 Initializing application layers...")
 
 	// Repositories
 	testimonialRepo := repository.NewTestimonialRepository(db)
@@ -149,25 +136,27 @@ func main() {
 			cfg.Bunny.PullZone,
 			cfg.Bunny.BasePath,
 		)
-		logger.Printf("📦 Bunny uploader configured: zone=%s region=%s pull=%s base=%s",
-			cfg.Bunny.StorageZone,
-			cfg.Bunny.StorageRegion,
-			cfg.Bunny.PullZone,
-			cfg.Bunny.BasePath,
-		)
-	} else {
-		logger.Printf("⚠️ Bunny uploader not configured (uploads disabled)")
 	}
 
 	// Services
+	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
+	if templateAssetBaseURL == "" && strings.TrimSpace(cfg.Bunny.PullZone) != "" {
+		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
+		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
+			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
+		}
+		templateAssetBaseURL = base + "/email-templates"
+	}
+
 	branding := email.Branding{
-		AppName:        cfg.App.Name,
-		LogoURL:        cfg.App.LogoURL,
-		PublicURL:      cfg.App.PublicURL,
-		FrontendURL:    cfg.App.FrontendURL,
-		SupportEmail:   cfg.App.SupportEmail,
-		PastorName:     cfg.App.PastorName,
-		AdminPortalURL: cfg.App.AdminPortalURL,
+		AppName:              cfg.App.Name,
+		LogoURL:              cfg.App.LogoURL,
+		PublicURL:            cfg.App.PublicURL,
+		FrontendURL:          cfg.App.FrontendURL,
+		SupportEmail:         cfg.App.SupportEmail,
+		PastorName:           cfg.App.PastorName,
+		AdminPortalURL:       cfg.App.AdminPortalURL,
+		TemplateAssetBaseURL: templateAssetBaseURL,
 	}
 
 	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
@@ -206,7 +195,6 @@ func main() {
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 
 	// 4) Router
-	logger.Println("🚦 Setting up router and middleware...")
 	router := setupRouter(cfg,
 		testimonialHandler,
 		authHandler,
@@ -241,30 +229,6 @@ func main() {
 		}
 
 		logger.Printf("✅ Server starting on http://%s:%s", host, cfg.Server.Port)
-		logger.Printf("📊 Health check: http://%s:%s/health", host, cfg.Server.Port)
-		logger.Printf("🗣️  Testimonials: http://%s:%s/api/v1/testimonials", host, cfg.Server.Port)
-		logger.Printf("🔐 Auth: http://%s:%s/api/v1/auth/login", host, cfg.Server.Port)
-		logger.Printf("👨‍💼 Admin: http://%s:%s/api/v1/admin/dashboard", host, cfg.Server.Port)
-		logger.Printf("📅 Events: http://%s:%s/api/v1/events", host, cfg.Server.Port)
-		logger.Printf("🎬 Reels: http://%s:%s/api/v1/reels", host, cfg.Server.Port)
-		logger.Printf("📈 Analytics: http://%s:%s/api/v1/admin/analytics", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (admin): http://%s:%s/api/v1/admin/forms", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (public): http://%s:%s/api/v1/forms/:slug", host, cfg.Server.Port)
-		logger.Printf("📬 Subscribers: http://%s:%s/api/v1/subscribers", host, cfg.Server.Port)
-		logger.Printf("📬 Notifications: http://%s:%s/api/v1/admin/notifications", host, cfg.Server.Port)
-		logger.Printf("🔐 OTP: http://%s:%s/api/v1/otp", host, cfg.Server.Port)
-		logger.Printf("👥 Workforce apply: http://%s:%s/api/v1/workforce/apply", host, cfg.Server.Port)
-
-		logger.Printf("🖼️  Event image upload: http://%s:%s/api/v1/events/:id/image", host, cfg.Server.Port)
-		logger.Printf("🖼️  Event banner upload: http://%s:%s/api/v1/events/:id/banner", host, cfg.Server.Port)
-
-		if cfg.App.Environment == "development" {
-			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
-		}
-
-		logger.Printf("⚙️  Environment: %s", cfg.App.Environment)
-		logger.Printf("📈 Auto-migration: Enabled")
-		logger.Printf("🗄️  Database: %s", cfg.Database.DBName)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("❌ Failed to start server: %v", err)
@@ -567,7 +531,7 @@ func setupRouter(
 		})
 	})
 
-	if cfg.App.Environment == "development" {
+	if cfg.App.Environment == "development" && cfg.App.Debug {
 		setupRouteDebugging(router)
 	}
 
