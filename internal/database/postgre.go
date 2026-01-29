@@ -22,8 +22,15 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 
 	log.Printf("🔌 Connecting to database at %s:%s...", cfg.Host, cfg.Port)
 
+	gormLogger := logger.Default
+	if appEnv == "production" {
+		gormLogger = gormLogger.LogMode(logger.Warn)
+	} else {
+		gormLogger = gormLogger.LogMode(logger.Info)
+	}
+
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: gormLogger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -35,9 +42,17 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	}
 
 	// Connection pool settings
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	if cfg.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+	if cfg.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.ConnMaxLifetime > 0 {
+		sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	} else {
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
 
 	// Test connection
 	if err := sqlDB.Ping(); err != nil {

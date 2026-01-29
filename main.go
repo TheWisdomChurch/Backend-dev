@@ -211,12 +211,13 @@ func main() {
 
 	// 5) Server
 	server := &http.Server{
-		Addr:           ":" + cfg.Server.Port,
-		Handler:        router,
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
-		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
-		IdleTimeout:    120 * time.Second,
+		Addr:              ":" + cfg.Server.Port,
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	quit := make(chan os.Signal, 1)
