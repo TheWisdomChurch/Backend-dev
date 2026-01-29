@@ -7,7 +7,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
-	"wisdomHouse-backend/internal/utils"
+	"wisdomHouse-backend/pkg/utils"
 )
 
 type EmailTemplateHandler struct {

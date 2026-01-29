@@ -52,6 +52,7 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 			RecipientName: req.RecipientName,
 			ActionURL:     req.ActionURL,
 			Message:       req.CustomMessage,
+			HeroImageURL:  email.TemplateAssetURL(s.branding, "registration", "hero.png"),
 		})
 	case models.EmailTemplateBirthday:
 		subject = fmt.Sprintf("Happy Birthday from %s", appName)
@@ -60,6 +61,7 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 			RecipientName: req.RecipientName,
 			BirthdayDate:  req.BirthdayDate,
 			Message:       req.CustomMessage,
+			HeroImageURL:  email.TemplateAssetURL(s.branding, "birthday", "hero.png"),
 		})
 	case models.EmailTemplateOTP:
 		code := strings.TrimSpace(req.OTPCode)
@@ -76,11 +78,12 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 		}
 		subject = fmt.Sprintf("%s verification code", appName)
 		body = email.RenderOTPEmail(email.OTPTemplateData{
-			Branding:  s.branding,
-			Code:      code,
-			Purpose:   strings.TrimSpace(req.TemplateReason),
-			ExpiresAt: expires,
-			ActionURL: strings.TrimSpace(req.ActionURL),
+			Branding:     s.branding,
+			Code:         code,
+			Purpose:      strings.TrimSpace(req.TemplateReason),
+			ExpiresAt:    expires,
+			ActionURL:    strings.TrimSpace(req.ActionURL),
+			HeroImageURL: email.TemplateAssetURL(s.branding, "otp", "hero.png"),
 		})
 	default:
 		return nil, errors.New("unsupported template")

@@ -597,24 +597,15 @@ func (s *authServiceImpl) ChangePassword(userID, currentPassword, newPassword st
 	return nil
 }
 
-// DeleteAccount deletes user account (soft delete)
+// DeleteAccount deletes user account (hard delete)
 func (s *authServiceImpl) DeleteAccount(userID string) error {
 	// Get user
-	user, err := s.userRepo.FindByID(userID)
+	_, err := s.userRepo.FindByID(userID)
 	if err != nil {
 		return errors.New("user not found")
 	}
 
-	// Check if already deactivated
-	if !user.IsActive {
-		return errors.New("account already deactivated")
-	}
-
-	// Soft delete by marking as inactive
-	user.IsActive = false
-	user.UpdatedAt = time.Now()
-
-	if err := s.userRepo.Update(user); err != nil {
+	if err := s.userRepo.DeleteHard(userID); err != nil {
 		return errors.New("failed to delete account")
 	}
 

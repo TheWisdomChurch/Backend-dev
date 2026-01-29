@@ -67,6 +67,14 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, errors.New("title is required")
 	}
+	title := strings.TrimSpace(req.Title)
+	exists, err := s.repo.TitleExists(title, "")
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, errors.New("a form with this title already exists")
+	}
 
 	settingsJSON, err := encodeSettings(req.Settings)
 	if err != nil {
@@ -74,7 +82,7 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	}
 
 	form := &models.Form{
-		Title:       strings.TrimSpace(req.Title),
+		Title:       title,
 		Description: req.Description,
 		EventID:     req.EventID,
 		IsPublished: false,
@@ -105,6 +113,13 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		t := strings.TrimSpace(*req.Title)
 		if t == "" {
 			return nil, errors.New("title cannot be empty")
+		}
+		exists, err := s.repo.TitleExists(t, existing.ID)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, errors.New("a form with this title already exists")
 		}
 		existing.Title = t
 	}

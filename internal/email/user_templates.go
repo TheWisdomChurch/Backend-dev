@@ -10,6 +10,7 @@ type RegistrationTemplateData struct {
 	RecipientName string
 	ActionURL     string
 	Message       string
+	HeroImageURL  string
 }
 
 func RenderRegistrationEmail(data RegistrationTemplateData) string {
@@ -28,6 +29,7 @@ func RenderRegistrationEmail(data RegistrationTemplateData) string {
 	}
 
 	logoBlock := renderLogoBlock(b)
+	heroBlock := renderHeroImageBlock(data.HeroImageURL, b.AppName+" welcome")
 
 	actionBlock := ""
 	if actionURL != "" {
@@ -38,6 +40,7 @@ func RenderRegistrationEmail(data RegistrationTemplateData) string {
 		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
 		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
 		logoBlock +
+		heroBlock +
 		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Welcome to " + html.EscapeString(b.AppName) + "</h2>" +
 		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Hi " + name + ", thanks for registering with " + html.EscapeString(b.AppName) + ".</p>" +
 		messageBlock +
@@ -51,6 +54,7 @@ type BirthdayTemplateData struct {
 	RecipientName string
 	BirthdayDate  string
 	Message       string
+	HeroImageURL  string
 }
 
 func RenderBirthdayEmail(data BirthdayTemplateData) string {
@@ -72,11 +76,13 @@ func RenderBirthdayEmail(data BirthdayTemplateData) string {
 	}
 
 	logoBlock := renderLogoBlock(b)
+	heroBlock := renderHeroImageBlock(data.HeroImageURL, "Happy birthday")
 
 	return "<!DOCTYPE html>" +
 		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f8fafc;padding:24px;\">" +
 		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
 		logoBlock +
+		heroBlock +
 		"<h2 style=\"margin:0 0 12px;font-size:24px;color:#0b2447;\">Happy Birthday, " + name + "!</h2>" +
 		messageBlock +
 		dateLine +
