@@ -121,17 +121,18 @@ type JWTConfig struct {
 }
 
 type AppConfig struct {
-	Environment    string `json:"environment" env:"ENVIRONMENT"`
-	LogLevel       string `json:"log_level" env:"LOG_LEVEL"`
-	Name           string `json:"name" env:"APP_NAME"`
-	Version        string `json:"version" env:"APP_VERSION"`
-	Debug          bool   `json:"debug" env:"APP_DEBUG"`
-	PublicURL      string `json:"public_url" env:"APP_PUBLIC_URL"`
-	FrontendURL    string `json:"frontend_url" env:"APP_FRONTEND_URL"`
-	LogoURL        string `json:"logo_url" env:"APP_LOGO_URL"`
-	PastorName     string `json:"pastor_name" env:"APP_PASTOR_NAME"`
-	SupportEmail   string `json:"support_email" env:"APP_SUPPORT_EMAIL"`
-	AdminPortalURL string `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
+	Environment         string        `json:"environment" env:"ENVIRONMENT"`
+	LogLevel            string        `json:"log_level" env:"LOG_LEVEL"`
+	Name                string        `json:"name" env:"APP_NAME"`
+	Version             string        `json:"version" env:"APP_VERSION"`
+	Debug               bool          `json:"debug" env:"APP_DEBUG"`
+	PublicURL           string        `json:"public_url" env:"APP_PUBLIC_URL"`
+	FrontendURL         string        `json:"frontend_url" env:"APP_FRONTEND_URL"`
+	LogoURL             string        `json:"logo_url" env:"APP_LOGO_URL"`
+	PastorName          string        `json:"pastor_name" env:"APP_PASTOR_NAME"`
+	SupportEmail        string        `json:"support_email" env:"APP_SUPPORT_EMAIL"`
+	AdminPortalURL      string        `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
+	FormCleanupInterval time.Duration `json:"form_cleanup_interval" env:"APP_FORM_CLEANUP_INTERVAL"`
 }
 
 // Load loads configuration from environment variables
@@ -190,17 +191,18 @@ func Load() (*Config, error) {
 			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
 		App: AppConfig{
-			Environment:    getEnv("ENVIRONMENT", "development"),
-			LogLevel:       getEnv("LOG_LEVEL", "info"),
-			Name:           getEnv("APP_NAME", "Wisdom House Backend"),
-			Version:        getEnv("APP_VERSION", "1.0.0"),
-			Debug:          getEnvAsBool("APP_DEBUG", false),
-			PublicURL:      getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
-			FrontendURL:    getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
-			LogoURL:        getEnv("APP_LOGO_URL", ""),
-			PastorName:     getEnv("APP_PASTOR_NAME", "Senior Pastor"),
-			SupportEmail:   getEnv("APP_SUPPORT_EMAIL", ""),
-			AdminPortalURL: getEnv("APP_ADMIN_PORTAL_URL", ""),
+			Environment:         getEnv("ENVIRONMENT", "development"),
+			LogLevel:            getEnv("LOG_LEVEL", "info"),
+			Name:                getEnv("APP_NAME", "Wisdom House Backend"),
+			Version:             getEnv("APP_VERSION", "1.0.0"),
+			Debug:               getEnvAsBool("APP_DEBUG", false),
+			PublicURL:           getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
+			FrontendURL:         getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
+			LogoURL:             getEnv("APP_LOGO_URL", ""),
+			PastorName:          getEnv("APP_PASTOR_NAME", "Senior Pastor"),
+			SupportEmail:        getEnv("APP_SUPPORT_EMAIL", ""),
+			AdminPortalURL:      getEnv("APP_ADMIN_PORTAL_URL", ""),
+			FormCleanupInterval: getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
 		},
 		Bunny: BunnyConfig{
 			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),

@@ -198,6 +198,13 @@ func main() {
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 
+	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
+	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
+
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
+
 	// 4) Router
 	logger.Println("🚦 Setting up router and middleware...")
 	router := setupRouter(cfg,
@@ -211,6 +218,7 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		emailTemplateHandler,
 	)
 
 	// 5) Server
@@ -287,6 +295,37 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return nil
 }
 
+func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+	if svc == nil || interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	runCleanup := func() {
+		count, err := svc.CleanupExpiredForms(time.Now().UTC())
+		if err != nil {
+			logger.Printf("⚠️ Failed to cleanup expired forms: %v", err)
+			return
+		}
+		if count > 0 {
+			logger.Printf("🧹 Cleaned up %d expired forms", count)
+		}
+	}
+
+	runCleanup()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCleanup()
+		}
+	}
+}
+
 // setupRouter wires routes + middleware
 func setupRouter(
 	cfg *config.Config,
@@ -300,6 +339,7 @@ func setupRouter(
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
+	emailTemplateHandler *handlers.EmailTemplateHandler,
 ) *gin.Engine {
 	router := gin.New()
 	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
@@ -437,6 +477,7 @@ func setupRouter(
 
 			admin.GET("/subscribers", notificationHandler.ListSubscribers)
 			admin.POST("/notifications", notificationHandler.SendNotification)
+			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
 
 			admin.GET("/workforce", workforceHandler.List)
 			admin.POST("/workforce", workforceHandler.Create)
