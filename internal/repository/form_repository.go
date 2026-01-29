@@ -30,6 +30,7 @@ type FormRepository interface {
 	ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error)
 	CountSubmissionsByForm(start, end *time.Time) ([]models.FormSubmissionCount, error)
 	CountSubmissionsFiltered(formID string, start, end *time.Time) (int64, error)
+	DeleteExpired(now time.Time) (int64, error)
 }
 
 type formRepository struct {
@@ -91,6 +92,16 @@ func (r *formRepository) Update(form *models.Form) error {
 
 func (r *formRepository) Delete(id string) error {
 	return r.db.DB.Delete(&models.Form{}, "id = ?", id).Error
+}
+
+func (r *formRepository) DeleteExpired(now time.Time) (int64, error) {
+	result := r.db.DB.Model(&models.Form{}).
+		Where("deleted_at IS NULL").
+		Where("settings ? 'expiresAt'").
+		Where("NULLIF(settings->>'expiresAt','') IS NOT NULL").
+		Where("(settings->>'expiresAt')::timestamptz <= ?", now).
+		Delete(&models.Form{})
+	return result.RowsAffected, result.Error
 }
 
 func (r *formRepository) SlugExists(slug string) (bool, error) {
