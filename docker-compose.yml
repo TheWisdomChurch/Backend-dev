@@ -1,4 +1,6 @@
-﻿services:
+﻿version: "3.8"
+
+services:
   postgres:
     image: postgres:15-alpine
     container_name: wisdom_church_backend
@@ -10,14 +12,34 @@
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro  
+      # Migrations own schema — keep init.sql disabled
+      # - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - wisdom_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d ${DATABASE_DBNAME}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    restart: unless-stopped
+
+  # ✅ One-off migration runner (supports up/down/version/goto/etc.)
+  migrate:
+    image: migrate/migrate:v4.16.2
+    container_name: wisdom_church_migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    networks:
+      - wisdom_network
+    entrypoint: ["migrate"]
+    environment:
+      # Convenience vars so you don't repeat yourself
+      MIGRATIONS_PATH: /migrations
+      DATABASE_URL: postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable
+    # IMPORTANT: no "command:" and no "up" hardcoded
 
   redis:
     image: redis:7-alpine
@@ -34,22 +56,19 @@
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   api:
     build:
       context: .
-      target: development  # 🔥 Uses dev stage with hot reload
+      target: development
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
-    environment:
-      DB_HOST: wisdom_church_backend
     env_file:
       - .env
     volumes:
-      # 🔥 CRITICAL: Syncs your local code changes into container
       - .:/app
-      # Exclude temp directories for better performance
       - /app/tmp
       - /app/.git
     depends_on:

@@ -143,6 +143,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	meta := service.LoginMetadata{
 		IP:        c.ClientIP(),
 		UserAgent: c.Request.UserAgent(),
+		DeviceID: func() string {
+			if v, err := c.Cookie("device_id"); err == nil {
+				return v
+			}
+			return ""
+		}(),
 	}
 
 	result, err := h.service.Login(req.Email, req.Password, meta)
@@ -464,6 +470,37 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
+	deviceID := ""
+	if v, err := c.Cookie("device_id"); err == nil {
+		deviceID = v
+	}
+
+	userID := ""
+	if tokenCookie, err := c.Cookie("auth_token"); err == nil && tokenCookie != "" && len(h.jwtSecret) > 0 {
+		if t, _, err := new(jwt.Parser).ParseUnverified(tokenCookie, jwt.MapClaims{}); err == nil {
+			if claims, ok := t.Claims.(jwt.MapClaims); ok {
+				if uid, ok := claims["user_id"].(string); ok {
+					userID = uid
+				}
+			}
+		} else {
+			// try full parse to validate signature
+			if t, err2 := jwt.Parse(tokenCookie, func(token *jwt.Token) (interface{}, error) {
+				return h.jwtSecret, nil
+			}); err2 == nil {
+				if claims, ok := t.Claims.(jwt.MapClaims); ok && t.Valid {
+					if uid, ok := claims["user_id"].(string); ok {
+						userID = uid
+					}
+				}
+			}
+		}
+	}
+
+	if userID != "" && deviceID != "" {
+		_ = h.service.UntrustDevice(userID, deviceID)
+	}
+
 	h.clearAuthCookie(c)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -531,7 +568,18 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 		return
 	}
 
-	user, err := h.service.VerifyLoginOTP(req.Email, req.Code, req.Purpose)
+	meta := service.LoginMetadata{
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		DeviceID: func() string {
+			if v, err := c.Cookie("device_id"); err == nil {
+				return v
+			}
+			return ""
+		}(),
+	}
+
+	user, err := h.service.VerifyLoginOTP(req.Email, req.Code, req.Purpose, meta)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
