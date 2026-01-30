@@ -6,13 +6,14 @@ import (
 )
 
 type Branding struct {
-	AppName        string
-	LogoURL        string
-	PublicURL      string
-	FrontendURL    string
-	SupportEmail   string
-	PastorName     string
-	AdminPortalURL string
+	AppName              string
+	LogoURL              string
+	PublicURL            string
+	FrontendURL          string
+	SupportEmail         string
+	PastorName           string
+	AdminPortalURL       string
+	TemplateAssetBaseURL string
 }
 
 type AdminWelcomeTemplateData struct {
@@ -173,6 +174,9 @@ func normalizeBranding(b Branding) Branding {
 	}
 	if strings.TrimSpace(b.FrontendURL) == "" {
 		b.FrontendURL = b.PublicURL
+	}
+	if strings.TrimSpace(b.TemplateAssetBaseURL) != "" {
+		b.TemplateAssetBaseURL = strings.TrimRight(strings.TrimSpace(b.TemplateAssetBaseURL), "/")
 	}
 	return b
 }

@@ -69,22 +69,14 @@ func main() {
 		}
 	}
 
-	logger.Println("📋 Configuration Summary:")
-	logger.Printf("   Environment: %s", cfg.App.Environment)
-	logger.Printf("   Server Port: %s", cfg.Server.Port)
-	logger.Printf("   Database: %s", cfg.Database.DSN())
-	logger.Printf("   CORS Origins: %v", cfg.CORS.AllowedOrigins)
-	logger.Printf("   JWT Configured: %v", cfg.JWT.Secret != "")
-	logger.Printf("   Log Level: %s", cfg.App.LogLevel)
-
 	gin.SetMode(cfg.Server.GinMode)
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	// 1) DB
-	logger.Println("🔌 Connecting to database...")
-	db, err := database.NewDatabase(&cfg.Database)
+	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
+
 	if err != nil {
 		logger.Fatalf("❌ Failed to connect to database: %v", err)
 	}
@@ -96,14 +88,10 @@ func main() {
 	}()
 
 	// 2) Verify DB
-	logger.Println("📊 Verifying database connection...")
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
-	logger.Println("✅ Database connection verified")
-
 	// 3) Init repos/services/handlers
-	logger.Println("🔄 Initializing application layers...")
 
 	// Repositories
 	testimonialRepo := repository.NewTestimonialRepository(db)
@@ -118,6 +106,8 @@ func main() {
 	notificationRepo := repository.NewNotificationRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
+	securityEventRepo := repository.NewSecurityEventRepository(db)
+	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
 	// Email sender
 	emailSender, err := email.NewSender(
@@ -136,23 +126,6 @@ func main() {
 		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
 	}
 
-	// Services
-	testimonialService := service.NewTestimonialService(testimonialRepo)
-
-	branding := email.Branding{
-		AppName:        cfg.App.Name,
-		LogoURL:        cfg.App.LogoURL,
-		PublicURL:      cfg.App.PublicURL,
-		FrontendURL:    cfg.App.FrontendURL,
-		SupportEmail:   cfg.App.SupportEmail,
-		PastorName:     cfg.App.PastorName,
-		AdminPortalURL: cfg.App.AdminPortalURL,
-	}
-
-	otpService := service.NewOTPService(otpRepo, emailSender, branding)
-	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding)
-	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
-
 	// Bunny uploader service (optional)
 	var bunnyUploader *service.BunnyUploader
 	if cfg.Bunny.StorageZone != "" && cfg.Bunny.StorageKey != "" && cfg.Bunny.PullZone != "" && cfg.Bunny.StorageRegion != "" {
@@ -163,15 +136,34 @@ func main() {
 			cfg.Bunny.PullZone,
 			cfg.Bunny.BasePath,
 		)
-		logger.Printf("📦 Bunny uploader configured: zone=%s region=%s pull=%s base=%s",
-			cfg.Bunny.StorageZone,
-			cfg.Bunny.StorageRegion,
-			cfg.Bunny.PullZone,
-			cfg.Bunny.BasePath,
-		)
-	} else {
-		logger.Printf("⚠️ Bunny uploader not configured (uploads disabled)")
 	}
+
+	// Services
+	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
+	if templateAssetBaseURL == "" && strings.TrimSpace(cfg.Bunny.PullZone) != "" {
+		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
+		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
+			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
+		}
+		templateAssetBaseURL = base + "/email-templates"
+	}
+
+	branding := email.Branding{
+		AppName:              cfg.App.Name,
+		LogoURL:              cfg.App.LogoURL,
+		PublicURL:            cfg.App.PublicURL,
+		FrontendURL:          cfg.App.FrontendURL,
+		SupportEmail:         cfg.App.SupportEmail,
+		PastorName:           cfg.App.PastorName,
+		AdminPortalURL:       cfg.App.AdminPortalURL,
+		TemplateAssetBaseURL: templateAssetBaseURL,
+	}
+
+	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	securityService := service.NewSecurityService(securityEventRepo, trustedDeviceRepo, emailSender, branding, cfg.App.FrontendURL)
+	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding, securityService, trustedDeviceRepo)
+	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
 	// Handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
@@ -195,8 +187,14 @@ func main() {
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 
+	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
+	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
+
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
+
 	// 4) Router
-	logger.Println("🚦 Setting up router and middleware...")
 	router := setupRouter(cfg,
 		testimonialHandler,
 		authHandler,
@@ -208,16 +206,18 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		emailTemplateHandler,
 	)
 
 	// 5) Server
 	server := &http.Server{
-		Addr:           ":" + cfg.Server.Port,
-		Handler:        router,
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
-		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
-		IdleTimeout:    120 * time.Second,
+		Addr:              ":" + cfg.Server.Port,
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -230,30 +230,6 @@ func main() {
 		}
 
 		logger.Printf("✅ Server starting on http://%s:%s", host, cfg.Server.Port)
-		logger.Printf("📊 Health check: http://%s:%s/health", host, cfg.Server.Port)
-		logger.Printf("🗣️  Testimonials: http://%s:%s/api/v1/testimonials", host, cfg.Server.Port)
-		logger.Printf("🔐 Auth: http://%s:%s/api/v1/auth/login", host, cfg.Server.Port)
-		logger.Printf("👨‍💼 Admin: http://%s:%s/api/v1/admin/dashboard", host, cfg.Server.Port)
-		logger.Printf("📅 Events: http://%s:%s/api/v1/events", host, cfg.Server.Port)
-		logger.Printf("🎬 Reels: http://%s:%s/api/v1/reels", host, cfg.Server.Port)
-		logger.Printf("📈 Analytics: http://%s:%s/api/v1/admin/analytics", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (admin): http://%s:%s/api/v1/admin/forms", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (public): http://%s:%s/api/v1/forms/:slug", host, cfg.Server.Port)
-		logger.Printf("📬 Subscribers: http://%s:%s/api/v1/subscribers", host, cfg.Server.Port)
-		logger.Printf("📬 Notifications: http://%s:%s/api/v1/admin/notifications", host, cfg.Server.Port)
-		logger.Printf("🔐 OTP: http://%s:%s/api/v1/otp", host, cfg.Server.Port)
-		logger.Printf("👥 Workforce apply: http://%s:%s/api/v1/workforce/apply", host, cfg.Server.Port)
-
-		logger.Printf("🖼️  Event image upload: http://%s:%s/api/v1/events/:id/image", host, cfg.Server.Port)
-		logger.Printf("🖼️  Event banner upload: http://%s:%s/api/v1/events/:id/banner", host, cfg.Server.Port)
-
-		if cfg.App.Environment == "development" {
-			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
-		}
-
-		logger.Printf("⚙️  Environment: %s", cfg.App.Environment)
-		logger.Printf("📈 Auto-migration: Enabled")
-		logger.Printf("🗄️  Database: %s", cfg.Database.DBName)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("❌ Failed to start server: %v", err)
@@ -284,6 +260,37 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return nil
 }
 
+func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+	if svc == nil || interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	runCleanup := func() {
+		count, err := svc.CleanupExpiredForms(time.Now().UTC())
+		if err != nil {
+			logger.Printf("⚠️ Failed to cleanup expired forms: %v", err)
+			return
+		}
+		if count > 0 {
+			logger.Printf("🧹 Cleaned up %d expired forms", count)
+		}
+	}
+
+	runCleanup()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCleanup()
+		}
+	}
+}
+
 // setupRouter wires routes + middleware
 func setupRouter(
 	cfg *config.Config,
@@ -297,12 +304,14 @@ func setupRouter(
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
+	emailTemplateHandler *handlers.EmailTemplateHandler,
 ) *gin.Engine {
 	router := gin.New()
 	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
 
 	// Global middleware
 	router.Use(gin.Recovery())
+	router.Use(middleware.DeviceFingerprint(cfg.App.Environment == "production"))
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.SecurityHeaders())
@@ -433,6 +442,7 @@ func setupRouter(
 
 			admin.GET("/subscribers", notificationHandler.ListSubscribers)
 			admin.POST("/notifications", notificationHandler.SendNotification)
+			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
 
 			admin.GET("/workforce", workforceHandler.List)
 			admin.POST("/workforce", workforceHandler.Create)
@@ -522,7 +532,7 @@ func setupRouter(
 		})
 	})
 
-	if cfg.App.Environment == "development" {
+	if cfg.App.Environment == "development" && cfg.App.Debug {
 		setupRouteDebugging(router)
 	}
 
