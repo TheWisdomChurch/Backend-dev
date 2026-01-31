@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/datatypes"
 
 	"wisdomHouse-backend/internal/models"
@@ -331,12 +332,27 @@ func (s *formService) Stats(start, end *time.Time) (*models.FormStatsResponse, e
 }
 
 func (s *formService) CleanupExpiredForms(now time.Time) (int64, error) {
-	return s.repo.DeleteExpired(now)
+	count, err := s.repo.DeleteExpired(now)
+	if err != nil {
+		if isMissingRelationErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
 }
 
 /* =========================
    Helpers: settings/options
 ========================= */
+
+func isMissingRelationErr(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01"
+	}
+	return false
+}
 
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
