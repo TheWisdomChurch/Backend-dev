@@ -53,7 +53,7 @@ func (b BunnyConfig) Validate() error {
 		return nil
 	}
 
-	// If some are set, require all core + region.
+	// If some are set, require all core + region (region can default).
 	if zone == "" || key == "" || pull == "" {
 		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
 	}
@@ -64,11 +64,15 @@ func (b BunnyConfig) Validate() error {
 }
 
 type DatabaseConfig struct {
-	Host     string `json:"host" env:"DATABASE_HOST,required"`
-	Port     string `json:"port" env:"DATABASE_PORT,required"`
-	User     string `json:"user" env:"DATABASE_USERNAME,required"`
-	Password string `json:"-" env:"DATABASE_PASSWORD,required"`
-	DBName   string `json:"dbname" env:"DATABASE_DBNAME,required"`
+	// ✅ NEW: Prefer DATABASE_URL (Supabase / managed Postgres)
+	URL string `json:"url" env:"DATABASE_URL"`
+
+	// Fallback: parts-based config (local/docker Postgres)
+	Host     string `json:"host" env:"DATABASE_HOST"`
+	Port     string `json:"port" env:"DATABASE_PORT"`
+	User     string `json:"user" env:"DATABASE_USERNAME"`
+	Password string `json:"-" env:"DATABASE_PASSWORD"`
+	DBName   string `json:"dbname" env:"DATABASE_DBNAME"`
 	SSLMode  string `json:"sslmode" env:"DATABASE_SSLMODE"`
 
 	MaxIdleConns    int           `json:"max_idle_conns" env:"DATABASE_MAX_IDLE_CONNS"`
@@ -77,7 +81,7 @@ type DatabaseConfig struct {
 }
 
 type ServerConfig struct {
-	Port           string        `json:"port" env:"SERVER_PORT,required"`
+	Port           string        `json:"port" env:"SERVER_PORT"`
 	GinMode        string        `json:"gin_mode" env:"SERVER_GIN_MODE"`
 	ReadTimeout    time.Duration `json:"read_timeout" env:"SERVER_READ_TIMEOUT"`
 	WriteTimeout   time.Duration `json:"write_timeout" env:"SERVER_WRITE_TIMEOUT"`
@@ -116,7 +120,7 @@ type CORSConfig struct {
 }
 
 type JWTConfig struct {
-	Secret     string        `json:"-" env:"JWT_SECRET,required"`
+	Secret     string        `json:"-" env:"JWT_SECRET"`
 	Expiration time.Duration `json:"expiration" env:"JWT_EXPIRATION"`
 }
 
@@ -142,6 +146,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Database: DatabaseConfig{
+			URL:             getEnv("DATABASE_URL", ""), // ✅ NEW
 			Host:            getEnv("DATABASE_HOST", "localhost"),
 			Port:            getEnv("DATABASE_PORT", "5432"),
 			User:            getEnv("DATABASE_USERNAME", "postgres"),
@@ -160,7 +165,7 @@ func Load() (*Config, error) {
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 		},
 		Redis: RedisConfig{
-			URL:          getEnv("REDIS_URL", "redis://localhost:6379"),
+			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
 			Password:     getEnv("REDIS_PASSWORD", ""),
 			DB:           getEnvAsInt("REDIS_DB", 0),
 			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
@@ -209,7 +214,7 @@ func Load() (*Config, error) {
 		Bunny: BunnyConfig{
 			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),
 			StorageKey:    getEnv("BUNNYCDN_STORAGE_KEY", ""),
-			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"), // default OK, does NOT enable Bunny
+			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
 			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
 			BasePath:      strings.Trim(strings.TrimSpace(getEnv("BUNNYCDN_BASE_PATH", "uploads")), "/"),
 		},
@@ -222,16 +227,31 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// ConnectionString returns PostgreSQL connection string
+// ConnectionString returns PostgreSQL connection string.
+// ✅ Prefers DATABASE_URL if set (Supabase / managed Postgres).
+// ✅ Falls back to parts (local/docker Postgres).
 func (c *DatabaseConfig) ConnectionString() string {
+	if strings.TrimSpace(c.URL) != "" {
+		return c.URL
+	}
+
+	ssl := strings.TrimSpace(c.SSLMode)
+	if ssl == "" {
+		ssl = "disable"
+	}
+
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode,
+		c.Host, c.Port, c.User, c.Password, c.DBName, ssl,
 	)
 }
 
-// DSN returns formatted DSN without password (for logging)
+// DSN returns formatted DSN without password (for logging).
+// If DATABASE_URL is used, it redacts password in a best-effort way.
 func (c *DatabaseConfig) DSN() string {
+	if strings.TrimSpace(c.URL) != "" {
+		return redactPostgresURL(c.URL)
+	}
 	return fmt.Sprintf(
 		"postgres://%s@%s:%s/%s?sslmode=%s",
 		c.User, c.Host, c.Port, c.DBName, c.SSLMode,
@@ -239,27 +259,45 @@ func (c *DatabaseConfig) DSN() string {
 }
 
 func validateConfig(cfg *Config) error {
-	// JWT secret required always (as you designed)
-	if cfg.JWT.Secret == "" {
+	// JWT secret required always
+	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// Database password required in production
-	if cfg.App.Environment == "production" && cfg.Database.Password == "" {
-		return fmt.Errorf("DATABASE_PASSWORD is required in production")
+	// ✅ DB validation:
+	// In production, require DATABASE_URL OR full parts (including password).
+	if cfg.App.Environment == "production" {
+		if strings.TrimSpace(cfg.Database.URL) == "" {
+			// parts-based required
+			if strings.TrimSpace(cfg.Database.Host) == "" {
+				return fmt.Errorf("DATABASE_HOST is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.Port) == "" {
+				return fmt.Errorf("DATABASE_PORT is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.User) == "" {
+				return fmt.Errorf("DATABASE_USERNAME is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.DBName) == "" {
+				return fmt.Errorf("DATABASE_DBNAME is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.Password) == "" {
+				return fmt.Errorf("DATABASE_PASSWORD is required when DATABASE_URL is not set")
+			}
+		}
 	}
 
 	// SMTP sanity (optional)
-	if cfg.SMTP.Host != "" {
-		if cfg.SMTP.User == "" {
+	if strings.TrimSpace(cfg.SMTP.Host) != "" {
+		if strings.TrimSpace(cfg.SMTP.User) == "" {
 			return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
 		}
-		if cfg.SMTP.Password == "" {
+		if strings.TrimSpace(cfg.SMTP.Password) == "" {
 			return fmt.Errorf("SMTP_PASS is required when SMTP_HOST is set")
 		}
 	}
 
-	// ✅ Bunny optional (validate only if partially/fully set)
+	// Bunny optional (validate only if partially/fully set)
 	if err := cfg.Bunny.Validate(); err != nil {
 		return err
 	}
@@ -314,4 +352,27 @@ func splitEnv(key string, defaultValue []string) []string {
 		return result
 	}
 	return defaultValue
+}
+
+// redactPostgresURL removes password from a postgres URL in a best-effort way.
+// Example: postgresql://user:pass@host/db -> postgresql://user:***@host/db
+func redactPostgresURL(raw string) string {
+	// Try to redact "user:pass@"
+	// Works for common forms: postgres://user:pass@host:port/db?...
+	i := strings.Index(raw, "://")
+	if i == -1 {
+		return raw
+	}
+	rest := raw[i+3:]
+
+	at := strings.Index(rest, "@")
+	colon := strings.Index(rest, ":")
+	if colon == -1 || at == -1 || colon > at {
+		// no password pattern found
+		return raw
+	}
+
+	user := rest[:colon]
+	hostPart := rest[at:] // includes '@...'
+	return raw[:i+3] + user + ":***" + hostPart
 }
