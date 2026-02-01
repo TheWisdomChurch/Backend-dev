@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,42 +33,32 @@ type BunnyConfig struct {
 	BasePath      string `json:"base_path" env:"BUNNYCDN_BASE_PATH"`
 }
 
-// Enabled returns true only when Bunny is fully configured enough to be usable.
-// This prevents partial envs from causing startup failure.
 func (b BunnyConfig) Enabled() bool {
 	return strings.TrimSpace(b.StorageZone) != "" &&
 		strings.TrimSpace(b.StorageKey) != "" &&
 		strings.TrimSpace(b.PullZone) != ""
 }
 
-// Validate enforces required fields ONLY if Bunny is intended to be enabled.
-// If Bunny is not enabled, config is valid and uploads should be treated as disabled.
 func (b BunnyConfig) Validate() error {
 	zone := strings.TrimSpace(b.StorageZone)
 	key := strings.TrimSpace(b.StorageKey)
-	region := strings.TrimSpace(b.StorageRegion)
 	pull := strings.TrimRight(strings.TrimSpace(b.PullZone), "/")
 
-	// If none of the Bunny “core” fields are set, treat as disabled and accept.
+	// If none of the core fields are set, treat as disabled.
 	if zone == "" && key == "" && pull == "" {
 		return nil
 	}
-
-	// If some are set, require all core + region (region can default).
 	if zone == "" || key == "" || pull == "" {
 		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
 	}
-
-	// region is required once Bunny is enabled; if not provided, we default to "de".
-	_ = region
 	return nil
 }
 
 type DatabaseConfig struct {
-	// ✅ NEW: Prefer DATABASE_URL (Supabase / managed Postgres)
+	// Prefer DATABASE_URL (Supabase / managed Postgres)
 	URL string `json:"url" env:"DATABASE_URL"`
 
-	// Fallback: parts-based config (local/docker Postgres)
+	// Fallback: parts-based (local/docker Postgres)
 	Host     string `json:"host" env:"DATABASE_HOST"`
 	Port     string `json:"port" env:"DATABASE_PORT"`
 	User     string `json:"user" env:"DATABASE_USERNAME"`
@@ -125,7 +116,7 @@ type JWTConfig struct {
 }
 
 type AppConfig struct {
-	Environment               string        `json:"environment" env:"ENVIRONMENT"`
+	Environment               string        `json:"environment" env:"ENVIRONMENT"` // "development" | "production"
 	LogLevel                  string        `json:"log_level" env:"LOG_LEVEL"`
 	Name                      string        `json:"name" env:"APP_NAME"`
 	Version                   string        `json:"version" env:"APP_VERSION"`
@@ -140,13 +131,14 @@ type AppConfig struct {
 	EmailTemplateAssetBaseURL string        `json:"email_template_asset_base_url" env:"APP_EMAIL_TEMPLATE_ASSET_BASE_URL"`
 }
 
-// Load loads configuration from environment variables
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
+	env := strings.ToLower(strings.TrimSpace(getEnv("ENVIRONMENT", "development")))
+
 	cfg := &Config{
 		Database: DatabaseConfig{
-			URL:             getEnv("DATABASE_URL", ""), // ✅ NEW
+			URL:             strings.TrimSpace(getEnv("DATABASE_URL", "")),
 			Host:            getEnv("DATABASE_HOST", "localhost"),
 			Port:            getEnv("DATABASE_PORT", "5432"),
 			User:            getEnv("DATABASE_USERNAME", "postgres"),
@@ -197,7 +189,7 @@ func Load() (*Config, error) {
 			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
 		App: AppConfig{
-			Environment:               getEnv("ENVIRONMENT", "development"),
+			Environment:               env,
 			LogLevel:                  getEnv("LOG_LEVEL", "info"),
 			Name:                      getEnv("APP_NAME", "Wisdom House Backend"),
 			Version:                   getEnv("APP_VERSION", "1.0.0"),
@@ -223,52 +215,44 @@ func Load() (*Config, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
-
 	return cfg, nil
 }
 
-// ConnectionString returns PostgreSQL connection string.
-// ✅ Prefers DATABASE_URL if set (Supabase / managed Postgres).
-// ✅ Falls back to parts (local/docker Postgres).
+// ConnectionString prefers DATABASE_URL when provided; otherwise uses parts-based DSN.
 func (c *DatabaseConfig) ConnectionString() string {
 	if strings.TrimSpace(c.URL) != "" {
 		return c.URL
 	}
-
 	ssl := strings.TrimSpace(c.SSLMode)
 	if ssl == "" {
 		ssl = "disable"
 	}
-
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.DBName, ssl,
 	)
 }
 
-// DSN returns formatted DSN without password (for logging).
-// If DATABASE_URL is used, it redacts password in a best-effort way.
+// DSN returns a log-safe DSN (password redacted).
 func (c *DatabaseConfig) DSN() string {
-	if strings.TrimSpace(c.URL) != "" {
-		return redactPostgresURL(c.URL)
+	raw := strings.TrimSpace(c.URL)
+	if raw == "" {
+		// parts-based: never print password
+		return fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
+			c.Host, c.Port, c.User, c.DBName, c.SSLMode)
 	}
-	return fmt.Sprintf(
-		"postgres://%s@%s:%s/%s?sslmode=%s",
-		c.User, c.Host, c.Port, c.DBName, c.SSLMode,
-	)
+	return redactPostgresURL(raw)
 }
 
 func validateConfig(cfg *Config) error {
-	// JWT secret required always
 	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// ✅ DB validation:
-	// In production, require DATABASE_URL OR full parts (including password).
+	// In production, require DATABASE_URL (recommended),
+	// but still allow parts-based config if fully provided.
 	if cfg.App.Environment == "production" {
 		if strings.TrimSpace(cfg.Database.URL) == "" {
-			// parts-based required
 			if strings.TrimSpace(cfg.Database.Host) == "" {
 				return fmt.Errorf("DATABASE_HOST is required when DATABASE_URL is not set")
 			}
@@ -287,7 +271,6 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// SMTP sanity (optional)
 	if strings.TrimSpace(cfg.SMTP.Host) != "" {
 		if strings.TrimSpace(cfg.SMTP.User) == "" {
 			return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
@@ -297,15 +280,12 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// Bunny optional (validate only if partially/fully set)
 	if err := cfg.Bunny.Validate(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
-// Helper functions
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -354,25 +334,15 @@ func splitEnv(key string, defaultValue []string) []string {
 	return defaultValue
 }
 
-// redactPostgresURL removes password from a postgres URL in a best-effort way.
-// Example: postgresql://user:pass@host/db -> postgresql://user:***@host/db
 func redactPostgresURL(raw string) string {
-	// Try to redact "user:pass@"
-	// Works for common forms: postgres://user:pass@host:port/db?...
-	i := strings.Index(raw, "://")
-	if i == -1 {
+	u, err := url.Parse(raw)
+	if err != nil {
+		// fallback best-effort
 		return raw
 	}
-	rest := raw[i+3:]
-
-	at := strings.Index(rest, "@")
-	colon := strings.Index(rest, ":")
-	if colon == -1 || at == -1 || colon > at {
-		// no password pattern found
-		return raw
+	if u.User != nil {
+		username := u.User.Username()
+		u.User = url.UserPassword(username, "***")
 	}
-
-	user := rest[:colon]
-	hostPart := rest[at:] // includes '@...'
-	return raw[:i+3] + user + ":***" + hostPart
+	return u.String()
 }
