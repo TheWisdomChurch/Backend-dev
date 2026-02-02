@@ -46,19 +46,26 @@ func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.W
 		return nil, errors.New("department is required")
 	}
 
+	month, day, err := normalizeBirthday(req.BirthdayMonth, req.BirthdayDay)
+	if err != nil {
+		return nil, err
+	}
+
 	if req.Status != "" && req.Status != models.WorkforceStatusPending && req.Status != models.WorkforceStatusNew {
 		return nil, errors.New("new workforce requests must start as pending")
 	}
 	status := models.WorkforceStatusPending
 
 	member := &models.WorkforceMember{
-		FirstName:  strings.TrimSpace(req.FirstName),
-		LastName:   strings.TrimSpace(req.LastName),
-		Email:      strings.TrimSpace(req.Email),
-		Phone:      strings.TrimSpace(req.Phone),
-		Department: strings.TrimSpace(req.Department),
-		Status:     status,
-		Notes:      req.Notes,
+		FirstName:     strings.TrimSpace(req.FirstName),
+		LastName:      strings.TrimSpace(req.LastName),
+		Email:         strings.TrimSpace(req.Email),
+		Phone:         strings.TrimSpace(req.Phone),
+		Department:    strings.TrimSpace(req.Department),
+		Status:        status,
+		Notes:         req.Notes,
+		BirthdayMonth: month,
+		BirthdayDay:   day,
 	}
 
 	if err := s.repo.Create(member); err != nil {
@@ -89,6 +96,14 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 	}
 	if req.Notes != nil {
 		updates["notes"] = req.Notes
+	}
+	if req.BirthdayMonth != nil || req.BirthdayDay != nil {
+		month, day, err := normalizeBirthday(req.BirthdayMonth, req.BirthdayDay)
+		if err != nil {
+			return nil, err
+		}
+		updates["birthday_month"] = month
+		updates["birthday_day"] = day
 	}
 
 	if len(updates) == 0 {
@@ -124,6 +139,25 @@ func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
 
 	s.sendApprovalEmail(updated)
 	return updated, nil
+}
+
+// normalizeBirthday validates optional month/day (1-12, 1-31). Returns nil pointers when absent.
+func normalizeBirthday(monthPtr, dayPtr *int) (*int, *int, error) {
+	if monthPtr == nil && dayPtr == nil {
+		return nil, nil, nil
+	}
+	if monthPtr == nil || dayPtr == nil {
+		return nil, nil, errors.New("birthdayMonth and birthdayDay must both be provided")
+	}
+	m := *monthPtr
+	d := *dayPtr
+	if m < 1 || m > 12 {
+		return nil, nil, errors.New("birthdayMonth must be 1-12")
+	}
+	if d < 1 || d > 31 {
+		return nil, nil, errors.New("birthdayDay must be 1-31")
+	}
+	return &m, &d, nil
 }
 
 func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {

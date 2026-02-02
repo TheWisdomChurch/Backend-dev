@@ -20,6 +20,7 @@ type FormRepository interface {
 	Delete(id string) error
 
 	SlugExists(slug string) (bool, error)
+	TitleExists(title string) (bool, error)
 
 	ReplaceFields(formID string, fields []models.FormField) error
 
@@ -96,6 +97,17 @@ func (r *formRepository) Delete(id string) error {
 func (r *formRepository) SlugExists(slug string) (bool, error) {
 	var count int64
 	if err := r.db.DB.Model(&models.Form{}).Where("slug = ?", slug).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// TitleExists checks case-insensitive uniqueness of form title.
+func (r *formRepository) TitleExists(title string) (bool, error) {
+	var count int64
+	if err := r.db.DB.Model(&models.Form{}).
+		Where("LOWER(title) = LOWER(?)", title).
+		Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

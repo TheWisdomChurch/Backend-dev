@@ -11,6 +11,10 @@ type WorkforceRepository interface {
 	Create(member *models.WorkforceMember) error
 	Update(id string, updates map[string]interface{}) (*models.WorkforceMember, error)
 	Stats() (*models.WorkforceStatsResponse, error)
+
+	// Birthday helpers
+	ListByMonth(month int) ([]models.WorkforceMember, error)
+	ListByMonthDay(month, day int) ([]models.WorkforceMember, error)
 }
 
 type workforceRepository struct {
@@ -113,4 +117,22 @@ func (r *workforceRepository) Stats() (*models.WorkforceStatsResponse, error) {
 		ByDepartment:    byDepartment,
 		ByDeptAndStatus: buckets,
 	}, nil
+}
+
+func (r *workforceRepository) ListByMonth(month int) ([]models.WorkforceMember, error) {
+	var items []models.WorkforceMember
+	err := r.db.DB.
+		Where("birthday_month = ?", month).
+		Order("birthday_day ASC, last_name ASC").
+		Find(&items).Error
+	return items, err
+}
+
+func (r *workforceRepository) ListByMonthDay(month, day int) ([]models.WorkforceMember, error) {
+	var items []models.WorkforceMember
+	err := r.db.DB.
+		Where("birthday_month = ? AND birthday_day = ?", month, day).
+		Order("last_name ASC").
+		Find(&items).Error
+	return items, err
 }

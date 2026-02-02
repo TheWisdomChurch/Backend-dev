@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"wisdomHouse-backend/internal/models"
@@ -24,6 +26,7 @@ func NewEventHandler(repo *repository.EventRepository, bunny *service.BunnyUploa
 func (h *EventHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	statusFilter := c.Query("status") // optional: upcoming|happening|past
 	if page < 1 {
 		page = 1
 	}
@@ -38,8 +41,24 @@ func (h *EventHandler) List(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UTC()
+	filtered := make([]models.Event, 0, len(items))
+	for i := range items {
+		items[i].Status = deriveStatus(items[i].Date, items[i].Time, now)
+		// optional: persist if changed
+		_ = h.repo.SetStatus(items[i].ID, items[i].Status)
+		if statusFilter == "" || string(items[i].Status) == statusFilter {
+			filtered = append(filtered, items[i])
+		}
+	}
+
+	// adjust total if filter used
+	if statusFilter != "" {
+		total = int64(len(filtered))
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"data":       items,
+		"data":       filtered,
 		"total":      total,
 		"page":       page,
 		"limit":      limit,
@@ -63,6 +82,9 @@ func (h *EventHandler) Create(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
 		return
 	}
+
+	now := time.Now().UTC()
+	req.Status = deriveStatus(req.Date, req.Time, now)
 
 	if err := h.repo.Create(&req); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create event")
@@ -94,7 +116,7 @@ func (h *EventHandler) Update(c *gin.Context) {
 	existing.Time = req.Time
 	existing.Location = req.Location
 	existing.Category = req.Category
-	existing.Status = req.Status
+	existing.Status = deriveStatus(req.Date, req.Time, time.Now().UTC())
 	existing.IsFeatured = req.IsFeatured
 	existing.Tags = req.Tags
 	existing.RegisterLink = req.RegisterLink
@@ -209,4 +231,29 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		"kind":    kind,
 		"url":     cdnURL,
 	})
+}
+
+// deriveStatus determines event status from date (YYYY-MM-DD) relative to now (UTC).
+func deriveStatus(dateStr, timeStr string, now time.Time) models.EventStatus {
+	dateStr = strings.TrimSpace(dateStr)
+	if dateStr == "" {
+		return models.EventStatusUpcoming
+	}
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return models.EventStatusUpcoming
+	}
+
+	// Compare by date only
+	y1, m1, d1 := t.Date()
+	y2, m2, d2 := now.Date()
+
+	switch {
+	case y1 == y2 && m1 == m2 && d1 == d2:
+		return models.EventStatusHappening
+	case t.After(time.Date(y2, m2, d2, 23, 59, 59, 0, time.UTC)):
+		return models.EventStatusUpcoming
+	default:
+		return models.EventStatusPast
+	}
 }

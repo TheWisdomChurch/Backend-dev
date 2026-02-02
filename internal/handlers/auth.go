@@ -156,6 +156,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		status := http.StatusUnauthorized
 		if errors.Is(err, service.ErrAdminPending) {
 			status = http.StatusForbidden
+		} else if errors.Is(err, service.ErrUserNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, service.ErrWrongPassword) {
+			status = http.StatusUnauthorized
 		}
 		utils.ErrorResponse(c, status, err.Error())
 		return
@@ -559,7 +563,7 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 	var req struct {
 		Email      string `json:"email" binding:"required,email"`
 		Code       string `json:"code" binding:"required,len=6"`
-		Purpose    string `json:"purpose" binding:"required"`
+		Purpose    string `json:"purpose"`
 		RememberMe bool   `json:"rememberMe"`
 	}
 
@@ -608,5 +612,47 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 				"updated_at": user.UpdatedAt,
 			},
 		},
+	})
+}
+
+// ResendLoginOTP issues a fresh OTP for a recent login attempt.
+func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	meta := service.LoginMetadata{
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		DeviceID: func() string {
+			if v, err := c.Cookie("device_id"); err == nil {
+				return v
+			}
+			return ""
+		}(),
+	}
+
+	result, err := h.service.ResendLoginOTP(req.Email, meta)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrUserNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, service.ErrAdminPending) {
+			status = http.StatusForbidden
+		}
+		utils.ErrorResponse(c, status, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "OTP resent", gin.H{
+		"otp_required": true,
+		"purpose":      result.OTPPurpose,
+		"expires_at":   result.OTPExpiresAt,
+		"action_url":   result.OTPActionURL,
+		"email":        req.Email,
 	})
 }

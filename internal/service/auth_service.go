@@ -30,6 +30,8 @@ type authServiceImpl struct {
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
+var ErrUserNotFound = errors.New("account not found")
+var ErrWrongPassword = errors.New("incorrect password")
 
 const (
 	failedLoginThreshold  = 3
@@ -70,7 +72,10 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 
 	user, err := s.userRepo.FindByEmail(emailAddr)
 	if err != nil {
-		return nil, errors.New("invalid credentials")
+		return nil, ErrUserNotFound
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
 	}
 
 	if !user.IsActive {
@@ -87,7 +92,7 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		s.recordFailedLogin(user, meta)
-		return nil, errors.New("invalid credentials")
+		return nil, ErrWrongPassword
 	}
 
 	user.FailedLoginCount = 0
@@ -172,7 +177,20 @@ func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string, meta Login
 		Purpose: purpose,
 	})
 	if err != nil {
-		return nil, err
+		// fallback: if purpose mismatched or missing, try latest login OTP
+		if strings.Contains(err.Error(), "otp not found") && s.trustedDevs != nil {
+			if latest, err2 := s.otp.(*otpService).repo.GetLatestActiveByPrefix(emailAddr, loginOTPPurposePrefix); err2 == nil {
+				purpose = latest.Purpose
+				resp, err = s.otp.VerifyOTP(&models.VerifyOTPRequest{
+					Email:   emailAddr,
+					Code:    code,
+					Purpose: purpose,
+				})
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if resp == nil || !resp.Verified {
@@ -181,6 +199,9 @@ func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string, meta Login
 
 	user, err := s.userRepo.FindByEmail(emailAddr)
 	if err != nil {
+		return nil, errors.New("user not found")
+	}
+	if user == nil {
 		return nil, errors.New("user not found")
 	}
 
@@ -295,12 +316,12 @@ func (s *authServiceImpl) RequestPasswordReset(email, actionURL string) (*models
 	return resp, nil
 }
 
-func (s *authServiceImpl) ResetPasswordWithOTP(email, code, purpose, newPassword string) error {
+func (s *authServiceImpl) ResetPasswordWithOTP(emailStr, code, purpose, newPassword string) error {
 	if s.otp == nil {
 		return errors.New("otp service not configured")
 	}
 
-	emailAddr := normalizeEmail(email)
+	emailAddr := normalizeEmail(emailStr)
 	if emailAddr == "" || strings.TrimSpace(newPassword) == "" {
 		return errors.New("invalid request")
 	}
@@ -322,6 +343,9 @@ func (s *authServiceImpl) ResetPasswordWithOTP(email, code, purpose, newPassword
 	if err != nil {
 		return errors.New("user not found")
 	}
+	if user == nil {
+		return errors.New("user not found")
+	}
 
 	if !user.IsActive {
 		return errors.New("account is deactivated")
@@ -337,6 +361,17 @@ func (s *authServiceImpl) ResetPasswordWithOTP(email, code, purpose, newPassword
 
 	if err := s.userRepo.Update(user); err != nil {
 		return errors.New("failed to update password")
+	}
+
+	// Send confirmation email
+	if s.sender != nil {
+		body := email.RenderPasswordChangedEmail(email.PasswordChangedTemplateData{
+			Branding:  s.branding,
+			Email:     user.Email,
+			Timestamp: time.Now().UTC().Format(time.RFC1123),
+			LoginURL:  s.buildOTPLink("/login", "", user.Email),
+		})
+		_ = s.sender.SendHTML(user.Email, "Your password was changed", body)
 	}
 
 	return nil
@@ -399,6 +434,58 @@ func (s *authServiceImpl) UntrustDevice(userID, deviceID string) error {
 	return err
 }
 
+// ResendLoginOTP issues a fresh login OTP for an already authenticated email/password attempt.
+// It skips password validation; call this only after a recent OTP-required login response.
+func (s *authServiceImpl) ResendLoginOTP(email string, meta LoginMetadata) (*LoginResult, error) {
+	if s.otp == nil {
+		return nil, errors.New("otp service not configured")
+	}
+	emailAddr := normalizeEmail(email)
+	if emailAddr == "" {
+		return nil, ErrUserNotFound
+	}
+	user, err := s.userRepo.FindByEmail(emailAddr)
+	if err != nil || user == nil {
+		return nil, ErrUserNotFound
+	}
+	if !user.IsActive {
+		return nil, errors.New("account is deactivated")
+	}
+	if isAdminRole(user.Role) && !user.AdminApproved {
+		return nil, ErrAdminPending
+	}
+
+	challenge, err := generateLoginChallenge()
+	if err != nil {
+		return nil, errors.New("failed to start verification")
+	}
+	purpose := loginOTPPurposePrefix + challenge
+	actionURL := s.buildOTPLink(otpEntryPath, purpose, user.Email)
+
+	resp, err := s.otp.SendOTP(&models.SendOTPRequest{
+		Email:       user.Email,
+		Purpose:     purpose,
+		ActionURL:   actionURL,
+		ActionLabel: "Approve sign-in",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	expires := resp.ExpiresAt
+	if s.security != nil {
+		s.security.RecordEvent("otp_resend", user, meta, map[string]interface{}{"purpose": purpose})
+	}
+
+	return &LoginResult{
+		User:         sanitizeUser(user),
+		OTPRequired:  true,
+		OTPPurpose:   purpose,
+		OTPExpiresAt: &expires,
+		OTPActionURL: actionURL,
+	}, nil
+}
+
 func generateLoginChallenge() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -416,13 +503,17 @@ func sanitizeUser(user *models.User) *models.User {
 }
 
 func (s *authServiceImpl) Register(firstName, lastName, email, password, role string) (interface{}, error) {
+	emailNorm := normalizeEmail(email)
+	if emailNorm == "" {
+		return nil, errors.New("invalid email")
+	}
 	role, err := normalizeRole(role)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if user already exists
-	existingUser, _ := s.userRepo.FindByEmail(email)
+	existingUser, _ := s.userRepo.FindByEmail(emailNorm)
 	if existingUser != nil {
 		return nil, errors.New("user already exists")
 	}
@@ -437,7 +528,7 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 	user := &models.User{
 		FirstName: firstName,
 		LastName:  lastName,
-		Email:     email,
+		Email:     emailNorm,
 		Password:  string(hashedPassword),
 		Role:      role,
 		IsActive:  true,
