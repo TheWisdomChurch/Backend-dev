@@ -19,6 +19,7 @@ type AuthService interface {
 	RequestPasswordReset(email, actionURL string) (*models.SendOTPResponse, error)
 	ResetPasswordWithOTP(email, code, purpose, newPassword string) error
 	UntrustDevice(userID, deviceID string) error
+	ResendLoginOTP(email string, meta LoginMetadata) (*LoginResult, error)
 }
 
 type LoginMetadata struct {

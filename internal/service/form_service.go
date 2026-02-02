@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/datatypes"
 
@@ -17,6 +19,8 @@ import (
 
 var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
 
 type FormService interface {
 	List(page, limit int) ([]models.Form, int64, error)
@@ -66,6 +70,12 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, errors.New("title is required")
 	}
+	// Enforce unique title
+	if exists, err := s.repo.TitleExists(strings.TrimSpace(req.Title)); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, errors.New("a form with this title already exists")
+	}
 
 	settingsJSON, err := encodeSettings(req.Settings)
 	if err != nil {
@@ -104,6 +114,11 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		t := strings.TrimSpace(*req.Title)
 		if t == "" {
 			return nil, errors.New("title cannot be empty")
+		}
+		if exists, err := s.repo.TitleExists(t); err != nil {
+			return nil, err
+		} else if exists && !strings.EqualFold(existing.Title, t) {
+			return nil, errors.New("a form with this title already exists")
 		}
 		existing.Title = t
 	}
@@ -321,45 +336,137 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		}
 	}
 
+	normalizeText := func(name string, val *string, max int) (*string, error) {
+		if val == nil {
+			return nil, nil
+		}
+		v := strings.TrimSpace(*val)
+		if v == "" {
+			return nil, nil
+		}
+		if len(v) > max {
+			return nil, fmt.Errorf("%s too long (max %d chars)", name, max)
+		}
+		return &v, nil
+	}
+
+	normalizeColor := func(name string, val *string) (*string, error) {
+		if val == nil {
+			return nil, nil
+		}
+		v := strings.TrimSpace(*val)
+		if v == "" {
+			return nil, nil
+		}
+		if !hexColorRe.MatchString(v) {
+			return nil, fmt.Errorf("%s must be hex like #RRGGBB", name)
+		}
+		v = strings.ToLower(v)
+		return &v, nil
+	}
+
+	// Root-level extended fields (kept for frontend compatibility)
+	var err error
+	if s.SuccessMessage, err = normalizeText("successMessage", s.SuccessMessage, 400); err != nil {
+		return nil, err
+	}
+	if s.IntroTitle, err = normalizeText("introTitle", s.IntroTitle, 200); err != nil {
+		return nil, err
+	}
+	if s.IntroSubtitle, err = normalizeText("introSubtitle", s.IntroSubtitle, 260); err != nil {
+		return nil, err
+	}
+	if s.FormHeaderNote, err = normalizeText("formHeaderNote", s.FormHeaderNote, 400); err != nil {
+		return nil, err
+	}
+	if s.SubmitButtonText, err = normalizeText("submitButtonText", s.SubmitButtonText, 120); err != nil {
+		return nil, err
+	}
+	if s.FooterText, err = normalizeText("footerText", s.FooterText, 300); err != nil {
+		return nil, err
+	}
+
+	if s.FooterBg, err = normalizeColor("footerBg", s.FooterBg); err != nil {
+		return nil, err
+	}
+	if s.FooterTextColor, err = normalizeColor("footerTextColor", s.FooterTextColor); err != nil {
+		return nil, err
+	}
+	if s.SubmitButtonBg, err = normalizeColor("submitButtonBg", s.SubmitButtonBg); err != nil {
+		return nil, err
+	}
+	if s.SubmitButtonTextColor, err = normalizeColor("submitButtonTextColor", s.SubmitButtonTextColor); err != nil {
+		return nil, err
+	}
+
+	if s.SubmitButtonIcon != nil {
+		icon := strings.ToLower(strings.TrimSpace(*s.SubmitButtonIcon))
+		switch icon {
+		case "", "check", "send", "calendar", "cursor", "none":
+			if icon == "" {
+				s.SubmitButtonIcon = nil
+			} else {
+				s.SubmitButtonIcon = &icon
+			}
+		default:
+			return nil, fmt.Errorf("submitButtonIcon must be one of: check, send, calendar, cursor, none")
+		}
+	}
+
+	if s.LayoutMode != nil {
+		lm := strings.ToLower(strings.TrimSpace(*s.LayoutMode))
+		if lm == "" {
+			s.LayoutMode = nil
+		} else if lm != "split" && lm != "stack" {
+			return nil, fmt.Errorf("layoutMode must be split or stack")
+		} else {
+			s.LayoutMode = &lm
+		}
+	}
+
+	if s.DateFormat != nil {
+		df := strings.TrimSpace(*s.DateFormat)
+		switch df {
+		case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm":
+			s.DateFormat = &df
+		case "":
+			s.DateFormat = nil
+		default:
+			return nil, fmt.Errorf("dateFormat invalid")
+		}
+	}
+
+	if s.IntroBullets != nil {
+		clean := make([]string, 0, len(*s.IntroBullets))
+		for _, b := range *s.IntroBullets {
+			b = strings.TrimSpace(b)
+			if b != "" && utf8.RuneCountInString(b) <= 200 {
+				clean = append(clean, b)
+			}
+		}
+		s.IntroBullets = &clean
+	}
+	if s.IntroBulletSubtexts != nil {
+		clean := make([]string, 0, len(*s.IntroBulletSubtexts))
+		for _, b := range *s.IntroBulletSubtexts {
+			b = strings.TrimSpace(b)
+			if b != "" && utf8.RuneCountInString(b) <= 200 {
+				clean = append(clean, b)
+			}
+		}
+		s.IntroBulletSubtexts = &clean
+	}
+
 	// Normalize and validate optional design settings
 	if s.Design != nil {
 		d := s.Design
-
-		normalizeText := func(name string, val *string, max int) (*string, error) {
-			if val == nil {
-				return nil, nil
-			}
-			v := strings.TrimSpace(*val)
-			if v == "" {
-				return nil, nil
-			}
-			if len(v) > max {
-				return nil, fmt.Errorf("%s too long (max %d chars)", name, max)
-			}
-			return &v, nil
-		}
-
-		normalizeColor := func(name string, val *string) (*string, error) {
-			if val == nil {
-				return nil, nil
-			}
-			v := strings.TrimSpace(*val)
-			if v == "" {
-				return nil, nil
-			}
-			if !hexColorRe.MatchString(v) {
-				return nil, fmt.Errorf("%s must be hex like #RRGGBB", name)
-			}
-			v = strings.ToLower(v)
-			return &v, nil
-		}
 
 		if layout := d.Layout; layout != nil {
 			lv := strings.ToLower(strings.TrimSpace(*layout))
 			if lv == "" {
 				d.Layout = nil
-			} else if lv != "split" && lv != "stacked" && lv != "inline" {
-				return nil, fmt.Errorf("design.layout must be one of: split, stacked, inline")
+			} else if lv != "split" && lv != "stacked" && lv != "inline" && lv != "stack" {
+				return nil, fmt.Errorf("design.layout must be one of: split, stacked, stack, inline")
 			} else {
 				d.Layout = &lv
 			}
@@ -384,6 +491,21 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		if d.FooterNote, err = normalizeText("design.footerNote", d.FooterNote, 300); err != nil {
 			return nil, err
 		}
+		if d.FooterText, err = normalizeText("design.footerText", d.FooterText, 300); err != nil {
+			return nil, err
+		}
+		if d.FormHeaderNote, err = normalizeText("design.formHeaderNote", d.FormHeaderNote, 400); err != nil {
+			return nil, err
+		}
+		if d.SubmitButtonText, err = normalizeText("design.submitButtonText", d.SubmitButtonText, 120); err != nil {
+			return nil, err
+		}
+		if d.IntroTitle, err = normalizeText("design.introTitle", d.IntroTitle, 200); err != nil {
+			return nil, err
+		}
+		if d.IntroSubtitle, err = normalizeText("design.introSubtitle", d.IntroSubtitle, 260); err != nil {
+			return nil, err
+		}
 		if d.PrimaryColor, err = normalizeColor("design.primaryColor", d.PrimaryColor); err != nil {
 			return nil, err
 		}
@@ -392,6 +514,76 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		}
 		if d.AccentColor, err = normalizeColor("design.accentColor", d.AccentColor); err != nil {
 			return nil, err
+		}
+		if d.FooterBg, err = normalizeColor("design.footerBg", d.FooterBg); err != nil {
+			return nil, err
+		}
+		if d.FooterTextColor, err = normalizeColor("design.footerTextColor", d.FooterTextColor); err != nil {
+			return nil, err
+		}
+		if d.SubmitButtonBg, err = normalizeColor("design.submitButtonBg", d.SubmitButtonBg); err != nil {
+			return nil, err
+		}
+		if d.SubmitButtonTextColor, err = normalizeColor("design.submitButtonTextColor", d.SubmitButtonTextColor); err != nil {
+			return nil, err
+		}
+
+		if d.SubmitButtonIcon != nil {
+			icon := strings.ToLower(strings.TrimSpace(*d.SubmitButtonIcon))
+			switch icon {
+			case "", "check", "send", "calendar", "cursor", "none":
+				if icon == "" {
+					d.SubmitButtonIcon = nil
+				} else {
+					d.SubmitButtonIcon = &icon
+				}
+			default:
+				return nil, fmt.Errorf("design.submitButtonIcon must be one of: check, send, calendar, cursor, none")
+			}
+		}
+
+		if d.LayoutMode != nil {
+			lm := strings.ToLower(strings.TrimSpace(*d.LayoutMode))
+			if lm == "" {
+				d.LayoutMode = nil
+			} else if lm != "split" && lm != "stack" {
+				return nil, fmt.Errorf("design.layoutMode must be split or stack")
+			} else {
+				d.LayoutMode = &lm
+			}
+		}
+
+		if d.DateFormat != nil {
+			df := strings.TrimSpace(*d.DateFormat)
+			switch df {
+			case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm":
+				d.DateFormat = &df
+			case "":
+				d.DateFormat = nil
+			default:
+				return nil, fmt.Errorf("design.dateFormat invalid")
+			}
+		}
+
+		if d.IntroBullets != nil {
+			clean := make([]string, 0, len(*d.IntroBullets))
+			for _, b := range *d.IntroBullets {
+				b = strings.TrimSpace(b)
+				if b != "" && utf8.RuneCountInString(b) <= 200 {
+					clean = append(clean, b)
+				}
+			}
+			d.IntroBullets = &clean
+		}
+		if d.IntroBulletSubtext != nil {
+			clean := make([]string, 0, len(*d.IntroBulletSubtext))
+			for _, b := range *d.IntroBulletSubtext {
+				b = strings.TrimSpace(b)
+				if b != "" && utf8.RuneCountInString(b) <= 200 {
+					clean = append(clean, b)
+				}
+			}
+			d.IntroBulletSubtext = &clean
 		}
 	}
 
@@ -490,14 +682,20 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 			optionsJSON = datatypes.JSON([]byte("null"))
 		}
 
+		validationJSON, err := normalizeValidationRules(typ, f.Validation)
+		if err != nil {
+			return nil, fmt.Errorf("field[%d]: %w", i, err)
+		}
+
 		out = append(out, models.FormField{
-			FormID:   formID,
-			Key:      key,
-			Label:    label,
-			Type:     models.FormFieldType(typ),
-			Required: f.Required,
-			Options:  optionsJSON,
-			Order:    f.Order,
+			FormID:     formID,
+			Key:        key,
+			Label:      label,
+			Type:       models.FormFieldType(typ),
+			Required:   f.Required,
+			Options:    optionsJSON,
+			Validation: validationJSON,
+			Order:      f.Order,
 		})
 	}
 
@@ -521,6 +719,92 @@ func isValidFieldType(t string) bool {
 	}
 }
 
+// normalizeValidationRules ensures provided validation config is coherent for the field type
+// and returns a compact JSON blob (or null) to store.
+func normalizeValidationRules(fieldType string, v *models.FormFieldValidation) (datatypes.JSON, error) {
+	if v == nil {
+		return datatypes.JSON([]byte("null")), nil
+	}
+
+	rules := *v // shallow copy so we can sanitize
+
+	// Basic numeric checks
+	if rules.MinLength != nil && *rules.MinLength < 0 {
+		return nil, fmt.Errorf("minLength cannot be negative")
+	}
+	if rules.MaxLength != nil && *rules.MaxLength < 0 {
+		return nil, fmt.Errorf("maxLength cannot be negative")
+	}
+	if rules.MinLength != nil && rules.MaxLength != nil && *rules.MaxLength < *rules.MinLength {
+		return nil, fmt.Errorf("maxLength cannot be less than minLength")
+	}
+	if rules.MaxWords != nil && *rules.MaxWords <= 0 {
+		return nil, fmt.Errorf("maxWords must be greater than 0")
+	}
+	if rules.Min != nil && rules.Max != nil && *rules.Max < *rules.Min {
+		return nil, fmt.Errorf("max cannot be less than min")
+	}
+
+	// Allow numeric bounds only on number fields
+	if fieldType != string(models.FieldNumber) && (rules.Min != nil || rules.Max != nil) {
+		return nil, fmt.Errorf("min/max are only valid for number fields")
+	}
+
+	// Allow string-oriented rules only on string-input fields
+	if !isStringFieldType(fieldType) {
+		if rules.MinLength != nil || rules.MaxLength != nil || rules.MaxWords != nil || rules.Pattern != nil {
+			return nil, fmt.Errorf("string validation rules are not applicable to this field type")
+		}
+	}
+
+	if rules.Pattern != nil {
+		p := strings.TrimSpace(*rules.Pattern)
+		if p == "" {
+			rules.Pattern = nil
+		} else {
+			if _, err := regexp.Compile(p); err != nil {
+				return nil, fmt.Errorf("pattern is not a valid regex")
+			}
+			rules.Pattern = &p
+		}
+	}
+
+	if !hasAnyValidationRule(&rules) {
+		return datatypes.JSON([]byte("null")), nil
+	}
+
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return nil, errors.New("invalid validation rules")
+	}
+	return datatypes.JSON(b), nil
+}
+
+func isStringFieldType(t string) bool {
+	switch t {
+	case string(models.FieldText),
+		string(models.FieldEmail),
+		string(models.FieldTel),
+		string(models.FieldTextarea),
+		string(models.FieldSelect),
+		string(models.FieldRadio),
+		string(models.FieldDate):
+		return true
+	default:
+		return false
+	}
+}
+
+func hasAnyValidationRule(v *models.FormFieldValidation) bool {
+	return v != nil &&
+		(v.MinLength != nil ||
+			v.MaxLength != nil ||
+			v.MaxWords != nil ||
+			v.Pattern != nil ||
+			v.Min != nil ||
+			v.Max != nil)
+}
+
 /* =========================
    Submission validation
 ========================= */
@@ -540,52 +824,177 @@ func validateSubmission(fields []models.FormField, values map[string]any) error 
 	for _, f := range fields {
 		v, exists := values[f.Key]
 
-		if f.Required {
-			if !exists || v == nil {
-				return fmt.Errorf("field '%s' is required", f.Key)
-			}
-			if f.Type == models.FieldCheckbox {
-				b, ok := v.(bool)
-				if !ok || !b {
-					return fmt.Errorf("field '%s' must be accepted", f.Key)
-				}
-			} else {
-				sv, ok := v.(string)
-				if !ok || strings.TrimSpace(sv) == "" {
-					return fmt.Errorf("field '%s' is required", f.Key)
-				}
-			}
-		}
+		rules := decodeValidation(f.Validation)
 
 		if !exists || v == nil {
+			if f.Required {
+				return fmt.Errorf("field '%s' is required", f.Key)
+			}
 			continue
 		}
 
 		switch f.Type {
 		case models.FieldCheckbox:
-			if _, ok := v.(bool); !ok {
+			b, ok := v.(bool)
+			if !ok {
 				return fmt.Errorf("field '%s' must be boolean", f.Key)
 			}
-		default:
-			sv, ok := v.(string)
+			if f.Required && !b {
+				return fmt.Errorf("field '%s' must be accepted", f.Key)
+			}
+
+		case models.FieldNumber:
+			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+				if f.Required {
+					return fmt.Errorf("field '%s' is required", f.Key)
+				}
+				continue
+			}
+
+			num, err := toFloat64(v)
+			if err != nil {
+				return fmt.Errorf("field '%s' must be a number", f.Key)
+			}
+
+			if rules != nil {
+				if rules.Min != nil && num < *rules.Min {
+					return fmt.Errorf("field '%s' must be >= %g", f.Key, *rules.Min)
+				}
+				if rules.Max != nil && num > *rules.Max {
+					return fmt.Errorf("field '%s' must be <= %g", f.Key, *rules.Max)
+				}
+			}
+
+		case models.FieldSelect, models.FieldRadio:
+			sv, ok := valueToString(v)
 			if !ok {
 				return fmt.Errorf("field '%s' must be string", f.Key)
 			}
+			sv = strings.TrimSpace(sv)
+			if sv == "" {
+				if f.Required {
+					return fmt.Errorf("field '%s' is required", f.Key)
+				}
+				continue
+			}
 
-			if f.Type == models.FieldSelect || f.Type == models.FieldRadio {
-				opts := decodeOptionsToDTO(f.Options)
-				allowed := map[string]bool{}
-				for _, o := range opts {
-					allowed[o.Value] = true
+			opts := decodeOptionsToDTO(f.Options)
+			allowed := map[string]bool{}
+			for _, o := range opts {
+				allowed[o.Value] = true
+			}
+			if !allowed[sv] {
+				return fmt.Errorf("field '%s' has invalid option", f.Key)
+			}
+
+			if err := applyStringRules(f.Key, sv, rules); err != nil {
+				return err
+			}
+
+		default: // text, textarea, email, tel, date
+			sv, ok := valueToString(v)
+			if !ok {
+				return fmt.Errorf("field '%s' must be string", f.Key)
+			}
+			sv = strings.TrimSpace(sv)
+			if sv == "" {
+				if f.Required {
+					return fmt.Errorf("field '%s' is required", f.Key)
 				}
-				if !allowed[sv] {
-					return fmt.Errorf("field '%s' has invalid option", f.Key)
+				continue
+			}
+
+			switch f.Type {
+			case models.FieldEmail:
+				if !emailRe.MatchString(sv) {
+					return fmt.Errorf("field '%s' must be a valid email", f.Key)
 				}
+			case models.FieldTel:
+				if !phoneRe.MatchString(sv) {
+					return fmt.Errorf("field '%s' must be a valid phone number", f.Key)
+				}
+			case models.FieldDate:
+				if _, err := time.Parse("2006-01-02", sv); err != nil {
+					return fmt.Errorf("field '%s' must be a valid date (YYYY-MM-DD)", f.Key)
+				}
+			}
+
+			if err := applyStringRules(f.Key, sv, rules); err != nil {
+				return err
 			}
 		}
 	}
 
 	return nil
+}
+
+func applyStringRules(key, value string, rules *models.FormFieldValidation) error {
+	if rules == nil {
+		return nil
+	}
+
+	runeLen := utf8.RuneCountInString(value)
+	if rules.MinLength != nil && runeLen < *rules.MinLength {
+		return fmt.Errorf("field '%s' must be at least %d characters", key, *rules.MinLength)
+	}
+	if rules.MaxLength != nil && runeLen > *rules.MaxLength {
+		return fmt.Errorf("field '%s' must be at most %d characters", key, *rules.MaxLength)
+	}
+	if rules.MaxWords != nil {
+		if wc := countWords(value); wc > *rules.MaxWords {
+			return fmt.Errorf("field '%s' must be at most %d words", key, *rules.MaxWords)
+		}
+	}
+	if rules.Pattern != nil {
+		re := regexp.MustCompile(*rules.Pattern)
+		if !re.MatchString(value) {
+			return fmt.Errorf("field '%s' does not match the required format", key)
+		}
+	}
+	return nil
+}
+
+func countWords(s string) int {
+	return len(strings.Fields(s))
+}
+
+func valueToString(v any) (string, bool) {
+	s, ok := v.(string)
+	return s, ok
+}
+
+func toFloat64(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case float32:
+		return float64(n), nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	case json.Number:
+		return n.Float64()
+	case string:
+		s := strings.TrimSpace(n)
+		return strconv.ParseFloat(s, 64)
+	default:
+		return 0, fmt.Errorf("not a number")
+	}
+}
+
+func decodeValidation(j datatypes.JSON) *models.FormFieldValidation {
+	if len(j) == 0 || string(j) == "null" {
+		return nil
+	}
+	var v models.FormFieldValidation
+	if err := json.Unmarshal(j, &v); err != nil {
+		return nil
+	}
+	if !hasAnyValidationRule(&v) {
+		return nil
+	}
+	return &v
 }
 
 // extractCommonFields pulls common contact fields from dynamic values map for analytics.

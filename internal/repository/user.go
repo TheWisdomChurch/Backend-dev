@@ -2,6 +2,7 @@
 package repository
 
 import (
+	"errors"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 
@@ -37,6 +38,9 @@ func (r *userRepository) FindByEmail(email string) (*models.User, error) {
 	var user models.User
 	err := r.db.Where("email = ?", email).First(&user).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &user, nil

@@ -22,19 +22,32 @@ const (
 	FieldDate     FormFieldType = "date"
 )
 
+// FormFieldValidation defines optional server-side validation rules for a field.
+type FormFieldValidation struct {
+	MinLength *int     `json:"minLength,omitempty"`
+	MaxLength *int     `json:"maxLength,omitempty"`
+	MaxWords  *int     `json:"maxWords,omitempty"`
+	Pattern   *string  `json:"pattern,omitempty"`
+	Min       *float64 `json:"min,omitempty"`
+	Max       *float64 `json:"max,omitempty"`
+}
+
 type FormField struct {
 	ID string `gorm:"primaryKey;type:uuid;default:uuid_generate_v4()" json:"id"`
 
 	FormID string `gorm:"type:uuid;not null;index" json:"formId"`
 
 	// "key" is used in submission values map
-	Key      string       `gorm:"size:100;not null" json:"key"`
-	Label    string       `gorm:"size:255;not null" json:"label"`
+	Key      string        `gorm:"size:100;not null" json:"key"`
+	Label    string        `gorm:"size:255;not null" json:"label"`
 	Type     FormFieldType `gorm:"size:30;not null" json:"type"`
-	Required bool         `gorm:"not null;default:false" json:"required"`
+	Required bool          `gorm:"not null;default:false" json:"required"`
 
 	// JSON array of options: [{label,value}]
 	Options datatypes.JSON `gorm:"type:jsonb" json:"options,omitempty"`
+
+	// Validation rules blob; interpreted by the service during submission validation
+	Validation datatypes.JSON `gorm:"type:jsonb" json:"validation,omitempty"`
 
 	Order int `gorm:"not null;default:0" json:"order"`
 
