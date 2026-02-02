@@ -83,3 +83,10 @@ func (r *EventRepository) SetBannerImage(id string, bannerURL string, bannerKey 
 		Where("id = ?", id).
 		Updates(updates).Error
 }
+
+// SetStatus persists a status update; best-effort for auto-rollover.
+func (r *EventRepository) SetStatus(id string, status models.EventStatus) error {
+	return r.db.Model(&models.Event{}).
+		Where("id = ?", id).
+		Update("status", status).Error
+}

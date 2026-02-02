@@ -7,6 +7,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -20,8 +21,7 @@ func NewEmailTemplateHandler(svc service.EmailTemplateService) *EmailTemplateHan
 
 func (h *EmailTemplateHandler) SendTemplate(c *gin.Context) {
 	var req models.SendTemplateEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 

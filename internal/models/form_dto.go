@@ -2,18 +2,19 @@
 package models
 
 type FormFieldOptionDTO struct {
-	Label string `json:"label"`
-	Value string `json:"value"`
+	Label string `json:"label" binding:"required"`
+	Value string `json:"value" binding:"required"`
 }
 
 type FormFieldDTO struct {
-	ID       string               `json:"id,omitempty"`
-	Key      string               `json:"key"`
-	Label    string               `json:"label"`
-	Type     string               `json:"type"`
-	Required bool                 `json:"required"`
-	Options  []FormFieldOptionDTO `json:"options,omitempty"`
-	Order    int                  `json:"order"`
+	ID         string               `json:"id,omitempty"`
+	Key        string               `json:"key" binding:"required"`
+	Label      string               `json:"label" binding:"required"`
+	Type       string               `json:"type" binding:"required,oneof=text email tel textarea select checkbox radio number date"`
+	Required   bool                 `json:"required"`
+	Options    []FormFieldOptionDTO `json:"options,omitempty" binding:"omitempty,dive"`
+	Validation *FormFieldValidation `json:"validation,omitempty"`
+	Order      int                  `json:"order"`
 }
 
 type FormDesignSettingsDTO struct {
@@ -27,22 +28,58 @@ type FormDesignSettingsDTO struct {
 	CTAButtonLabel  *string `json:"ctaButtonLabel,omitempty"`
 	PrivacyCopy     *string `json:"privacyCopy,omitempty"`
 	FooterNote      *string `json:"footerNote,omitempty"`
+
+	// Extended footer controls for the new builder
+	FooterText      *string `json:"footerText,omitempty"`
+	FooterBg        *string `json:"footerBg,omitempty"`
+	FooterTextColor *string `json:"footerTextColor,omitempty"`
+
+	// Button styling
+	SubmitButtonText      *string `json:"submitButtonText,omitempty"`
+	SubmitButtonBg        *string `json:"submitButtonBg,omitempty"`
+	SubmitButtonTextColor *string `json:"submitButtonTextColor,omitempty"`
+	SubmitButtonIcon      *string `json:"submitButtonIcon,omitempty"` // check|send|calendar|cursor|none
+
+	// Hero/intro copy used in builder previews
+	IntroTitle         *string   `json:"introTitle,omitempty"`
+	IntroSubtitle      *string   `json:"introSubtitle,omitempty"`
+	IntroBullets       *[]string `json:"introBullets,omitempty"`
+	IntroBulletSubtext *[]string `json:"introBulletSubtexts,omitempty"`
+	LayoutMode         *string   `json:"layoutMode,omitempty"` // split|stack
+	DateFormat         *string   `json:"dateFormat,omitempty"` // yyyy-mm-dd etc
+	FormHeaderNote     *string   `json:"formHeaderNote,omitempty"`
 }
 
 type FormSettingsDTO struct {
 	Capacity       *int                   `json:"capacity,omitempty"`
-	ClosesAt       *string                `json:"closesAt,omitempty"`       // ISO string
-	ExpiresAt      *string                `json:"expiresAt,omitempty"`      // ISO string
-	SuccessMessage *string                `json:"successMessage,omitempty"` // optional
+	ClosesAt       *string                `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
+	ExpiresAt      *string                `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
+	SuccessMessage *string                `json:"successMessage,omitempty"`                        // optional
 	Design         *FormDesignSettingsDTO `json:"design,omitempty"`
+
+	// Extended builder settings (kept at root for backward compat with frontend)
+	IntroTitle            *string   `json:"introTitle,omitempty"`
+	IntroSubtitle         *string   `json:"introSubtitle,omitempty"`
+	IntroBullets          *[]string `json:"introBullets,omitempty"`
+	IntroBulletSubtexts   *[]string `json:"introBulletSubtexts,omitempty"`
+	LayoutMode            *string   `json:"layoutMode,omitempty"`
+	DateFormat            *string   `json:"dateFormat,omitempty"`
+	FooterText            *string   `json:"footerText,omitempty"`
+	FooterBg              *string   `json:"footerBg,omitempty"`
+	FooterTextColor       *string   `json:"footerTextColor,omitempty"`
+	SubmitButtonText      *string   `json:"submitButtonText,omitempty"`
+	SubmitButtonBg        *string   `json:"submitButtonBg,omitempty"`
+	SubmitButtonTextColor *string   `json:"submitButtonTextColor,omitempty"`
+	SubmitButtonIcon      *string   `json:"submitButtonIcon,omitempty"`
+	FormHeaderNote        *string   `json:"formHeaderNote,omitempty"`
 }
 
 type CreateFormRequest struct {
-	Title       string           `json:"title"`
+	Title       string           `json:"title" binding:"required"`
 	Description *string          `json:"description,omitempty"`
 	EventID     *string          `json:"eventId,omitempty"`
 	Settings    *FormSettingsDTO `json:"settings,omitempty"`
-	Fields      []FormFieldDTO   `json:"fields"`
+	Fields      []FormFieldDTO   `json:"fields" binding:"omitempty,dive"`
 }
 
 type UpdateFormRequest struct {
@@ -54,7 +91,7 @@ type UpdateFormRequest struct {
 }
 
 type SubmitFormRequest struct {
-	Values map[string]any `json:"values"`
+	Values map[string]any `json:"values" binding:"required"`
 }
 
 type PublicFormPayload struct {
