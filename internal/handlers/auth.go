@@ -12,6 +12,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -135,8 +136,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		RememberMe bool   `json:"rememberMe"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -212,8 +212,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		Role      string `json:"role" binding:"required,oneof=admin super_admin"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -310,8 +309,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		Email     string `json:"email" binding:"omitempty,email"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -362,8 +360,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		ConfirmPassword string `json:"confirmPassword"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -518,8 +515,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		Email string `json:"email" binding:"required,email"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -541,8 +537,7 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		ConfirmPassword string `json:"confirmPassword"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -567,8 +562,7 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 		RememberMe bool   `json:"rememberMe"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -620,8 +614,7 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request: "+err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
