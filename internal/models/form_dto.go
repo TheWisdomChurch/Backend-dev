@@ -53,6 +53,7 @@ type FormDesignSettingsDTO struct {
 type FormSettingsDTO struct {
 	Capacity       *int                   `json:"capacity,omitempty"`
 	ClosesAt       *string                `json:"closesAt,omitempty"`       // ISO string
+	ExpiresAt      *string                `json:"expiresAt,omitempty"`      // ISO string
 	SuccessMessage *string                `json:"successMessage,omitempty"` // optional
 	Design         *FormDesignSettingsDTO `json:"design,omitempty"`
 

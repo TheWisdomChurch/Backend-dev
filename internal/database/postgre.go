@@ -1,8 +1,11 @@
+// internal/database/postgres.go
 package database
 
 import (
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"wisdomHouse-backend/internal/config"
@@ -17,13 +20,23 @@ type Database struct {
 	*gorm.DB
 }
 
+// NewDatabase connects using cfg.ConnectionString() (DATABASE_URL preferred).
+// appEnv should be "development" or "production" (from cfg.App.Environment).
 func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	dsn := cfg.ConnectionString()
 
-	log.Printf("🔌 Connecting to database at %s:%s...", cfg.Host, cfg.Port)
+	// ✅ Log the actual DSN used (password redacted)
+	log.Printf("🔌 Connecting to database: %s", cfg.DSN())
+
+	gormLogger := logger.Default
+	if strings.ToLower(appEnv) == "production" {
+		gormLogger = gormLogger.LogMode(logger.Warn)
+	} else {
+		gormLogger = gormLogger.LogMode(logger.Info)
+	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: gormLogger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -35,55 +48,73 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	}
 
 	// Connection pool settings
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	if cfg.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+	if cfg.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.ConnMaxLifetime > 0 {
+		sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	} else {
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
 
 	// Test connection
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-
 	log.Println("✅ Database connection established successfully")
 
-	// Ensure extensions needed by your schema/defaults exist.
-	// - uuid_generate_v4() => uuid-ossp
-	// - gen_random_uuid()  => pgcrypto
-	if err := ensureExtensions(db); err != nil {
+	// Extensions (best-effort in production)
+	if err := ensureExtensions(db, appEnv); err != nil {
 		return nil, fmt.Errorf("failed to ensure database extensions: %w", err)
 	}
 
-	// ✅ Dev convenience, Prod safety
-	if appEnv != "production" {
+	// ✅ Seamless behavior:
+	// - In dev: AutoMigrate runs automatically
+	// - In prod: AutoMigrate runs ONLY if RUN_AUTOMIGRATE=true (migrate job)
+	runAuto := strings.ToLower(appEnv) != "production" || strings.ToLower(os.Getenv("RUN_AUTOMIGRATE")) == "true"
+	if runAuto {
 		if err := AutoMigrate(db); err != nil {
 			return nil, fmt.Errorf("failed to run automigrate: %w", err)
 		}
 	} else {
-		log.Println("ℹ️ Production mode: AutoMigrate is DISABLED. Run SQL migrations with the migrate service/CI step.")
+		log.Println("ℹ️ Production mode: AutoMigrate is disabled. Run migrate job with RUN_AUTOMIGRATE=true.")
 	}
 
 	return &Database{db}, nil
 }
 
-func ensureExtensions(db *gorm.DB) error {
+func ensureExtensions(db *gorm.DB, appEnv string) error {
 	log.Println("🧩 Ensuring required Postgres extensions...")
 
-	// Important: extensions require sufficient privileges.
-	// In managed Postgres you may need to enable them via provider UI, but in Docker you can run these.
-	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`).Error; err != nil {
-		return fmt.Errorf(`create extension "uuid-ossp": %w`, err)
+	// In managed Postgres (Supabase), extension creation may require enabling in dashboard.
+	// So in production we warn instead of hard-failing.
+	tryExec := func(sql string, name string) error {
+		if err := db.Exec(sql).Error; err != nil {
+			if strings.ToLower(appEnv) == "production" {
+				log.Printf("⚠️ Could not ensure extension %s (enable it in Supabase if required): %v", name, err)
+				return nil
+			}
+			return fmt.Errorf("ensure extension %s: %w", name, err)
+		}
+		return nil
 	}
 
-	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`).Error; err != nil {
-		return fmt.Errorf(`create extension "pgcrypto": %w`, err)
+	if err := tryExec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`, "uuid-ossp"); err != nil {
+		return err
+	}
+	if err := tryExec(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`, "pgcrypto"); err != nil {
+		return err
 	}
 
-	log.Println("✅ Extensions ready")
+	log.Println("✅ Extensions check done")
 	return nil
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	log.Println("🔄 Running database AutoMigrate (non-production)...")
+	log.Println("🔄 Running database AutoMigrate...")
 
 	err := db.AutoMigrate(
 		&models.User{},

@@ -89,12 +89,13 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 	}
 
 	body := email.RenderOTPEmail(email.OTPTemplateData{
-		Branding:    s.branding,
-		Code:        code,
-		Purpose:     purpose,
-		ExpiresAt:   expiresAt,
-		ActionURL:   strings.TrimSpace(req.ActionURL),
-		ActionLabel: strings.TrimSpace(req.ActionLabel),
+		Branding:     s.branding,
+		Code:         code,
+		Purpose:      purpose,
+		ExpiresAt:    expiresAt,
+		ActionURL:    strings.TrimSpace(req.ActionURL),
+		ActionLabel:  strings.TrimSpace(req.ActionLabel),
+		HeroImageURL: email.TemplateAssetURL(s.branding, "otp", "hero.png"),
 	})
 
 	if err := s.sender.SendHTML(emailAddr, "Your Wisdom House verification code", body); err != nil {

@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -32,43 +33,37 @@ type BunnyConfig struct {
 	BasePath      string `json:"base_path" env:"BUNNYCDN_BASE_PATH"`
 }
 
-// Enabled returns true only when Bunny is fully configured enough to be usable.
-// This prevents partial envs from causing startup failure.
 func (b BunnyConfig) Enabled() bool {
 	return strings.TrimSpace(b.StorageZone) != "" &&
 		strings.TrimSpace(b.StorageKey) != "" &&
 		strings.TrimSpace(b.PullZone) != ""
 }
 
-// Validate enforces required fields ONLY if Bunny is intended to be enabled.
-// If Bunny is not enabled, config is valid and uploads should be treated as disabled.
 func (b BunnyConfig) Validate() error {
 	zone := strings.TrimSpace(b.StorageZone)
 	key := strings.TrimSpace(b.StorageKey)
-	region := strings.TrimSpace(b.StorageRegion)
 	pull := strings.TrimRight(strings.TrimSpace(b.PullZone), "/")
 
-	// If none of the Bunny “core” fields are set, treat as disabled and accept.
+	// If none of the core fields are set, treat as disabled.
 	if zone == "" && key == "" && pull == "" {
 		return nil
 	}
-
-	// If some are set, require all core + region.
 	if zone == "" || key == "" || pull == "" {
 		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
 	}
-
-	// region is required once Bunny is enabled; if not provided, we default to "de".
-	_ = region
 	return nil
 }
 
 type DatabaseConfig struct {
-	Host     string `json:"host" env:"DATABASE_HOST,required"`
-	Port     string `json:"port" env:"DATABASE_PORT,required"`
-	User     string `json:"user" env:"DATABASE_USERNAME,required"`
-	Password string `json:"-" env:"DATABASE_PASSWORD,required"`
-	DBName   string `json:"dbname" env:"DATABASE_DBNAME,required"`
+	// Prefer DATABASE_URL (Supabase / managed Postgres)
+	URL string `json:"url" env:"DATABASE_URL"`
+
+	// Fallback: parts-based (local/docker Postgres)
+	Host     string `json:"host" env:"DATABASE_HOST"`
+	Port     string `json:"port" env:"DATABASE_PORT"`
+	User     string `json:"user" env:"DATABASE_USERNAME"`
+	Password string `json:"-" env:"DATABASE_PASSWORD"`
+	DBName   string `json:"dbname" env:"DATABASE_DBNAME"`
 	SSLMode  string `json:"sslmode" env:"DATABASE_SSLMODE"`
 
 	MaxIdleConns    int           `json:"max_idle_conns" env:"DATABASE_MAX_IDLE_CONNS"`
@@ -77,7 +72,7 @@ type DatabaseConfig struct {
 }
 
 type ServerConfig struct {
-	Port           string        `json:"port" env:"SERVER_PORT,required"`
+	Port           string        `json:"port" env:"SERVER_PORT"`
 	GinMode        string        `json:"gin_mode" env:"SERVER_GIN_MODE"`
 	ReadTimeout    time.Duration `json:"read_timeout" env:"SERVER_READ_TIMEOUT"`
 	WriteTimeout   time.Duration `json:"write_timeout" env:"SERVER_WRITE_TIMEOUT"`
@@ -116,30 +111,34 @@ type CORSConfig struct {
 }
 
 type JWTConfig struct {
-	Secret     string        `json:"-" env:"JWT_SECRET,required"`
+	Secret     string        `json:"-" env:"JWT_SECRET"`
 	Expiration time.Duration `json:"expiration" env:"JWT_EXPIRATION"`
 }
 
 type AppConfig struct {
-	Environment    string `json:"environment" env:"ENVIRONMENT"`
-	LogLevel       string `json:"log_level" env:"LOG_LEVEL"`
-	Name           string `json:"name" env:"APP_NAME"`
-	Version        string `json:"version" env:"APP_VERSION"`
-	Debug          bool   `json:"debug" env:"APP_DEBUG"`
-	PublicURL      string `json:"public_url" env:"APP_PUBLIC_URL"`
-	FrontendURL    string `json:"frontend_url" env:"APP_FRONTEND_URL"`
-	LogoURL        string `json:"logo_url" env:"APP_LOGO_URL"`
-	PastorName     string `json:"pastor_name" env:"APP_PASTOR_NAME"`
-	SupportEmail   string `json:"support_email" env:"APP_SUPPORT_EMAIL"`
-	AdminPortalURL string `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
+	Environment               string        `json:"environment" env:"ENVIRONMENT"` // "development" | "production"
+	LogLevel                  string        `json:"log_level" env:"LOG_LEVEL"`
+	Name                      string        `json:"name" env:"APP_NAME"`
+	Version                   string        `json:"version" env:"APP_VERSION"`
+	Debug                     bool          `json:"debug" env:"APP_DEBUG"`
+	PublicURL                 string        `json:"public_url" env:"APP_PUBLIC_URL"`
+	FrontendURL               string        `json:"frontend_url" env:"APP_FRONTEND_URL"`
+	LogoURL                   string        `json:"logo_url" env:"APP_LOGO_URL"`
+	PastorName                string        `json:"pastor_name" env:"APP_PASTOR_NAME"`
+	SupportEmail              string        `json:"support_email" env:"APP_SUPPORT_EMAIL"`
+	AdminPortalURL            string        `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
+	FormCleanupInterval       time.Duration `json:"form_cleanup_interval" env:"APP_FORM_CLEANUP_INTERVAL"`
+	EmailTemplateAssetBaseURL string        `json:"email_template_asset_base_url" env:"APP_EMAIL_TEMPLATE_ASSET_BASE_URL"`
 }
 
-// Load loads configuration from environment variables
 func Load() (*Config, error) {
 	_ = godotenv.Load()
 
+	env := strings.ToLower(strings.TrimSpace(getEnv("ENVIRONMENT", "development")))
+
 	cfg := &Config{
 		Database: DatabaseConfig{
+			URL:             strings.TrimSpace(getEnv("DATABASE_URL", "")),
 			Host:            getEnv("DATABASE_HOST", "localhost"),
 			Port:            getEnv("DATABASE_PORT", "5432"),
 			User:            getEnv("DATABASE_USERNAME", "postgres"),
@@ -158,7 +157,7 @@ func Load() (*Config, error) {
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 		},
 		Redis: RedisConfig{
-			URL:          getEnv("REDIS_URL", "redis://localhost:6379"),
+			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
 			Password:     getEnv("REDIS_PASSWORD", ""),
 			DB:           getEnvAsInt("REDIS_DB", 0),
 			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
@@ -190,22 +189,24 @@ func Load() (*Config, error) {
 			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
 		App: AppConfig{
-			Environment:    getEnv("ENVIRONMENT", "development"),
-			LogLevel:       getEnv("LOG_LEVEL", "info"),
-			Name:           getEnv("APP_NAME", "Wisdom House Backend"),
-			Version:        getEnv("APP_VERSION", "1.0.0"),
-			Debug:          getEnvAsBool("APP_DEBUG", false),
-			PublicURL:      getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
-			FrontendURL:    getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
-			LogoURL:        getEnv("APP_LOGO_URL", ""),
-			PastorName:     getEnv("APP_PASTOR_NAME", "Senior Pastor"),
-			SupportEmail:   getEnv("APP_SUPPORT_EMAIL", ""),
-			AdminPortalURL: getEnv("APP_ADMIN_PORTAL_URL", ""),
+			Environment:               env,
+			LogLevel:                  getEnv("LOG_LEVEL", "info"),
+			Name:                      getEnv("APP_NAME", "Wisdom House Backend"),
+			Version:                   getEnv("APP_VERSION", "1.0.0"),
+			Debug:                     getEnvAsBool("APP_DEBUG", false),
+			PublicURL:                 getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
+			FrontendURL:               getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
+			LogoURL:                   getEnv("APP_LOGO_URL", ""),
+			PastorName:                getEnv("APP_PASTOR_NAME", "Senior Pastor"),
+			SupportEmail:              getEnv("APP_SUPPORT_EMAIL", ""),
+			AdminPortalURL:            getEnv("APP_ADMIN_PORTAL_URL", ""),
+			FormCleanupInterval:       getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
+			EmailTemplateAssetBaseURL: strings.TrimRight(getEnv("APP_EMAIL_TEMPLATE_ASSET_BASE_URL", ""), "/"),
 		},
 		Bunny: BunnyConfig{
 			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),
 			StorageKey:    getEnv("BUNNYCDN_STORAGE_KEY", ""),
-			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"), // default OK, does NOT enable Bunny
+			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
 			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
 			BasePath:      strings.Trim(strings.TrimSpace(getEnv("BUNNYCDN_BASE_PATH", "uploads")), "/"),
 		},
@@ -214,56 +215,77 @@ func Load() (*Config, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
-
 	return cfg, nil
 }
 
-// ConnectionString returns PostgreSQL connection string
+// ConnectionString prefers DATABASE_URL when provided; otherwise uses parts-based DSN.
 func (c *DatabaseConfig) ConnectionString() string {
+	if strings.TrimSpace(c.URL) != "" {
+		return c.URL
+	}
+	ssl := strings.TrimSpace(c.SSLMode)
+	if ssl == "" {
+		ssl = "disable"
+	}
 	return fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.User, c.Password, c.DBName, c.SSLMode,
+		c.Host, c.Port, c.User, c.Password, c.DBName, ssl,
 	)
 }
 
-// DSN returns formatted DSN without password (for logging)
+// DSN returns a log-safe DSN (password redacted).
 func (c *DatabaseConfig) DSN() string {
-	return fmt.Sprintf(
-		"postgres://%s@%s:%s/%s?sslmode=%s",
-		c.User, c.Host, c.Port, c.DBName, c.SSLMode,
-	)
+	raw := strings.TrimSpace(c.URL)
+	if raw == "" {
+		// parts-based: never print password
+		return fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
+			c.Host, c.Port, c.User, c.DBName, c.SSLMode)
+	}
+	return redactPostgresURL(raw)
 }
 
 func validateConfig(cfg *Config) error {
-	// JWT secret required always (as you designed)
-	if cfg.JWT.Secret == "" {
+	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// Database password required in production
-	if cfg.App.Environment == "production" && cfg.Database.Password == "" {
-		return fmt.Errorf("DATABASE_PASSWORD is required in production")
+	// In production, require DATABASE_URL (recommended),
+	// but still allow parts-based config if fully provided.
+	if cfg.App.Environment == "production" {
+		if strings.TrimSpace(cfg.Database.URL) == "" {
+			if strings.TrimSpace(cfg.Database.Host) == "" {
+				return fmt.Errorf("DATABASE_HOST is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.Port) == "" {
+				return fmt.Errorf("DATABASE_PORT is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.User) == "" {
+				return fmt.Errorf("DATABASE_USERNAME is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.DBName) == "" {
+				return fmt.Errorf("DATABASE_DBNAME is required when DATABASE_URL is not set")
+			}
+			if strings.TrimSpace(cfg.Database.Password) == "" {
+				return fmt.Errorf("DATABASE_PASSWORD is required when DATABASE_URL is not set")
+			}
+		}
 	}
 
-	// SMTP sanity (optional)
-	if cfg.SMTP.Host != "" {
-		if cfg.SMTP.User == "" {
+	if strings.TrimSpace(cfg.SMTP.Host) != "" {
+		if strings.TrimSpace(cfg.SMTP.User) == "" {
 			return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
 		}
-		if cfg.SMTP.Password == "" {
+		if strings.TrimSpace(cfg.SMTP.Password) == "" {
 			return fmt.Errorf("SMTP_PASS is required when SMTP_HOST is set")
 		}
 	}
 
-	// ✅ Bunny optional (validate only if partially/fully set)
 	if err := cfg.Bunny.Validate(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
-// Helper functions
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -310,4 +332,17 @@ func splitEnv(key string, defaultValue []string) []string {
 		return result
 	}
 	return defaultValue
+}
+
+func redactPostgresURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		// fallback best-effort
+		return raw
+	}
+	if u.User != nil {
+		username := u.User.Username()
+		u.User = url.UserPassword(username, "***")
+	}
+	return u.String()
 }

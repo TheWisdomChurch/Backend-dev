@@ -17,6 +17,7 @@ type UserRepository interface {
 	FindAll() ([]models.User, error)
 	Update(user *models.User) error
 	Delete(id string) error
+	DeleteHard(id string) error
 	GetTotalCount() (int64, error)
 }
 
@@ -67,6 +68,10 @@ func (r *userRepository) Update(user *models.User) error {
 
 func (r *userRepository) Delete(id string) error {
 	return r.db.Delete(&models.User{}, "id = ?", id).Error
+}
+
+func (r *userRepository) DeleteHard(id string) error {
+	return r.db.Unscoped().Delete(&models.User{}, "id = ?", id).Error
 }
 
 func (r *userRepository) GetTotalCount() (int64, error) {
