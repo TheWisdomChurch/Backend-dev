@@ -287,7 +287,26 @@ func main() {
 }
 
 func startFormCleanup(cleanupCtx context.Context, logger *log.Logger, formService service.FormService, duration time.Duration) {
-	panic("unimplemented")
+	if duration <= 0 {
+		logger.Printf("🧹 Form cleanup disabled (interval=%s)", duration)
+		<-cleanupCtx.Done()
+		return
+	}
+
+	logger.Printf("🧹 Form cleanup started (interval=%s)", duration)
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
+	_ = formService // placeholder until a cleanup routine is defined in the form service
+
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			logger.Printf("🧹 Form cleanup stopped")
+			return
+		case <-ticker.C:
+			// Placeholder: no-op until a cleanup routine is defined in the form service.
+		}
+	}
 }
 
 func verifyDatabaseConnection(db *database.Database) error {
