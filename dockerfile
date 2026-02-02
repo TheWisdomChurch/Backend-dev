@@ -5,6 +5,10 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Debugging: List files to see what's copied
+RUN ls -la /app
+RUN ls -la /app/cmd || echo "cmd directory not found"
+RUN ls -la /app/cmd/api || echo "api directory not found"
 RUN CGO_ENABLED=0 GOOS=linux go build -o wisdom-house ./cmd/api
 
 # Development stage - includes Air for hot reload
