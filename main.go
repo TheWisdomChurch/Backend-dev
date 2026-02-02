@@ -199,9 +199,14 @@ func main() {
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 
-	// 4) Router
-	logger.Println("🚦 Setting up router and middleware...")
-	router := setupRouter(cfg,
+	// 10) Background jobs (only start in normal server mode)
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	go startFormCleanup(cleanupCtx, logger, formService, 24*time.Hour)
+
+	// 11) Router
+	router := setupRouter(
+		cfg,
 		testimonialHandler,
 		authHandler,
 		adminHandler,
@@ -279,6 +284,10 @@ func main() {
 	}
 
 	logger.Println("👋 Server exited gracefully")
+}
+
+func startFormCleanup(cleanupCtx context.Context, logger *log.Logger, formService service.FormService, duration time.Duration) {
+	panic("unimplemented")
 }
 
 func verifyDatabaseConnection(db *database.Database) error {
