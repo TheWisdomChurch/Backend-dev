@@ -24,6 +24,7 @@ import (
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 )
 
 // @title Wisdom House Backend API
@@ -41,6 +42,9 @@ func main() {
 	if err != nil {
 		logger.Fatalf("❌ Failed to load configuration: %v", err)
 	}
+
+	// Initialize validation rules and naming.
+	validation.Init()
 
 	// Normalize environment
 	env := strings.ToLower(strings.TrimSpace(cfg.App.Environment))
@@ -154,7 +158,7 @@ func main() {
 
 	// 8) Services
 	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
-	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
 	securityService := service.NewSecurityService(
 		securityEventRepo,
 		trustedDeviceRepo,
@@ -183,6 +187,7 @@ func main() {
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
+	uploadHandler := handlers.NewUploadHandler(bunnyUploader)
 	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
@@ -203,6 +208,7 @@ func main() {
 		testimonialHandler,
 		authHandler,
 		adminHandler,
+		uploadHandler,
 		eventHandler,
 		reelHandler,
 		analyticsHandler,
@@ -318,6 +324,7 @@ func setupRouter(
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
+	uploadHandler *handlers.UploadHandler,
 	eventHandler *handlers.EventHandler,
 	reelHandler *handlers.ReelHandler,
 	analyticsHandler *handlers.AnalyticsHandler,
@@ -415,6 +422,7 @@ func setupRouter(
 		{
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
+			auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.POST("/logout", authHandler.Logout)
@@ -464,6 +472,9 @@ func setupRouter(
 			admin.GET("/subscribers", notificationHandler.ListSubscribers)
 			admin.POST("/notifications", notificationHandler.SendNotification)
 			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
+
+			// Generic CDN upload for admin dashboard
+			admin.POST("/uploads", uploadHandler.UploadImage)
 
 			admin.GET("/workforce", workforceHandler.List)
 			admin.POST("/workforce", workforceHandler.Create)

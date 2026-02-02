@@ -39,3 +39,14 @@ func (r *OTPRepository) MarkUsed(id string, usedAt time.Time) error {
 	return r.db.Model(&models.OTP{}).Where("id = ?", id).
 		Updates(map[string]interface{}{"used_at": usedAt}).Error
 }
+
+// GetLatestActiveByPrefix fetches the most recent active OTP for an email whose purpose starts with the given prefix.
+func (r *OTPRepository) GetLatestActiveByPrefix(email, prefix string) (*models.OTP, error) {
+	var otp models.OTP
+	if err := r.db.Where("email = ? AND purpose LIKE ? AND used_at IS NULL AND expires_at > ?", email, prefix+"%", time.Now().UTC()).
+		Order("created_at desc").
+		First(&otp).Error; err != nil {
+		return nil, err
+	}
+	return &otp, nil
+}

@@ -11,6 +11,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -66,8 +67,7 @@ func (h *FormHandler) GetAdminForm(c *gin.Context) {
 
 func (h *FormHandler) CreateAdminForm(c *gin.Context) {
 	var req models.CreateFormRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 	form, err := h.svc.Create(&req)
@@ -82,8 +82,7 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 	id := c.Param("id")
 
 	var req models.UpdateFormRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -198,8 +197,7 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 	slug := c.Param("slug")
 
 	var req models.SubmitFormRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
