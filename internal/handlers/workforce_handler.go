@@ -8,6 +8,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -42,8 +43,7 @@ func (h *WorkforceHandler) List(c *gin.Context) {
 
 func (h *WorkforceHandler) Create(c *gin.Context) {
 	var req models.CreateWorkforceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -59,8 +59,7 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 // Apply is a public endpoint for workers to submit interest; always starts as pending.
 func (h *WorkforceHandler) Apply(c *gin.Context) {
 	var req models.CreateWorkforceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -76,8 +75,7 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 func (h *WorkforceHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var req models.UpdateWorkforceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 

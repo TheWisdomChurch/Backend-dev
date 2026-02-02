@@ -10,6 +10,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -23,8 +24,7 @@ func NewNotificationHandler(svc service.NotificationService) *NotificationHandle
 
 func (h *NotificationHandler) Subscribe(c *gin.Context) {
 	var req models.SubscribeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -39,8 +39,7 @@ func (h *NotificationHandler) Subscribe(c *gin.Context) {
 
 func (h *NotificationHandler) Unsubscribe(c *gin.Context) {
 	var req models.UnsubscribeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -96,8 +95,7 @@ func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
 
 func (h *NotificationHandler) SendNotification(c *gin.Context) {
 	var req models.SendNotificationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 

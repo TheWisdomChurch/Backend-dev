@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -72,8 +73,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		Role      string `json:"role" binding:"required,oneof=admin super_admin"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 

@@ -29,12 +29,13 @@ type OTPService interface {
 
 type otpService struct {
 	repo     *repository.OTPRepository
+	userRepo repository.UserRepository
 	sender   EmailSender
 	branding email.Branding
 }
 
-func NewOTPService(repo *repository.OTPRepository, sender EmailSender, branding email.Branding) OTPService {
-	return &otpService{repo: repo, sender: sender, branding: branding}
+func NewOTPService(repo *repository.OTPRepository, sender EmailSender, branding email.Branding, userRepo repository.UserRepository) OTPService {
+	return &otpService{repo: repo, sender: sender, branding: branding, userRepo: userRepo}
 }
 
 func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPResponse, error) {
@@ -48,6 +49,17 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 	}
 
 	purpose := strings.TrimSpace(req.Purpose)
+
+	// Only registered & active users should receive login / password reset OTP
+	if s.userRepo != nil && (strings.HasPrefix(purpose, "login") || strings.HasPrefix(purpose, "password_reset")) {
+		user, err := s.userRepo.FindByEmail(emailAddr)
+		if err != nil || user == nil {
+			return nil, errors.New("account not found")
+		}
+		if !user.IsActive {
+			return nil, errors.New("account is deactivated")
+		}
+	}
 
 	code, err := generateOTPCode()
 	if err != nil {

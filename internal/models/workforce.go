@@ -21,6 +21,10 @@ type WorkforceMember struct {
 	Status     WorkforceStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
 	Notes      *string         `gorm:"type:text" json:"notes,omitempty"`
 
+	// Birthday components (MM/DD). Year is not stored.
+	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -37,6 +41,10 @@ type CreateWorkforceRequest struct {
 	Department string          `json:"department" binding:"required"`
 	Status     WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes      *string         `json:"notes,omitempty"`
+
+	// birthday in MM/DD (month/day) components
+	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int `json:"birthdayDay,omitempty"`
 }
 
 type UpdateWorkforceRequest struct {
@@ -47,6 +55,9 @@ type UpdateWorkforceRequest struct {
 	Department *string          `json:"department,omitempty"`
 	Status     *WorkforceStatus `json:"status,omitempty" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes      *string          `json:"notes,omitempty"`
+
+	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int `json:"birthdayDay,omitempty"`
 }
 
 type WorkforceStatsResponse struct {

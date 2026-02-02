@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -47,8 +48,7 @@ func (h *ReelHandler) List(c *gin.Context) {
 func (h *ReelHandler) Create(c *gin.Context) {
 	// For now JSON. If you want multipart upload, we can add it next.
 	var req models.Reel
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
