@@ -8,6 +8,7 @@ import (
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -21,8 +22,7 @@ func NewOTPHandler(svc service.OTPService) *OTPHandler {
 
 func (h *OTPHandler) SendOTP(c *gin.Context) {
 	var req models.SendOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -39,8 +39,7 @@ func (h *OTPHandler) SendOTP(c *gin.Context) {
 
 func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 	var req models.VerifyOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 

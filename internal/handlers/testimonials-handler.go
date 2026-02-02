@@ -1,22 +1,23 @@
 package handlers
 
 import (
-    "net/http"
-    "strconv"
+	"net/http"
+	"strconv"
 
-    "github.com/gin-gonic/gin"
-    "github.com/google/uuid"
-    "wisdomHouse-backend/internal/models"        
-    "wisdomHouse-backend/internal/service"      
-    "wisdomHouse-backend/pkg/utils"             
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
+	"wisdomHouse-backend/pkg/utils"
 )
 
 type TestimonialHandler struct {
-    service service.TestimonialService
+	service service.TestimonialService
 }
 
 func NewTestimonialHandler(service service.TestimonialService) *TestimonialHandler {
-    return &TestimonialHandler{service: service}
+	return &TestimonialHandler{service: service}
 }
 
 // CreateTestimonial godoc
@@ -28,20 +29,19 @@ func NewTestimonialHandler(service service.TestimonialService) *TestimonialHandl
 // @Success 201 {object} utils.Response
 // @Router /testimonials [post]
 func (h *TestimonialHandler) CreateTestimonial(c *gin.Context) {
-    var req models.CreateTestimonialRequest
-    
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-        return
-    }
-    
-    testimonial, err := h.service.CreateTestimonial(&req)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create testimonial")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusCreated, "Testimonial created successfully", testimonial)
+	var req models.CreateTestimonialRequest
+
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	testimonial, err := h.service.CreateTestimonial(&req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create testimonial")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Testimonial created successfully", testimonial)
 }
 
 // GetAllTestimonials godoc
@@ -52,15 +52,15 @@ func (h *TestimonialHandler) CreateTestimonial(c *gin.Context) {
 // @Success 200 {object} utils.Response
 // @Router /testimonials [get]
 func (h *TestimonialHandler) GetAllTestimonials(c *gin.Context) {
-    approved := c.DefaultQuery("approved", "true") == "true"
-    
-    testimonials, err := h.service.GetAllTestimonials(approved)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusOK, "Testimonials fetched successfully", testimonials)
+	approved := c.DefaultQuery("approved", "true") == "true"
+
+	testimonials, err := h.service.GetAllTestimonials(approved)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonials fetched successfully", testimonials)
 }
 
 // GetPaginatedTestimonials godoc
@@ -73,18 +73,18 @@ func (h *TestimonialHandler) GetAllTestimonials(c *gin.Context) {
 // @Success 200 {object} utils.PaginatedResponse
 // @Router /testimonials/paginated [get]
 func (h *TestimonialHandler) GetPaginatedTestimonials(c *gin.Context) {
-    page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-    limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-    approved := c.DefaultQuery("approved", "true") == "true"
-    
-    testimonials, total, err := h.service.GetPaginatedTestimonials(page, limit, approved)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
-        return
-    }
-    
-    // Convert int64 to int for the response function
-    utils.PaginatedSuccessResponse(c, http.StatusOK, testimonials, page, limit, int(total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	approved := c.DefaultQuery("approved", "true") == "true"
+
+	testimonials, total, err := h.service.GetPaginatedTestimonials(page, limit, approved)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
+		return
+	}
+
+	// Convert int64 to int for the response function
+	utils.PaginatedSuccessResponse(c, http.StatusOK, testimonials, page, limit, int(total))
 }
 
 // GetTestimonialByID godoc
@@ -95,19 +95,19 @@ func (h *TestimonialHandler) GetPaginatedTestimonials(c *gin.Context) {
 // @Success 200 {object} utils.Response
 // @Router /testimonials/{id} [get]
 func (h *TestimonialHandler) GetTestimonialByID(c *gin.Context) {
-    id, err := uuid.Parse(c.Param("id"))
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
-        return
-    }
-    
-    testimonial, err := h.service.GetTestimonialByID(id)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusOK, "Testimonial fetched successfully", testimonial)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
+		return
+	}
+
+	testimonial, err := h.service.GetTestimonialByID(id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonial fetched successfully", testimonial)
 }
 
 // UpdateTestimonial godoc
@@ -120,25 +120,24 @@ func (h *TestimonialHandler) GetTestimonialByID(c *gin.Context) {
 // @Success 200 {object} utils.Response
 // @Router /testimonials/{id} [put]
 func (h *TestimonialHandler) UpdateTestimonial(c *gin.Context) {
-    id, err := uuid.Parse(c.Param("id"))
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
-        return
-    }
-    
-    var req models.UpdateTestimonialRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-        return
-    }
-    
-    testimonial, err := h.service.UpdateTestimonial(id, &req)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update testimonial")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusOK, "Testimonial updated successfully", testimonial)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
+		return
+	}
+
+	var req models.UpdateTestimonialRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	testimonial, err := h.service.UpdateTestimonial(id, &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update testimonial")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonial updated successfully", testimonial)
 }
 
 // DeleteTestimonial godoc
@@ -149,18 +148,18 @@ func (h *TestimonialHandler) UpdateTestimonial(c *gin.Context) {
 // @Success 200 {object} utils.Response
 // @Router /testimonials/{id} [delete]
 func (h *TestimonialHandler) DeleteTestimonial(c *gin.Context) {
-    id, err := uuid.Parse(c.Param("id"))
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
-        return
-    }
-    
-    if err := h.service.DeleteTestimonial(id); err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete testimonial")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusOK, "Testimonial deleted successfully", nil)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
+		return
+	}
+
+	if err := h.service.DeleteTestimonial(id); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete testimonial")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonial deleted successfully", nil)
 }
 
 // ApproveTestimonial godoc
@@ -171,17 +170,17 @@ func (h *TestimonialHandler) DeleteTestimonial(c *gin.Context) {
 // @Success 200 {object} utils.Response
 // @Router /testimonials/{id}/approve [patch]
 func (h *TestimonialHandler) ApproveTestimonial(c *gin.Context) {
-    id, err := uuid.Parse(c.Param("id"))
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
-        return
-    }
-    
-    testimonial, err := h.service.ApproveTestimonial(id)
-    if err != nil {
-        utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve testimonial")
-        return
-    }
-    
-    utils.SuccessResponse(c, http.StatusOK, "Testimonial approved successfully", testimonial)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid testimonial ID")
+		return
+	}
+
+	testimonial, err := h.service.ApproveTestimonial(id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve testimonial")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonial approved successfully", testimonial)
 }

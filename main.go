@@ -24,6 +24,7 @@ import (
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 )
 
 // @title Wisdom House Backend API
@@ -41,6 +42,9 @@ func main() {
 	if err != nil {
 		logger.Fatalf("❌ Failed to load configuration: %v", err)
 	}
+
+	// Initialize validation rules and naming.
+	validation.Init()
 
 	// Normalize environment
 	env := strings.ToLower(strings.TrimSpace(cfg.App.Environment))
@@ -154,7 +158,7 @@ func main() {
 
 	// 8) Services
 	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
-	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
 	securityService := service.NewSecurityService(
 		securityEventRepo,
 		trustedDeviceRepo,
@@ -183,6 +187,7 @@ func main() {
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
+	uploadHandler := handlers.NewUploadHandler(bunnyUploader)
 	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
@@ -269,32 +274,8 @@ func main() {
 	logger.Println("👋 Server exited gracefully")
 }
 
-<<<<<<< HEAD
-func startFormCleanup(cleanupCtx context.Context, logger *log.Logger, formService service.FormService, duration time.Duration) {
-	if duration <= 0 {
-		logger.Printf("🧹 Form cleanup disabled (interval=%s)", duration)
-		<-cleanupCtx.Done()
-		return
-	}
-
-	logger.Printf("🧹 Form cleanup started (interval=%s)", duration)
-	ticker := time.NewTicker(duration)
-	defer ticker.Stop()
-	_ = formService // placeholder until a cleanup routine is defined in the form service
-
-	for {
-		select {
-		case <-cleanupCtx.Done():
-			logger.Printf("🧹 Form cleanup stopped")
-			return
-		case <-ticker.C:
-			// Placeholder: no-op until a cleanup routine is defined in the form service.
-		}
-	}
-=======
 func isTrueEnv(key string) bool {
 	return strings.ToLower(strings.TrimSpace(os.Getenv(key))) == "true"
->>>>>>> 25e629f327a15b9e7019c85f0535c0df8031bcbe
 }
 
 func verifyDatabaseConnection(db *database.Database) error {

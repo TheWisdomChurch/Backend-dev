@@ -10,6 +10,7 @@ import (
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -78,8 +79,7 @@ func (h *EventHandler) Get(c *gin.Context) {
 
 func (h *EventHandler) Create(c *gin.Context) {
 	var req models.Event
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
@@ -104,8 +104,7 @@ func (h *EventHandler) Update(c *gin.Context) {
 	}
 
 	var req models.Event
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid payload")
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
