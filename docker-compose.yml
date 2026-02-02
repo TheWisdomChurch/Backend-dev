@@ -1,4 +1,6 @@
-﻿services:
+﻿version: "3.8"
+
+services:
   postgres:
     image: postgres:15-alpine
     container_name: wisdom_church_backend
@@ -10,7 +12,7 @@
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # ❌ REMOVE init.sql mount (migrations own schema)
+      # Migrations own schema — keep init.sql disabled
       # - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - wisdom_network
@@ -19,10 +21,11 @@
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
-  # ✅ One-off migration runner (versioned migrations)
+  # ✅ One-off migration runner (supports up/down/version/goto/etc.)
   migrate:
-    image: migrate/migrate:4
+    image: migrate/migrate:v4.16.2
     container_name: wisdom_church_migrate
     depends_on:
       postgres:
@@ -31,13 +34,13 @@
       - ./migrations:/migrations:ro
     networks:
       - wisdom_network
-    entrypoint: [
-      "migrate",
-      "-path", "/migrations",
-      "-database",
-      "postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable",
-      "up"
-    ]
+    entrypoint: ["migrate"]
+    command: ["-path", "/migrations", "-database", "postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable", "up"]
+    environment:
+      # Convenience vars so you don't repeat yourself
+      MIGRATIONS_PATH: /migrations
+      DATABASE_URL: postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable
+    # Runs migrations on startup; container exits after completion
 
   redis:
     image: redis:7-alpine
@@ -54,11 +57,12 @@
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   api:
     build:
       context: .
-      target: development  # dev stage with hot reload
+      target: development
     container_name: wisdom_church_api
     ports:
       - "8080:8080"
@@ -71,11 +75,10 @@
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-      # ✅ If you want API to wait until migrations finish,
-      # don't depend_on migrate (compose doesn't track completion well).
-      # Instead run migrations explicitly before `up` (commands below).
     networks:
       - wisdom_network
     restart: unless-stopped

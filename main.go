@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -30,62 +31,36 @@ import (
 // @description Backend API for Wisdom House Church
 // @host localhost:8080
 // @BasePath /api/v1
+
 func main() {
 	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
 
+	// 0) Load config
 	logger.Println("Loading configuration...")
 	cfg, err := config.Load()
 	if err != nil {
-		// ✅ DEPLOY-TODAY WORKAROUND:
-		// If config validation currently forces BunnyCDN, allow boot without Bunny.
-		// We temporarily set placeholder Bunny env vars to satisfy validation,
-		// reload config, then disable Bunny in-memory.
-		if strings.Contains(err.Error(), "BunnyCDN config incomplete") {
-			logger.Printf("⚠️ BunnyCDN config incomplete; continuing with Bunny uploads DISABLED: %v", err)
-
-			// Placeholder values (only to satisfy validation if it checks non-empty).
-			// These are immediately disabled after load, so uploader won't be used.
-			_ = os.Setenv("BUNNYCDN_STORAGE_ZONE", "DISABLED")
-			_ = os.Setenv("BUNNYCDN_STORAGE_KEY", "DISABLED")
-			_ = os.Setenv("BUNNYCDN_STORAGE_REGION", "DISABLED")
-			_ = os.Setenv("BUNNYCDN_PULL_ZONE", "DISABLED")
-			if os.Getenv("BUNNYCDN_BASE_PATH") == "" {
-				_ = os.Setenv("BUNNYCDN_BASE_PATH", "")
-			}
-
-			cfg, err = config.Load()
-			if err != nil {
-				logger.Fatalf("❌ Failed to load configuration even after Bunny bypass: %v", err)
-			}
-
-			// Disable Bunny in-memory so your app behaves as "Bunny not configured".
-			cfg.Bunny.StorageZone = ""
-			cfg.Bunny.StorageKey = ""
-			cfg.Bunny.StorageRegion = ""
-			cfg.Bunny.PullZone = ""
-			cfg.Bunny.BasePath = ""
-		} else {
-			logger.Fatalf("❌ Failed to load configuration: %v", err)
-		}
+		logger.Fatalf("❌ Failed to load configuration: %v", err)
 	}
 
-	logger.Println("📋 Configuration Summary:")
-	logger.Printf("   Environment: %s", cfg.App.Environment)
-	logger.Printf("   Server Port: %s", cfg.Server.Port)
-	logger.Printf("   Database: %s", cfg.Database.DSN())
-	logger.Printf("   CORS Origins: %v", cfg.CORS.AllowedOrigins)
-	logger.Printf("   JWT Configured: %v", cfg.JWT.Secret != "")
-	logger.Printf("   Log Level: %s", cfg.App.LogLevel)
+	// Normalize environment
+	env := strings.ToLower(strings.TrimSpace(cfg.App.Environment))
+	if env == "" {
+		env = "development"
+	}
+	cfg.App.Environment = env
 
-	gin.SetMode(cfg.Server.GinMode)
+	// 1) Setup Gin mode
+	// Prefer explicit production behavior
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	} else if strings.TrimSpace(cfg.Server.GinMode) != "" {
+		gin.SetMode(cfg.Server.GinMode)
+	} else {
+		gin.SetMode(gin.DebugMode)
 	}
 
-	// 1) DB
-	logger.Println("🔌 Connecting to database...")
+	// 2) Connect DB (AutoMigrate handled in database.NewDatabase with RUN_AUTOMIGRATE gate)
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
-
 	if err != nil {
 		logger.Fatalf("❌ Failed to connect to database: %v", err)
 	}
@@ -96,17 +71,19 @@ func main() {
 		logger.Println("✅ Database connection closed")
 	}()
 
-	// 2) Verify DB
-	logger.Println("📊 Verifying database connection...")
+	// 3) Verify DB connectivity
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
-	logger.Println("✅ Database connection verified")
 
-	// 3) Init repos/services/handlers
-	logger.Println("🔄 Initializing application layers...")
+	// ✅ MIGRATION MODE EARLY EXIT
+	// When RUN_AUTOMIGRATE=true, we only want to run migrations and exit.
+	if isTrueEnv("RUN_AUTOMIGRATE") {
+		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
+		return
+	}
 
-	// Repositories
+	// 4) Init repos
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
@@ -122,7 +99,7 @@ func main() {
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
-	// Email sender
+	// 5) Email sender (required in production)
 	emailSender, err := email.NewSender(
 		cfg.Redis.URL,
 		cfg.SMTP.Host,
@@ -139,9 +116,10 @@ func main() {
 		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
 	}
 
-	// Bunny uploader service (optional)
+	// 6) Bunny uploader service (optional)
+	// Professional approach: if incomplete, simply disable—do not hack env vars.
 	var bunnyUploader *service.BunnyUploader
-	if cfg.Bunny.StorageZone != "" && cfg.Bunny.StorageKey != "" && cfg.Bunny.PullZone != "" && cfg.Bunny.StorageRegion != "" {
+	if cfg.Bunny.Enabled() {
 		bunnyUploader = service.NewBunnyUploader(
 			cfg.Bunny.StorageZone,
 			cfg.Bunny.StorageKey,
@@ -149,60 +127,75 @@ func main() {
 			cfg.Bunny.PullZone,
 			cfg.Bunny.BasePath,
 		)
-		logger.Printf("📦 Bunny uploader configured: zone=%s region=%s pull=%s base=%s",
-			cfg.Bunny.StorageZone,
-			cfg.Bunny.StorageRegion,
-			cfg.Bunny.PullZone,
-			cfg.Bunny.BasePath,
-		)
 	} else {
-		logger.Printf("⚠️ Bunny uploader not configured (uploads disabled)")
+		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
 	}
 
-	// Services
+	// 7) Branding / template assets
+	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
+	if templateAssetBaseURL == "" && cfg.Bunny.Enabled() {
+		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
+		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
+			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
+		}
+		templateAssetBaseURL = base + "/email-templates"
+	}
+
 	branding := email.Branding{
-		AppName:        cfg.App.Name,
-		LogoURL:        cfg.App.LogoURL,
-		PublicURL:      cfg.App.PublicURL,
-		FrontendURL:    cfg.App.FrontendURL,
-		SupportEmail:   cfg.App.SupportEmail,
-		PastorName:     cfg.App.PastorName,
-		AdminPortalURL: cfg.App.AdminPortalURL,
+		AppName:              cfg.App.Name,
+		LogoURL:              cfg.App.LogoURL,
+		PublicURL:            cfg.App.PublicURL,
+		FrontendURL:          cfg.App.FrontendURL,
+		SupportEmail:         cfg.App.SupportEmail,
+		PastorName:           cfg.App.PastorName,
+		AdminPortalURL:       cfg.App.AdminPortalURL,
+		TemplateAssetBaseURL: templateAssetBaseURL,
 	}
 
+	// 8) Services
 	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
-	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
-	securityService := service.NewSecurityService(securityEventRepo, trustedDeviceRepo, emailSender, branding, cfg.App.FrontendURL)
-	authService := service.NewAuthService(userRepo, otpService, cfg.JWT.Secret, cfg.JWT.Expiration, emailSender, branding, securityService, trustedDeviceRepo)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding)
+	securityService := service.NewSecurityService(
+		securityEventRepo,
+		trustedDeviceRepo,
+		emailSender,
+		branding,
+		cfg.App.FrontendURL,
+	)
+	authService := service.NewAuthService(
+		userRepo,
+		otpService,
+		cfg.JWT.Secret,
+		cfg.JWT.Expiration,
+		emailSender,
+		branding,
+		securityService,
+		trustedDeviceRepo,
+	)
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
-	// Handlers
+	formService := service.NewFormService(formRepo, eventRepo)
+	notificationService := service.NewNotificationService(subscriberRepo, notificationRepo, eventRepo, emailSender, branding)
+	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
+
+	// 9) Handlers
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	uploadHandler := handlers.NewUploadHandler(bunnyUploader)
-
-	// pass bunnyUploader into NewEventHandler
 	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
-
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
-
-	formService := service.NewFormService(formRepo, eventRepo)
 	formHandler := handlers.NewFormHandler(formService)
-
-	notificationService := service.NewNotificationService(subscriberRepo, notificationRepo, eventRepo, emailSender, branding)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
-
 	otpHandler := handlers.NewOTPHandler(otpService)
-
-	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
+	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 
 	// 10) Background jobs (only start in normal server mode)
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
-	go startFormCleanup(cleanupCtx, logger, formService, 24*time.Hour)
+	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 
 	// 11) Router
 	router := setupRouter(
@@ -218,74 +211,65 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		emailTemplateHandler,
 	)
 
-	// 5) Server
+	// 12) Server
 	server := &http.Server{
-		Addr:           ":" + cfg.Server.Port,
-		Handler:        router,
-		ReadTimeout:    cfg.Server.ReadTimeout,
-		WriteTimeout:   cfg.Server.WriteTimeout,
-		MaxHeaderBytes: cfg.Server.MaxHeaderBytes,
-		IdleTimeout:    120 * time.Second,
+		Addr:              ":" + cfg.Server.Port,
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
+	// 13) Graceful shutdown
+	shutdownErr := make(chan error, 1)
 	go func() {
 		host := "localhost"
 		if cfg.App.Environment == "production" {
 			host = "0.0.0.0"
 		}
-
 		logger.Printf("✅ Server starting on http://%s:%s", host, cfg.Server.Port)
-		logger.Printf("📊 Health check: http://%s:%s/health", host, cfg.Server.Port)
-		logger.Printf("🗣️  Testimonials: http://%s:%s/api/v1/testimonials", host, cfg.Server.Port)
-		logger.Printf("🔐 Auth: http://%s:%s/api/v1/auth/login", host, cfg.Server.Port)
-		logger.Printf("👨‍💼 Admin: http://%s:%s/api/v1/admin/dashboard", host, cfg.Server.Port)
-		logger.Printf("📅 Events: http://%s:%s/api/v1/events", host, cfg.Server.Port)
-		logger.Printf("🎬 Reels: http://%s:%s/api/v1/reels", host, cfg.Server.Port)
-		logger.Printf("📈 Analytics: http://%s:%s/api/v1/admin/analytics", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (admin): http://%s:%s/api/v1/admin/forms", host, cfg.Server.Port)
-		logger.Printf("🧾 Forms (public): http://%s:%s/api/v1/forms/:slug", host, cfg.Server.Port)
-		logger.Printf("📬 Subscribers: http://%s:%s/api/v1/subscribers", host, cfg.Server.Port)
-		logger.Printf("📬 Notifications: http://%s:%s/api/v1/admin/notifications", host, cfg.Server.Port)
-		logger.Printf("🔐 OTP: http://%s:%s/api/v1/otp", host, cfg.Server.Port)
-		logger.Printf("👥 Workforce apply: http://%s:%s/api/v1/workforce/apply", host, cfg.Server.Port)
 
-		logger.Printf("🖼️  Event image upload: http://%s:%s/api/v1/events/:id/image", host, cfg.Server.Port)
-		logger.Printf("🖼️  Event banner upload: http://%s:%s/api/v1/events/:id/banner", host, cfg.Server.Port)
-
-		if cfg.App.Environment == "development" {
-			logger.Printf("📚 Swagger docs: http://%s:%s/swagger/index.html", host, cfg.Server.Port)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			shutdownErr <- err
+			return
 		}
-
-		logger.Printf("⚙️  Environment: %s", cfg.App.Environment)
-		logger.Printf("📈 Auto-migration: Enabled")
-		logger.Printf("🗄️  Database: %s", cfg.Database.DBName)
-
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("❌ Failed to start server: %v", err)
-		}
+		shutdownErr <- nil
 	}()
 
-	sig := <-quit
-	logger.Printf("🛑 Received signal: %v", sig)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		logger.Printf("🛑 Received signal: %v", sig)
+	case err := <-shutdownErr:
+		if err != nil {
+			logger.Fatalf("❌ Server failed: %v", err)
+		}
+		// Server exited normally; just return
+		logger.Println("ℹ️ Server exited.")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	logger.Println("🔄 Shutting down server gracefully...")
 	server.SetKeepAlivesEnabled(false)
+	cleanupCancel()
 
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Fatalf("❌ Server forced to shutdown: %v", err)
 	}
-
 	logger.Println("👋 Server exited gracefully")
 }
 
+<<<<<<< HEAD
 func startFormCleanup(cleanupCtx context.Context, logger *log.Logger, formService service.FormService, duration time.Duration) {
 	if duration <= 0 {
 		logger.Printf("🧹 Form cleanup disabled (interval=%s)", duration)
@@ -307,6 +291,10 @@ func startFormCleanup(cleanupCtx context.Context, logger *log.Logger, formServic
 			// Placeholder: no-op until a cleanup routine is defined in the form service.
 		}
 	}
+=======
+func isTrueEnv(key string) bool {
+	return strings.ToLower(strings.TrimSpace(os.Getenv(key))) == "true"
+>>>>>>> 25e629f327a15b9e7019c85f0535c0df8031bcbe
 }
 
 func verifyDatabaseConnection(db *database.Database) error {
@@ -315,6 +303,38 @@ func verifyDatabaseConnection(db *database.Database) error {
 		return fmt.Errorf("database connection failed: %v", err)
 	}
 	return nil
+}
+
+func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+	if svc == nil || interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	runCleanup := func() {
+		count, err := svc.CleanupExpiredForms(time.Now().UTC())
+		if err != nil {
+			logger.Printf("⚠️ Failed to cleanup expired forms: %v", err)
+			return
+		}
+		if count > 0 {
+			logger.Printf("🧹 Cleaned up %d expired forms", count)
+		}
+	}
+
+	// Run once at startup
+	runCleanup()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCleanup()
+		}
+	}
 }
 
 // setupRouter wires routes + middleware
@@ -331,6 +351,7 @@ func setupRouter(
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
+	emailTemplateHandler *handlers.EmailTemplateHandler,
 ) *gin.Engine {
 	router := gin.New()
 	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
@@ -469,6 +490,7 @@ func setupRouter(
 
 			admin.GET("/subscribers", notificationHandler.ListSubscribers)
 			admin.POST("/notifications", notificationHandler.SendNotification)
+			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
 
 			// Generic CDN upload for admin dashboard
 			admin.POST("/uploads", uploadHandler.UploadImage)
@@ -519,31 +541,6 @@ func setupRouter(
 				"service":   cfg.App.Name,
 			})
 		})
-
-		api.GET("/config", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"app": gin.H{
-					"name":        cfg.App.Name,
-					"version":     cfg.App.Version,
-					"environment": cfg.App.Environment,
-				},
-				"api": gin.H{
-					"base_path": "/api/v1",
-					"version":   "1.0.0",
-				},
-				"features": gin.H{
-					"testimonials":    true,
-					"authentication":  cfg.JWT.Secret != "",
-					"admin_panel":     true,
-					"events":          true,
-					"reels":           true,
-					"admin_analytics": true,
-					"forms":           true,
-					"notifications":   true,
-					"otp":             true,
-				},
-			})
-		})
 	}
 
 	if cfg.App.Environment == "development" {
@@ -561,7 +558,7 @@ func setupRouter(
 		})
 	})
 
-	if cfg.App.Environment == "development" {
+	if cfg.App.Environment == "development" && cfg.App.Debug {
 		setupRouteDebugging(router)
 	}
 
@@ -588,5 +585,5 @@ func printRoutes(router *gin.Engine) {
 	for _, route := range router.Routes() {
 		fmt.Printf("  %-6s %s\n", route.Method, route.Path)
 	}
-	fmt.Println("===================\n")
+	fmt.Println("===================")
 }

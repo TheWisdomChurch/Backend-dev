@@ -8,12 +8,13 @@ import (
 )
 
 type OTPTemplateData struct {
-	Branding    Branding
-	Code        string
-	Purpose     string
-	ExpiresAt   time.Time
-	ActionURL   string
-	ActionLabel string
+	Branding     Branding
+	Code         string
+	Purpose      string
+	ExpiresAt    time.Time
+	ActionURL    string
+	ActionLabel  string
+	HeroImageURL string
 }
 
 func RenderOTPEmail(data OTPTemplateData) string {
@@ -27,6 +28,7 @@ func RenderOTPEmail(data OTPTemplateData) string {
 
 	expires := data.ExpiresAt.Format(time.RFC1123)
 	logoBlock := renderLogoBlock(b)
+	heroBlock := renderHeroImageBlock(data.HeroImageURL, "Verification code")
 	actionURL := strings.TrimSpace(data.ActionURL)
 	actionLabel := strings.TrimSpace(data.ActionLabel)
 	if actionLabel == "" {
@@ -43,6 +45,7 @@ func RenderOTPEmail(data OTPTemplateData) string {
 		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.6;color:#111827;background:#f9fafb;padding:24px;\">" +
 		"<div style=\"max-width:560px;margin:0 auto;background:#ffffff;border-radius:14px;padding:28px;border:1px solid #e5e7eb;\">" +
 		logoBlock +
+		heroBlock +
 		"<h2 style=\"margin:0 0 12px;font-size:20px;color:#0f172a;\">Verify your email</h2>" +
 		"<p style=\"margin:0 0 16px;font-size:15px;\">" + purposeLine + "</p>" +
 		"<div style=\"font-size:28px;letter-spacing:6px;font-weight:bold;color:#0b2447;\">" + safeCode + "</div>" +

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/datatypes"
 
 	"wisdomHouse-backend/internal/models"
@@ -36,6 +37,7 @@ type FormService interface {
 	// Admin submissions
 	ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
 	Stats(start, end *time.Time) (*models.FormStatsResponse, error)
+	CleanupExpiredForms(now time.Time) (int64, error)
 }
 
 type formService struct {
@@ -70,10 +72,12 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, errors.New("title is required")
 	}
-	// Enforce unique title
-	if exists, err := s.repo.TitleExists(strings.TrimSpace(req.Title)); err != nil {
+	title := strings.TrimSpace(req.Title)
+	exists, err := s.repo.TitleExists(title, "")
+	if err != nil {
 		return nil, err
-	} else if exists {
+	}
+	if exists {
 		return nil, errors.New("a form with this title already exists")
 	}
 
@@ -83,7 +87,7 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	}
 
 	form := &models.Form{
-		Title:       strings.TrimSpace(req.Title),
+		Title:       title,
 		Description: req.Description,
 		EventID:     req.EventID,
 		IsPublished: false,
@@ -115,9 +119,11 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		if t == "" {
 			return nil, errors.New("title cannot be empty")
 		}
-		if exists, err := s.repo.TitleExists(t); err != nil {
+		exists, err := s.repo.TitleExists(t, existing.ID)
+		if err != nil {
 			return nil, err
-		} else if exists && !strings.EqualFold(existing.Title, t) {
+		}
+		if exists {
 			return nil, errors.New("a form with this title already exists")
 		}
 		existing.Title = t
@@ -241,6 +247,16 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	settings, _ := decodeSettings(form.Settings)
 
+	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
+		t, parseErr := time.Parse(time.RFC3339, *settings.ExpiresAt)
+		if parseErr != nil {
+			return errors.New("form expiresAt is invalid on server")
+		}
+		if time.Now().After(t) {
+			return errors.New("form expired")
+		}
+	}
+
 	if settings.ClosesAt != nil && strings.TrimSpace(*settings.ClosesAt) != "" {
 		t, parseErr := time.Parse(time.RFC3339, *settings.ClosesAt)
 		if parseErr != nil {
@@ -319,9 +335,28 @@ func (s *formService) Stats(start, end *time.Time) (*models.FormStatsResponse, e
 	}, nil
 }
 
+func (s *formService) CleanupExpiredForms(now time.Time) (int64, error) {
+	count, err := s.repo.DeleteExpired(now)
+	if err != nil {
+		if isMissingRelationErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
 /* =========================
    Helpers: settings/options
 ========================= */
+
+func isMissingRelationErr(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "42P01"
+	}
+	return false
+}
 
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
@@ -333,6 +368,11 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.ClosesAt != nil && strings.TrimSpace(*s.ClosesAt) != "" {
 		if _, err := time.Parse(time.RFC3339, *s.ClosesAt); err != nil {
 			return nil, errors.New("closesAt must be RFC3339 ISO string")
+		}
+	}
+	if s.ExpiresAt != nil && strings.TrimSpace(*s.ExpiresAt) != "" {
+		if _, err := time.Parse(time.RFC3339, *s.ExpiresAt); err != nil {
+			return nil, errors.New("expiresAt must be RFC3339 ISO string")
 		}
 	}
 
