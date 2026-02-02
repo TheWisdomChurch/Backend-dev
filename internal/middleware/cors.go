@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"log" // Added import for logging
 
 	"wisdomHouse-backend/internal/config"
 
@@ -148,9 +149,11 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 	return func(origin string) bool {
 		origin = normalizeOrigin(origin)
 		if origin == "" {
+			log.Printf("CORS: Empty origin rejected")
 			return false
 		}
 
+<<<<<<< HEAD
 		// Must be a valid absolute origin: scheme + host
 		u, err := url.Parse(origin)
 		if err != nil || u.Scheme == "" || u.Host == "" {
@@ -158,6 +161,11 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 		}
 		// Only allow http/https origins
 		if u.Scheme != "http" && u.Scheme != "https" {
+=======
+		// Must be a valid origin URL
+		if _, err := url.Parse(origin); err != nil {
+			log.Printf("CORS: Invalid origin URL: %s, error: %v", origin, err)
+>>>>>>> 7115b10 (registration-tester)
 			return false
 		}
 
@@ -174,6 +182,16 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 				return true
 			}
 		}
+<<<<<<< HEAD
 		return false
 	}, exactList
 }
+=======
+
+		// Log rejection with details
+		log.Printf("CORS: Rejected origin '%s'. Allowed origins: %v, AllowCredentials: %t", origin, allowedOrigins, allowCredentials)
+
+		return false
+	}
+}
+>>>>>>> 7115b10 (registration-tester)
