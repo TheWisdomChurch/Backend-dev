@@ -31,5 +31,5 @@ func (h *EmailTemplateHandler) SendTemplate(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Template email sent", resp)
+	utils.SuccessResponse(c, http.StatusOK, "Template email queued/sent", resp)
 }

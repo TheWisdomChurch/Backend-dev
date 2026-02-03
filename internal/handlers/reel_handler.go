@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
+
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/validation"
@@ -20,14 +20,8 @@ func NewReelHandler(repo *repository.ReelRepository) *ReelHandler {
 }
 
 func (h *ReelHandler) List(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 	offset := (page - 1) * limit
 
 	items, total, err := h.repo.List(offset, limit)
@@ -36,7 +30,7 @@ func (h *ReelHandler) List(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Reels loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,
@@ -46,7 +40,6 @@ func (h *ReelHandler) List(c *gin.Context) {
 }
 
 func (h *ReelHandler) Create(c *gin.Context) {
-	// For now JSON. If you want multipart upload, we can add it next.
 	var req models.Reel
 	if !validation.BindJSON(c, &req) {
 		return
@@ -56,7 +49,7 @@ func (h *ReelHandler) Create(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create reel")
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": req})
+	utils.SuccessResponse(c, http.StatusCreated, "Reel created", req)
 }
 
 func (h *ReelHandler) Delete(c *gin.Context) {
@@ -65,5 +58,5 @@ func (h *ReelHandler) Delete(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete reel")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Reel deleted"})
+	utils.SuccessResponse(c, http.StatusOK, "Reel deleted", nil)
 }

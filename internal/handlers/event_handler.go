@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
@@ -19,24 +21,21 @@ type EventHandler struct {
 	bunny *service.BunnyUploader
 }
 
-// ✅ updated constructor (inject bunny)
 func NewEventHandler(repo *repository.EventRepository, bunny *service.BunnyUploader) *EventHandler {
 	return &EventHandler{repo: repo, bunny: bunny}
 }
 
 func (h *EventHandler) List(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	statusFilter := c.Query("status") // optional: upcoming|happening|past
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 	offset := (page - 1) * limit
 
-	items, total, err := h.repo.List(offset, limit)
+	statusFilter := strings.TrimSpace(c.Query("status")) // upcoming|happening|past
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	items, total, err := h.repo.ListWithContext(ctx, offset, limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load events")
 		return
@@ -46,14 +45,11 @@ func (h *EventHandler) List(c *gin.Context) {
 	filtered := make([]models.Event, 0, len(items))
 	for i := range items {
 		items[i].Status = deriveStatus(items[i].Date, items[i].Time, now)
-		// optional: persist if changed
-		_ = h.repo.SetStatus(items[i].ID, items[i].Status)
 		if statusFilter == "" || string(items[i].Status) == statusFilter {
 			filtered = append(filtered, items[i])
 		}
 	}
 
-	// adjust total if filter used
 	if statusFilter != "" {
 		total = int64(len(filtered))
 	}
@@ -69,12 +65,16 @@ func (h *EventHandler) List(c *gin.Context) {
 
 func (h *EventHandler) Get(c *gin.Context) {
 	id := c.Param("id")
-	item, err := h.repo.GetByID(id)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	item, err := h.repo.GetByIDWithContext(ctx, id)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": item})
+	utils.SuccessResponse(c, http.StatusOK, "Event retrieved", item)
 }
 
 func (h *EventHandler) Create(c *gin.Context) {
@@ -83,28 +83,33 @@ func (h *EventHandler) Create(c *gin.Context) {
 		return
 	}
 
-	now := time.Now().UTC()
-	req.Status = deriveStatus(req.Date, req.Time, now)
+	req.Status = deriveStatus(req.Date, req.Time, time.Now().UTC())
 
-	if err := h.repo.Create(&req); err != nil {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.repo.CreateWithContext(ctx, &req); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create event")
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"data": req})
+	utils.SuccessResponse(c, http.StatusCreated, "Event created", req)
 }
 
 func (h *EventHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 
-	existing, err := h.repo.GetByID(id)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
+	var req models.Event
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 
-	var req models.Event
-	if !validation.BindJSON(c, &req) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 7*time.Second)
+	defer cancel()
+
+	existing, err := h.repo.GetByIDWithContext(ctx, id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
 		return
 	}
 
@@ -124,34 +129,29 @@ func (h *EventHandler) Update(c *gin.Context) {
 	existing.Image = req.Image
 	existing.BannerImage = req.BannerImage
 
-	if err := h.repo.Update(existing); err != nil {
+	if err := h.repo.UpdateWithContext(ctx, existing); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update event")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": existing})
+	utils.SuccessResponse(c, http.StatusOK, "Event updated", existing)
 }
 
 func (h *EventHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.repo.Delete(id); err != nil {
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.repo.DeleteWithContext(ctx, id); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete event")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Event deleted"})
+	utils.SuccessResponse(c, http.StatusOK, "Event deleted", nil)
 }
 
-// =======================
-// ✅ NEW: Upload endpoints
-// =======================
-
-func (h *EventHandler) UploadImage(c *gin.Context) {
-	h.uploadEventAsset(c, "image")
-}
-
-func (h *EventHandler) UploadBanner(c *gin.Context) {
-	h.uploadEventAsset(c, "banner")
-}
+func (h *EventHandler) UploadImage(c *gin.Context)  { h.uploadEventAsset(c, "image") }
+func (h *EventHandler) UploadBanner(c *gin.Context) { h.uploadEventAsset(c, "banner") }
 
 func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 	if h.bunny == nil {
@@ -167,7 +167,6 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		return
 	}
 
-	// Size limit: 10MB (adjust as needed)
 	const maxBytes = 10 << 20
 	if fh.Size > maxBytes {
 		utils.ErrorResponse(c, http.StatusBadRequest, "file too large (max 10MB)")
@@ -182,15 +181,8 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 	defer src.Close()
 
 	ct := fh.Header.Get("Content-Type")
-	ext := ""
-	switch ct {
-	case "image/png":
-		ext = "png"
-	case "image/jpeg":
-		ext = "jpg"
-	case "image/webp":
-		ext = "webp"
-	default:
+	ext, ok := allowedImageExt(ct)
+	if !ok {
 		utils.ErrorResponse(c, http.StatusBadRequest, "only png, jpg, webp allowed")
 		return
 	}
@@ -201,22 +193,24 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		return
 	}
 
-	cdnURL, err := h.bunny.Upload(c.Request.Context(), objectKey, ct, src)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+
+	cdnURL, err := h.bunny.Upload(ctx, objectKey, ct, src)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to CDN failed")
 		return
 	}
 
 	key := objectKey
-
 	switch kind {
 	case "image":
-		if err := h.repo.SetImage(eventID, cdnURL, &key); err != nil {
+		if err := h.repo.SetImageWithContext(ctx, eventID, cdnURL, &key); err != nil {
 			utils.ErrorResponse(c, http.StatusInternalServerError, "failed to save image url")
 			return
 		}
 	case "banner":
-		if err := h.repo.SetBannerImage(eventID, cdnURL, &key); err != nil {
+		if err := h.repo.SetBannerImageWithContext(ctx, eventID, cdnURL, &key); err != nil {
 			utils.ErrorResponse(c, http.StatusInternalServerError, "failed to save banner url")
 			return
 		}
@@ -225,14 +219,27 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Upload successful", gin.H{
 		"eventId": eventID,
 		"kind":    kind,
 		"url":     cdnURL,
+		"key":     objectKey,
 	})
 }
 
-// deriveStatus determines event status from date (YYYY-MM-DD) relative to now (UTC).
+func allowedImageExt(contentType string) (string, bool) {
+	switch contentType {
+	case "image/png":
+		return "png", true
+	case "image/jpeg":
+		return "jpg", true
+	case "image/webp":
+		return "webp", true
+	default:
+		return "", false
+	}
+}
+
 func deriveStatus(dateStr, timeStr string, now time.Time) models.EventStatus {
 	dateStr = strings.TrimSpace(dateStr)
 	if dateStr == "" {
@@ -243,7 +250,6 @@ func deriveStatus(dateStr, timeStr string, now time.Time) models.EventStatus {
 		return models.EventStatusUpcoming
 	}
 
-	// Compare by date only
 	y1, m1, d1 := t.Date()
 	y2, m2, d2 := now.Date()
 
@@ -255,4 +261,18 @@ func deriveStatus(dateStr, timeStr string, now time.Time) models.EventStatus {
 	default:
 		return models.EventStatusPast
 	}
+}
+
+func parseIntClamp(s string, min, max int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return min
+	}
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
