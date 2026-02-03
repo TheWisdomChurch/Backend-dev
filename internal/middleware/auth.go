@@ -10,10 +10,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-/* ============================================================================
-   Claims
-============================================================================ */
-
 type AccessClaims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
@@ -21,7 +17,6 @@ type AccessClaims struct {
 	jwt.RegisteredClaims
 }
 
-// Validate enforces required fields beyond standard exp/nbf checks.
 func (c AccessClaims) Validate() error {
 	if c.UserID == "" {
 		return errors.New("missing user_id")
@@ -35,10 +30,6 @@ func (c AccessClaims) Validate() error {
 	return nil
 }
 
-/* ============================================================================
-   Helpers
-============================================================================ */
-
 func unauthorized(c *gin.Context, message string) {
 	c.JSON(http.StatusUnauthorized, gin.H{
 		"error":      "Unauthorized",
@@ -50,15 +41,12 @@ func unauthorized(c *gin.Context, message string) {
 
 func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 	cookie, err := c.Cookie("auth_token")
-	if err != nil {
+	if err != nil || cookie == "" {
 		return nil, fmt.Errorf("missing auth cookie")
 	}
 
 	claims := &AccessClaims{}
-
-	// ParseWithClaims also validates signature. We validate exp/nbf manually below.
 	token, err := jwt.ParseWithClaims(cookie, claims, func(token *jwt.Token) (interface{}, error) {
-		// Enforce HMAC SHA
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -67,7 +55,6 @@ func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 		}
 		return []byte(jwtSecret), nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -75,20 +62,13 @@ func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 		return nil, fmt.Errorf("invalid token")
 	}
 
-	// Expiration validation: RegisteredClaims provides helpers.
-	// jwt/v5 supports claims validation via jwt.Validator, but explicit check is fine.
 	now := time.Now()
-
-	// If ExpiresAt exists, enforce it.
 	if claims.ExpiresAt != nil && now.After(claims.ExpiresAt.Time) {
 		return nil, fmt.Errorf("token expired")
 	}
-	// If NotBefore exists, enforce it.
 	if claims.NotBefore != nil && now.Before(claims.NotBefore.Time) {
 		return nil, fmt.Errorf("token not active yet")
 	}
-
-	// Custom required fields
 	if err := claims.Validate(); err != nil {
 		return nil, err
 	}
@@ -96,11 +76,6 @@ func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 	return claims, nil
 }
 
-/* ============================================================================
-   Middleware
-============================================================================ */
-
-// AuthMiddleware validates JWT from cookie and injects identity into context
 func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, err := parseCookieToken(c, jwtSecret)
@@ -109,16 +84,13 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		// Set claims in context
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("role", claims.Role)
-
 		c.Next()
 	}
 }
 
-// OptionalAuthMiddleware tries to extract user from token but doesn't fail if missing/invalid
 func OptionalAuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, err := parseCookieToken(c, jwtSecret)
@@ -131,12 +103,11 @@ func OptionalAuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	}
 }
 
-// GetUserIDFromContext retrieves user_id from context
 func GetUserIDFromContext(c *gin.Context) (string, bool) {
 	userID, exists := c.Get("user_id")
 	if !exists {
 		return "", false
 	}
-	userIDStr, ok := userID.(string)
-	return userIDStr, ok
+	id, ok := userID.(string)
+	return id, ok && id != ""
 }

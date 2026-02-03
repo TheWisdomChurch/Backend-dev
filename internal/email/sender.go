@@ -22,32 +22,41 @@ type Sender struct {
 	from       string
 	requireTLS bool
 	redis      *redis.Client
+
+	// timeouts
+	dialTimeout   time.Duration
+	opTimeout     time.Duration
+	writeTimeout  time.Duration
 }
 
 func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (*Sender, error) {
-	// Fallback to envs if args empty
-	if host == "" {
-		host = os.Getenv("SMTP_HOST")
-	}
-	if port == "" {
-		port = os.Getenv("SMTP_PORT")
-	}
-	if user == "" {
-		user = os.Getenv("SMTP_USER")
-	}
-	if pass == "" {
-		pass = os.Getenv("SMTP_PASS")
-	}
-	if from == "" {
-		from = os.Getenv("SMTP_FROM")
-	}
+	if host == "" { host = os.Getenv("SMTP_HOST") }
+	if port == "" { port = os.Getenv("SMTP_PORT") }
+	if user == "" { user = os.Getenv("SMTP_USER") }
+	if pass == "" { pass = os.Getenv("SMTP_PASS") }
+	if from == "" { from = os.Getenv("SMTP_FROM") }
+
 	if raw := os.Getenv("SMTP_TLS"); raw != "" {
 		if parsed, err := strconv.ParseBool(raw); err == nil {
 			requireTLS = parsed
 		}
 	}
 
-	// Redis for rate limiting
+	// Optional: override timeouts via env
+	dialTimeout := 4 * time.Second   // keep fast; if SMTP is slow, don't block requests
+	opTimeout := 6 * time.Second     // hello/starttls/auth/mail/rcpt/data
+	writeTimeout := 8 * time.Second  // writing body can be a bit longer
+
+	if v := strings.TrimSpace(os.Getenv("SMTP_DIAL_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil { dialTimeout = d }
+	}
+	if v := strings.TrimSpace(os.Getenv("SMTP_OP_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil { opTimeout = d }
+	}
+	if v := strings.TrimSpace(os.Getenv("SMTP_WRITE_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil { writeTimeout = d }
+	}
+
 	var redisClient *redis.Client
 	if redisURL != "" {
 		if opts, err := redis.ParseURL(redisURL); err == nil {
@@ -56,25 +65,34 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 	}
 
 	return &Sender{
-		host:       strings.TrimSpace(host),
-		port:       strings.TrimSpace(port),
-		user:       strings.TrimSpace(user),
-		pass:       strings.TrimSpace(pass),
-		from:       strings.TrimSpace(from),
-		requireTLS: requireTLS,
-		redis:      redisClient,
+		host:        strings.TrimSpace(host),
+		port:        strings.TrimSpace(port),
+		user:        strings.TrimSpace(user),
+		pass:        strings.TrimSpace(pass),
+		from:        strings.TrimSpace(from),
+		requireTLS:  requireTLS,
+		redis:       redisClient,
+		dialTimeout: dialTimeout,
+		opTimeout:   opTimeout,
+		writeTimeout: writeTimeout,
 	}, nil
 }
 
-// SendHTML sends HTML email with rate limiting
 func (s *Sender) SendHTML(to, subject, body string) error {
-	// Rate limiting: max 10 emails per minute per recipient
+	// Keep old signature; but internally create a short context.
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return s.SendHTMLContext(ctx, to, subject, body)
+}
+
+func (s *Sender) SendHTMLContext(ctx context.Context, to, subject, body string) error {
+	// Rate limit: max 10/min per recipient
 	if s.redis != nil {
-		key := fmt.Sprintf("email_rate:%s", to)
-		limitKey := fmt.Sprintf("%s:limit", key)
-		if count, err := s.redis.Incr(context.Background(), limitKey).Result(); err == nil {
+		key := fmt.Sprintf("email_rate:%s:limit", to)
+		count, err := s.redis.Incr(ctx, key).Result()
+		if err == nil {
 			if count == 1 {
-				s.redis.Expire(context.Background(), limitKey, time.Minute)
+				_ = s.redis.Expire(ctx, key, time.Minute).Err()
 			}
 			if count > 10 {
 				return fmt.Errorf("rate limit exceeded for %s", to)
@@ -86,7 +104,6 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 		return fmt.Errorf("smtp configuration is incomplete")
 	}
 
-	// Header From can be pretty; envelope MAIL FROM must match auth user for Gmail
 	headerFrom := strings.TrimSpace(s.from)
 	if headerFrom == "" {
 		headerFrom = s.user
@@ -101,12 +118,12 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 		"Content-Type": "text/html; charset=UTF-8",
 	}
 
-	var message strings.Builder
+	var msg strings.Builder
 	for k, v := range headers {
-		message.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
+		msg.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
-	message.WriteString("\r\n")
-	message.WriteString(body)
+	msg.WriteString("\r\n")
+	msg.WriteString(body)
 
 	addr := net.JoinHostPort(s.host, s.port)
 
@@ -115,92 +132,89 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	helo := "wisdomhouse.app"
+	dialer := &net.Dialer{Timeout: s.dialTimeout}
 
-	var client *smtp.Client
+	var (
+		conn   net.Conn
+		client *smtp.Client
+		err    error
+	)
 
+	// helper to set deadlines for each “phase”
+	setDeadline := func(d time.Duration) {
+		_ = conn.SetDeadline(time.Now().Add(d))
+	}
+
+	// Connect
 	if s.port == "465" {
 		// Implicit TLS
-		conn, err := tls.Dial("tcp", addr, tlsConfig)
-		if err != nil {
-			return fmt.Errorf("TLS connection failed: %w", err)
-		}
-		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
-
-		c, err := smtp.NewClient(conn, s.host)
-		if err != nil {
-			_ = conn.Close()
-			return fmt.Errorf("SMTP client failed: %w", err)
-		}
-		client = c
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	} else {
-		// Plain + STARTTLS (Gmail 587)
-		conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
-		if err != nil {
-			return fmt.Errorf("SMTP connection failed: %w", err)
-		}
-		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+	}
+	if err != nil {
+		return fmt.Errorf("smtp connect failed: %w", err)
+	}
+	defer conn.Close()
 
-		c, err := smtp.NewClient(conn, s.host)
-		if err != nil {
-			_ = conn.Close()
-			return fmt.Errorf("SMTP client failed: %w", err)
-		}
+	setDeadline(s.opTimeout)
+	client, err = smtp.NewClient(conn, s.host)
+	if err != nil {
+		return fmt.Errorf("smtp client failed: %w", err)
+	}
+	defer func() { _ = client.Close() }()
 
-		// HELO/EHLO
-		if err := c.Hello(helo); err != nil {
-			_ = c.Close()
-			return fmt.Errorf("SMTP hello failed: %w", err)
-		}
-
-		startTLSSupported := false
-		if ok, _ := c.Extension("STARTTLS"); ok {
-			startTLSSupported = true
-			if err := c.StartTLS(tlsConfig); err != nil {
-				_ = c.Close()
-				return fmt.Errorf("STARTTLS failed: %w", err)
-			}
-		}
-
-		if s.requireTLS && !startTLSSupported {
-			_ = c.Close()
-			return fmt.Errorf("SMTP server at %s does not support STARTTLS", addr)
-		}
-
-		client = c
+	// EHLO/HELO (smtp.NewClient already does greeting; explicit Hello is ok)
+	setDeadline(s.opTimeout)
+	if err := client.Hello("wisdomchurchhq.org"); err != nil {
+		return fmt.Errorf("smtp hello failed: %w", err)
 	}
 
-	defer func() { _ = client.Quit() }()
+	// STARTTLS on 587
+	if s.port != "465" {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			setDeadline(s.opTimeout)
+			if err := client.StartTLS(tlsConfig); err != nil {
+				return fmt.Errorf("starttls failed: %w", err)
+			}
+		} else if s.requireTLS {
+			return fmt.Errorf("smtp server at %s does not support starttls", addr)
+		}
+	}
 
 	// AUTH
+	setDeadline(s.opTimeout)
 	if ok, _ := client.Extension("AUTH"); !ok {
-		_ = client.Close()
-		return fmt.Errorf("SMTP server at %s does not advertise AUTH", addr)
+		return fmt.Errorf("smtp server at %s does not advertise AUTH", addr)
 	}
-
 	if err := client.Auth(smtp.PlainAuth("", s.user, s.pass, s.host)); err != nil {
-		return fmt.Errorf("authentication failed: %w", err)
+		return fmt.Errorf("smtp auth failed: %w", err)
 	}
 
-	// Envelope + recipient
+	// MAIL / RCPT
+	setDeadline(s.opTimeout)
 	if err := client.Mail(envelopeFrom); err != nil {
-		return fmt.Errorf("MAIL command failed: %w", err)
+		return fmt.Errorf("mail from failed: %w", err)
 	}
 	if err := client.Rcpt(to); err != nil {
-		return fmt.Errorf("RCPT command failed: %w", err)
+		return fmt.Errorf("rcpt to failed: %w", err)
 	}
 
 	// DATA
+	setDeadline(s.writeTimeout)
 	w, err := client.Data()
 	if err != nil {
-		return fmt.Errorf("DATA command failed: %w", err)
+		return fmt.Errorf("data failed: %w", err)
 	}
-	if _, err := w.Write([]byte(message.String())); err != nil {
-		return fmt.Errorf("writing message failed: %w", err)
+	if _, err := w.Write([]byte(msg.String())); err != nil {
+		_ = w.Close()
+		return fmt.Errorf("write failed: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return fmt.Errorf("closing writer failed: %w", err)
+		return fmt.Errorf("close writer failed: %w", err)
 	}
 
+	// QUIT (best-effort)
+	_ = client.Quit()
 	return nil
 }
