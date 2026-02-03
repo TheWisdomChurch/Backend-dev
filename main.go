@@ -54,7 +54,6 @@ func main() {
 	cfg.App.Environment = env
 
 	// 1) Setup Gin mode
-	// Prefer explicit production behavior
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	} else if strings.TrimSpace(cfg.Server.GinMode) != "" {
@@ -62,6 +61,9 @@ func main() {
 	} else {
 		gin.SetMode(gin.DebugMode)
 	}
+
+	// ✅ IMPORTANT: cfg is already *config.Config, do NOT pass &cfg
+	ensureCORSDefaults(cfg)
 
 	// 2) Connect DB (AutoMigrate handled in database.NewDatabase with RUN_AUTOMIGRATE gate)
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
@@ -81,7 +83,6 @@ func main() {
 	}
 
 	// ✅ MIGRATION MODE EARLY EXIT
-	// When RUN_AUTOMIGRATE=true, we only want to run migrations and exit.
 	if isTrueEnv("RUN_AUTOMIGRATE") {
 		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
 		return
@@ -121,7 +122,6 @@ func main() {
 	}
 
 	// 6) Bunny uploader service (optional)
-	// Professional approach: if incomplete, simply disable—do not hack env vars.
 	var bunnyUploader *service.BunnyUploader
 	if cfg.Bunny.Enabled() {
 		bunnyUploader = service.NewBunnyUploader(
@@ -197,7 +197,7 @@ func main() {
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 
-	// 10) Background jobs (only start in normal server mode)
+	// 10) Background jobs
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
@@ -256,7 +256,6 @@ func main() {
 		if err != nil {
 			logger.Fatalf("❌ Server failed: %v", err)
 		}
-		// Server exited normally; just return
 		logger.Println("ℹ️ Server exited.")
 		return
 	}
@@ -305,7 +304,6 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 		}
 	}
 
-	// Run once at startup
 	runCleanup()
 
 	for {
@@ -315,6 +313,53 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 		case <-ticker.C:
 			runCleanup()
 		}
+	}
+}
+
+// ✅ Guarantees CORS won’t 403 in production due to missing/incorrect config.
+func ensureCORSDefaults(cfg *config.Config) {
+	// Cookie auth across subdomains requires credentials
+	cfg.CORS.AllowCredentials = true
+
+	required := []string{
+		"https://admin.wisdomchurchhq.org",
+		"https://wisdomchurchhq.org",
+		"https://www.wisdomchurchhq.org",
+	}
+
+	// If empty, set required defaults
+	if len(cfg.CORS.AllowedOrigins) == 0 {
+		cfg.CORS.AllowedOrigins = required
+	}
+
+	// Remove "*" and dedupe
+	exists := map[string]bool{}
+	out := make([]string, 0, len(cfg.CORS.AllowedOrigins)+len(required))
+
+	for _, o := range cfg.CORS.AllowedOrigins {
+		o = strings.TrimSpace(o)
+		if o == "" || o == "*" {
+			continue
+		}
+		if !exists[o] {
+			exists[o] = true
+			out = append(out, o)
+		}
+	}
+
+	for _, r := range required {
+		if !exists[r] {
+			out = append(out, r)
+		}
+	}
+
+	cfg.CORS.AllowedOrigins = out
+
+	if len(cfg.CORS.AllowedMethods) == 0 {
+		cfg.CORS.AllowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	}
+	if len(cfg.CORS.AllowedHeaders) == 0 {
+		cfg.CORS.AllowedHeaders = []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With"}
 	}
 }
 
@@ -335,13 +380,17 @@ func setupRouter(
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 ) *gin.Engine {
 	router := gin.New()
-	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
+	secureCookies := cfg.App.Environment == "production"
+	sessionTimeout := middleware.SessionTimeout(30*time.Minute, secureCookies)
 
-	// Global middleware
+	// Global middleware (ORDER MATTERS)
 	router.Use(gin.Recovery())
-	router.Use(middleware.DeviceFingerprint(cfg.App.Environment == "production"))
-	router.Use(middleware.Logger(cfg.App.LogLevel))
+
+	// ✅ CORS FIRST: always set CORS headers, avoid empty 403 on browser requests
 	router.Use(middleware.CORS(&cfg.CORS))
+
+	router.Use(middleware.DeviceFingerprint(secureCookies))
+	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.RateLimiter())
@@ -473,7 +522,6 @@ func setupRouter(
 			admin.POST("/notifications", notificationHandler.SendNotification)
 			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
 
-			// Generic CDN upload for admin dashboard
 			admin.POST("/uploads", uploadHandler.UploadImage)
 
 			admin.GET("/workforce", workforceHandler.List)
