@@ -108,7 +108,7 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 	message.WriteString("\r\n")
 	message.WriteString(body)
 
-	addr := fmt.Sprintf("%s:%s", s.host, s.port)
+	addr := net.JoinHostPort(s.host, s.port)
 
 	tlsConfig := &tls.Config{
 		ServerName: s.host,
