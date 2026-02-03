@@ -1,14 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
 )
 
-// UploadHandler lets admins upload arbitrary images to Bunny and get back a CDN URL.
 type UploadHandler struct {
 	bunny *service.BunnyUploader
 }
@@ -17,7 +19,6 @@ func NewUploadHandler(bunny *service.BunnyUploader) *UploadHandler {
 	return &UploadHandler{bunny: bunny}
 }
 
-// UploadImage handles POST /api/v1/admin/uploads (multipart form with "file").
 func (h *UploadHandler) UploadImage(c *gin.Context) {
 	if h.bunny == nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "CDN uploader not configured")
@@ -30,7 +31,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 		return
 	}
 
-	const maxBytes = 10 << 20 // 10MB
+	const maxBytes = 10 << 20
 	if fh.Size > maxBytes {
 		utils.ErrorResponse(c, http.StatusBadRequest, "file too large (max 10MB)")
 		return
@@ -44,15 +45,8 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 	defer src.Close()
 
 	ct := fh.Header.Get("Content-Type")
-	ext := ""
-	switch ct {
-	case "image/png":
-		ext = "png"
-	case "image/jpeg":
-		ext = "jpg"
-	case "image/webp":
-		ext = "webp"
-	default:
+	ext, ok := allowedImageExt(ct)
+	if !ok {
 		utils.ErrorResponse(c, http.StatusBadRequest, "only png, jpg, webp allowed")
 		return
 	}
@@ -65,13 +59,16 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 		return
 	}
 
-	cdnURL, err := h.bunny.Upload(c.Request.Context(), objectKey, ct, src)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+
+	cdnURL, err := h.bunny.Upload(ctx, objectKey, ct, src)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to CDN failed")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Upload successful", gin.H{
 		"folder": folder,
 		"key":    objectKey,
 		"url":    cdnURL,

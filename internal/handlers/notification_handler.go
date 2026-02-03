@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -71,12 +70,16 @@ func (h *NotificationHandler) UnsubscribeByLink(c *gin.Context) {
 		return
 	}
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<html><body style="font-family:Arial,sans-serif;padding:24px;"><h3>You have been unsubscribed.</h3><p>You will no longer receive updates from us.</p></body></html>`))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+		`<html><body style="font-family:Arial,sans-serif;padding:24px;">
+			<h3>You have been unsubscribed.</h3>
+			<p>You will no longer receive updates from us.</p>
+		</body></html>`))
 }
 
 func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 
 	items, total, err := h.svc.ListSubscribers(page, limit)
 	if err != nil {
@@ -84,7 +87,7 @@ func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Subscribers loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,
@@ -105,5 +108,5 @@ func (h *NotificationHandler) SendNotification(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Notification sent", result)
+	utils.SuccessResponse(c, http.StatusOK, "Notification queued/sent", result)
 }
