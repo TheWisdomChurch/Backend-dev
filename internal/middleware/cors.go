@@ -1,11 +1,11 @@
 package middleware
 
 import (
+	"log"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
-	"log" // Added import for logging
 
 	"wisdomHouse-backend/internal/config"
 
@@ -18,15 +18,13 @@ func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
 	allowedMethods := upperAll(cleanStringSlice(cfg.AllowedMethods))
 	allowedHeaders := cleanStringSlice(cfg.AllowedHeaders)
 	exposedHeaders := cleanStringSlice(cfg.ExposedHeaders)
-
 	allowCredentials := cfg.AllowCredentials
 
-	// ---- Defaults (important for preflight stability) ----
+	// ---- Defaults (safe) ----
 	if len(allowedMethods) == 0 {
 		allowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 	}
 	if len(allowedHeaders) == 0 {
-		// Include what browsers commonly ask for in preflight
 		allowedHeaders = []string{
 			"Origin",
 			"Content-Type",
@@ -36,31 +34,26 @@ func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
 		}
 	}
 
-	// IMPORTANT: if credentials are allowed, wildcard origins are invalid.
+	// If credentials are allowed, "*" is invalid. Drop it.
 	if allowCredentials {
 		allowedOrigins = filterOutWildcard(allowedOrigins)
 	}
 
-	// Build an origin validator supporting exact + wildcard.
 	originValidator, exactOrigins := createOriginValidator(allowedOrigins, allowCredentials)
 
 	corsConfig := cors.Config{
-		// Setting AllowOrigins is important: gin-contrib/cors behaves more consistently
-		// when this list contains exact origins (wildcards are handled via AllowOriginFunc).
-		AllowOrigins:     exactOrigins,
+		AllowOrigins:     exactOrigins,    // exact matches only
 		AllowMethods:     allowedMethods,
 		AllowHeaders:     allowedHeaders,
 		ExposeHeaders:    exposedHeaders,
 		AllowCredentials: allowCredentials,
+		MaxAge:           12 * time.Hour,
 
-		// If MaxAge is 0 in cfg, set a sane default
-		MaxAge: 12 * time.Hour,
-
-		// Use function for wildcard matching + extra validation
+		// Wildcards + extra validation
 		AllowOriginFunc: originValidator,
 	}
 
-	// If cfg.MaxAge is explicitly provided, honor it
+	// Honor cfg.MaxAge if set
 	if cfg.MaxAge > 0 {
 		corsConfig.MaxAge = time.Duration(cfg.MaxAge) * time.Second
 	}
@@ -81,7 +74,7 @@ func cleanStringSlice(slice []string) []string {
 func upperAll(slice []string) []string {
 	out := make([]string, len(slice))
 	for i, v := range slice {
-		out[i] = strings.ToUpper(v)
+		out[i] = strings.ToUpper(strings.TrimSpace(v))
 	}
 	return out
 }
@@ -103,8 +96,8 @@ func normalizeOrigin(origin string) string {
 }
 
 // createOriginValidator returns:
-// 1) a validator func(origin) bool
-// 2) the list of exact origins (non-wildcard) for cors.Config.AllowOrigins
+// 1) validator func(origin) bool
+// 2) exact origins slice for cors.Config.AllowOrigins
 func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func(string) bool, []string) {
 	type wildcard struct {
 		raw     string
@@ -123,14 +116,15 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 			continue
 		}
 
+		// Allow all only when credentials are NOT used
 		if o == "*" {
-			// Only permissible when credentials are NOT used.
 			if !allowCredentials {
 				allowAll = true
 			}
 			continue
 		}
 
+		// wildcard entry like https://*.example.com
 		if strings.Contains(o, "*") {
 			escaped := regexp.QuoteMeta(o)
 			escaped = strings.ReplaceAll(escaped, "\\*", ".*")
@@ -149,23 +143,19 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 	return func(origin string) bool {
 		origin = normalizeOrigin(origin)
 		if origin == "" {
-			log.Printf("CORS: Empty origin rejected")
+			// No Origin header should not be rejected by CORS; gin-cors calls validator only when Origin exists
+			log.Printf("CORS: empty origin rejected")
 			return false
 		}
 
-<<<<<<< HEAD
 		// Must be a valid absolute origin: scheme + host
 		u, err := url.Parse(origin)
 		if err != nil || u.Scheme == "" || u.Host == "" {
+			log.Printf("CORS: invalid origin url '%s': %v", origin, err)
 			return false
 		}
-		// Only allow http/https origins
 		if u.Scheme != "http" && u.Scheme != "https" {
-=======
-		// Must be a valid origin URL
-		if _, err := url.Parse(origin); err != nil {
-			log.Printf("CORS: Invalid origin URL: %s, error: %v", origin, err)
->>>>>>> 7115b10 (registration-tester)
+			log.Printf("CORS: invalid origin scheme '%s'", origin)
 			return false
 		}
 
@@ -182,16 +172,8 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 				return true
 			}
 		}
-<<<<<<< HEAD
+
+		log.Printf("CORS: rejected origin '%s'. allowed=%v allowCredentials=%t", origin, allowedOrigins, allowCredentials)
 		return false
 	}, exactList
 }
-=======
-
-		// Log rejection with details
-		log.Printf("CORS: Rejected origin '%s'. Allowed origins: %v, AllowCredentials: %t", origin, allowedOrigins, allowCredentials)
-
-		return false
-	}
-}
->>>>>>> 7115b10 (registration-tester)
