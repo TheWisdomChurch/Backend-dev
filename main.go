@@ -4,15 +4,18 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -98,6 +101,28 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return sqlDB.PingContext(ctx)
 }
 
+type redisLock struct {
+	client *redis.Client
+}
+
+func newRedisLock(redisURL string) *redisLock {
+	if strings.TrimSpace(redisURL) == "" {
+		return nil
+	}
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil
+	}
+	return &redisLock{client: redis.NewClient(opts)}
+}
+
+func (l *redisLock) Acquire(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if l == nil || l.client == nil {
+		return true, nil
+	}
+	return l.client.SetNX(ctx, key, "1", ttl).Result()
+}
+
 func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Hour
@@ -125,6 +150,111 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 	}
 }
 
+func parseHourMinute(raw string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("time must be HH:MM")
+	}
+	hour, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("hour must be numeric")
+	}
+	minute, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("minute must be numeric")
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("time must be valid 24h clock")
+	}
+	return hour, minute, nil
+}
+
+func nextRunAt(now time.Time, hour, minute int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func startBirthdayScheduler(ctx context.Context, logger *log.Logger, lock *redisLock, workforceSvc service.WorkforceService, memberSvc service.MemberService, tz string, sendAt string) {
+	if workforceSvc == nil && memberSvc == nil {
+		return
+	}
+
+	if strings.TrimSpace(sendAt) == "" {
+		sendAt = "09:00"
+	}
+	hour, minute, err := parseHourMinute(sendAt)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TIME=%q, using 09:00", sendAt)
+		}
+		hour, minute = 9, 0
+	}
+
+	loc := time.UTC
+	if strings.TrimSpace(tz) != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		} else if logger != nil {
+			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TZ=%q, using UTC", tz)
+		}
+	}
+
+	for {
+		now := time.Now().In(loc)
+		next := nextRunAt(now, hour, minute)
+		timer := time.NewTimer(time.Until(next))
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		dateKey := next.Format("2006-01-02")
+		if lock != nil {
+			ok, err := lock.Acquire(ctx, "birthday_send:"+dateKey, 36*time.Hour)
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Birthday scheduler lock failed: %v", err)
+				}
+				continue
+			}
+			if !ok {
+				if logger != nil {
+					logger.Printf("ℹ️ Birthday scheduler already ran for %s", dateKey)
+				}
+				continue
+			}
+		}
+
+		if workforceSvc != nil {
+			result, err := workforceSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Workforce birthday send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("🎂 Workforce birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+		}
+
+		if memberSvc != nil {
+			result, err := memberSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Member birthday send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("🎉 Member birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+		}
+	}
+}
+
 type noopEmailSender struct{}
 
 func (noopEmailSender) SendHTML(string, string, string) error {
@@ -144,6 +274,7 @@ func setupRouter(
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
+	memberHandler *handlers.MemberHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 ) *gin.Engine {
 	router := gin.New()
@@ -257,6 +388,19 @@ func setupRouter(
 	admin.POST("/workforce", workforceHandler.Create)
 	admin.PUT("/workforce/:id", workforceHandler.Update)
 	admin.GET("/workforce/stats", workforceHandler.Stats)
+	admin.GET("/workforce/birthdays/stats", workforceHandler.BirthdayStats)
+	admin.GET("/workforce/birthdays/month/:month", workforceHandler.BirthdaysByMonth)
+	admin.GET("/workforce/birthdays/today", workforceHandler.BirthdaysToday)
+	admin.POST("/workforce/birthdays/send-today", workforceHandler.SendBirthdaysToday)
+
+	admin.GET("/members", memberHandler.List)
+	admin.POST("/members", memberHandler.Create)
+	admin.PUT("/members/:id", memberHandler.Update)
+	admin.DELETE("/members/:id", memberHandler.Delete)
+	admin.GET("/members/birthdays/stats", memberHandler.BirthdayStats)
+	admin.GET("/members/birthdays/month/:month", memberHandler.BirthdaysByMonth)
+	admin.GET("/members/birthdays/today", memberHandler.BirthdaysToday)
+	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
 
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
@@ -332,6 +476,7 @@ func main() {
 	notificationRepo := repository.NewNotificationRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
+	memberRepo := repository.NewMemberRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
@@ -344,12 +489,43 @@ func main() {
 		var emailSender email.ContextEmailSender
 		var err error
 
-		if cfg.SES.Enabled() {
-			emailSender, err = email.NewSESSender(cfg.Redis.URL, cfg.AWS.Region, cfg.SES.FromEmail)
+		if cfg.Brevo.Enabled() {
+			fromName := strings.TrimSpace(cfg.Brevo.FromName)
+			if fromName == "" {
+				fromName = cfg.App.Name
+			}
+			emailSender, err = email.NewBrevoSender(
+				cfg.Redis.URL,
+				cfg.Brevo.APIKey,
+				cfg.Brevo.FromEmail,
+				fromName,
+				cfg.Brevo.BaseURL,
+			)
 			if err == nil {
-				logger.Println("✅ Email sender initialized (AWS SES)")
+				logger.Println("✅ Email sender initialized (Brevo)")
 			}
 		} else {
+			// AWS SES setup is intentionally disabled while Brevo is in use.
+			// Uncomment when SES is ready in production.
+			// if cfg.SES.Enabled() {
+			// 	emailSender, err = email.NewSESSender(cfg.Redis.URL, cfg.AWS.Region, cfg.SES.FromEmail)
+			// 	if err == nil {
+			// 		logger.Println("✅ Email sender initialized (AWS SES)")
+			// 	}
+			// } else {
+			// 	emailSender, err = email.NewSender(
+			// 		cfg.Redis.URL,
+			// 		cfg.SMTP.Host,
+			// 		cfg.SMTP.Port,
+			// 		cfg.SMTP.User,
+			// 		cfg.SMTP.Password,
+			// 		cfg.SMTP.From,
+			// 		cfg.SMTP.TLS,
+			// 	)
+			// 	if err == nil {
+			// 		logger.Println("✅ Email sender initialized (SMTP)")
+			// 	}
+			// }
 			emailSender, err = email.NewSender(
 				cfg.Redis.URL,
 				cfg.SMTP.Host,
@@ -380,28 +556,46 @@ func main() {
 		}
 	}
 
-	// Bunny uploader
-	var bunnyUploader *service.BunnyUploader
-	if cfg.Bunny.Enabled() {
-		bunnyUploader = service.NewBunnyUploader(
-			cfg.Bunny.StorageZone,
-			cfg.Bunny.StorageKey,
-			cfg.Bunny.StorageRegion,
-			cfg.Bunny.PullZone,
-			cfg.Bunny.BasePath,
+	// DigitalOcean Spaces uploader
+	var spacesUploader *service.SpacesUploader
+	if cfg.Spaces.Enabled() {
+		spacesUploader, err = service.NewSpacesUploader(
+			cfg.Spaces.Bucket,
+			cfg.Spaces.Region,
+			cfg.Spaces.Endpoint,
+			cfg.Spaces.AccessKey,
+			cfg.Spaces.SecretKey,
+			cfg.Spaces.PublicBaseURL,
+			cfg.Spaces.BasePath,
+			cfg.Spaces.PublicRead,
 		)
+		if err != nil {
+			if cfg.App.Environment == "production" {
+				logger.Fatalf("❌ Failed to initialize Spaces uploader (required in production): %v", err)
+			}
+			logger.Printf("⚠️ Spaces uploader not initialized (uploads disabled): %v", err)
+		} else {
+			logger.Println("✅ Spaces uploader initialized")
+		}
 	} else {
-		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
+		logger.Println("ℹ️ Spaces uploads disabled (not configured).")
 	}
 
 	// Branding
 	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
-	if templateAssetBaseURL == "" && cfg.Bunny.Enabled() {
-		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
-		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
-			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
+	if templateAssetBaseURL == "" && cfg.Spaces.Enabled() {
+		spacesBase := strings.TrimRight(cfg.Spaces.PublicBaseURL, "/")
+		if spacesBase == "" && spacesUploader != nil {
+			spacesBase = strings.TrimRight(spacesUploader.PublicBaseURL, "/")
 		}
-		templateAssetBaseURL = base + "/email-templates"
+		base := spacesBase
+		if strings.TrimSpace(cfg.Spaces.BasePath) != "" {
+			base += "/" + strings.Trim(cfg.Spaces.BasePath, "/")
+		}
+		if strings.TrimSpace(cfg.Spaces.EmailTemplatePath) != "" {
+			base += "/" + strings.Trim(cfg.Spaces.EmailTemplatePath, "/")
+		}
+		templateAssetBaseURL = base
 	}
 
 	branding := email.Branding{
@@ -416,7 +610,7 @@ func main() {
 	}
 
 	// ✅ Services (changed: pass emailQueue instead of emailSender)
-	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
+	testimonialService := service.NewTestimonialService(testimonialRepo, spacesUploader)
 
 	otpService := service.NewOTPService(otpRepo, emailQueue, branding, userRepo)
 
@@ -452,26 +646,47 @@ func main() {
 	)
 
 	workforceService := service.NewWorkforceService(workforceRepo, emailQueue, branding)
+	memberService := service.NewMemberService(memberRepo, emailQueue, branding)
 	emailTemplateService := service.NewEmailTemplateService(emailQueue, branding)
 
 	// Handlers (unchanged)
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	uploadHandler := handlers.NewUploadHandler(bunnyUploader)
-	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
+	uploadHandler := handlers.NewUploadHandler(spacesUploader)
+	eventHandler := handlers.NewEventHandler(eventRepo, spacesUploader)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 	formHandler := handlers.NewFormHandler(formService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
+	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 
 	// Background jobs
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
+	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
+	if schedulerEnabled {
+		lock := newRedisLock(cfg.Redis.URL)
+		tz := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TZ"))
+		sendAt := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TIME"))
+		go startBirthdayScheduler(cleanupCtx, logger, lock, workforceService, memberService, tz, sendAt)
+	}
+	if isTrueEnv("BIRTHDAY_SCHEDULER_ONLY") {
+		if !schedulerEnabled {
+			logger.Println("⚠️ BIRTHDAY_SCHEDULER_ONLY=true but BIRTHDAY_SCHEDULER_ENABLED=false")
+		}
+		logger.Println("🎂 Birthday scheduler worker mode enabled (API server disabled)")
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-quit
+		logger.Printf("🛑 Received signal: %v", sig)
+		cleanupCancel()
+		return
+	}
 
 	// Router
 	router := setupRouter(
@@ -487,6 +702,7 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		memberHandler,
 		emailTemplateHandler,
 	)
 

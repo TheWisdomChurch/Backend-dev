@@ -92,7 +92,22 @@ func (r *formRepository) Update(form *models.Form) error {
 }
 
 func (r *formRepository) Delete(id string) error {
-	return r.db.DB.Delete(&models.Form{}, "id = ?", id).Error
+	return r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormField{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormSubmission{}).Error; err != nil {
+			return err
+		}
+		result := tx.Unscoped().Delete(&models.Form{}, "id = ?", id)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (r *formRepository) DeleteExpired(now time.Time) (int64, error) {
