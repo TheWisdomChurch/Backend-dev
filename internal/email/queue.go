@@ -12,13 +12,17 @@ type Job struct {
 	Body    string
 }
 
+type ContextEmailSender interface {
+	SendHTMLContext(ctx context.Context, to, subject, body string) error
+}
+
 type Queue struct {
-	sender *Sender
+	sender ContextEmailSender
 	ch     chan Job
 	logger *log.Logger
 }
 
-func NewQueue(sender *Sender, logger *log.Logger, buffer int) *Queue {
+func NewQueue(sender ContextEmailSender, logger *log.Logger, buffer int) *Queue {
 	if buffer <= 0 {
 		buffer = 500
 	}
