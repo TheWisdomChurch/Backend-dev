@@ -22,6 +22,12 @@ var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
+var flexibleTimeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+	"2006-01-02",
+}
 
 type FormService interface {
 	List(page, limit int) ([]models.Form, int64, error)
@@ -248,7 +254,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	settings, _ := decodeSettings(form.Settings)
 
 	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
-		t, parseErr := time.Parse(time.RFC3339, *settings.ExpiresAt)
+		t, parseErr := parseFlexibleTime(*settings.ExpiresAt)
 		if parseErr != nil {
 			return errors.New("form expiresAt is invalid on server")
 		}
@@ -258,7 +264,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	if settings.ClosesAt != nil && strings.TrimSpace(*settings.ClosesAt) != "" {
-		t, parseErr := time.Parse(time.RFC3339, *settings.ClosesAt)
+		t, parseErr := parseFlexibleTime(*settings.ClosesAt)
 		if parseErr != nil {
 			return errors.New("form closesAt is invalid on server")
 		}
@@ -277,17 +283,18 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		}
 	}
 
-	if err := validateSubmission(form.Fields, req.Values); err != nil {
+	cleanValues, err := validateSubmission(form.Fields, req.Values)
+	if err != nil {
 		return err
 	}
 
-	valuesJSON, err := json.Marshal(req.Values)
+	valuesJSON, err := json.Marshal(cleanValues)
 	if err != nil {
 		return errors.New("failed to store submission")
 	}
 
 	// Extract common fields into columns for analytics
-	name, email, phone, addr := extractCommonFields(req.Values)
+	name, email, phone, addr := extractCommonFields(cleanValues)
 
 	sub := &models.FormSubmission{
 		FormID:         form.ID,
@@ -358,6 +365,27 @@ func isMissingRelationErr(err error) bool {
 	return false
 }
 
+func parseFlexibleTime(value string) (time.Time, error) {
+	val := strings.TrimSpace(value)
+	if val == "" {
+		return time.Time{}, errors.New("empty time")
+	}
+	for _, layout := range flexibleTimeLayouts {
+		if t, err := time.Parse(layout, val); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, errors.New("invalid time")
+}
+
+func normalizeFlexibleTime(value string) (string, error) {
+	t, err := parseFlexibleTime(value)
+	if err != nil {
+		return "", err
+	}
+	return t.UTC().Format(time.RFC3339), nil
+}
+
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
 		return datatypes.JSON([]byte("null")), nil
@@ -366,14 +394,18 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		return nil, errors.New("capacity cannot be negative")
 	}
 	if s.ClosesAt != nil && strings.TrimSpace(*s.ClosesAt) != "" {
-		if _, err := time.Parse(time.RFC3339, *s.ClosesAt); err != nil {
-			return nil, errors.New("closesAt must be RFC3339 ISO string")
+		normalized, err := normalizeFlexibleTime(*s.ClosesAt)
+		if err != nil {
+			return nil, errors.New("closesAt must be RFC3339 or YYYY-MM-DDTHH:MM")
 		}
+		s.ClosesAt = &normalized
 	}
 	if s.ExpiresAt != nil && strings.TrimSpace(*s.ExpiresAt) != "" {
-		if _, err := time.Parse(time.RFC3339, *s.ExpiresAt); err != nil {
-			return nil, errors.New("expiresAt must be RFC3339 ISO string")
+		normalized, err := normalizeFlexibleTime(*s.ExpiresAt)
+		if err != nil {
+			return nil, errors.New("expiresAt must be RFC3339 or YYYY-MM-DDTHH:MM")
 		}
+		s.ExpiresAt = &normalized
 	}
 
 	normalizeText := func(name string, val *string, max int) (*string, error) {
@@ -457,9 +489,13 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		lm := strings.ToLower(strings.TrimSpace(*s.LayoutMode))
 		if lm == "" {
 			s.LayoutMode = nil
-		} else if lm != "split" && lm != "stack" {
-			return nil, fmt.Errorf("layoutMode must be split or stack")
 		} else {
+			if lm == "stacked" {
+				lm = "stack"
+			}
+			if lm != "split" && lm != "stack" {
+				return nil, fmt.Errorf("layoutMode must be split or stack")
+			}
 			s.LayoutMode = &lm
 		}
 	}
@@ -586,9 +622,13 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			lm := strings.ToLower(strings.TrimSpace(*d.LayoutMode))
 			if lm == "" {
 				d.LayoutMode = nil
-			} else if lm != "split" && lm != "stack" {
-				return nil, fmt.Errorf("design.layoutMode must be split or stack")
 			} else {
+				if lm == "stacked" {
+					lm = "stack"
+				}
+				if lm != "split" && lm != "stack" {
+					return nil, fmt.Errorf("design.layoutMode must be split or stack")
+				}
 				d.LayoutMode = &lm
 			}
 		}
@@ -678,13 +718,25 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 		return nil, errors.New("add at least one field")
 	}
 
+	type normalizedField struct {
+		dto   models.FormFieldDTO
+		key   string
+		label string
+		typ   string
+	}
+
 	seenKey := map[string]bool{}
+	normalized := make([]normalizedField, 0, len(fields))
 	out := make([]models.FormField, 0, len(fields))
 
 	for i, f := range fields {
-		key := strings.TrimSpace(f.Key)
 		label := strings.TrimSpace(f.Label)
-		typ := strings.TrimSpace(f.Type)
+		typ := normalizeFieldType(f.Type)
+		key := strings.TrimSpace(f.Key)
+		if key == "" && label != "" {
+			key = slugify(label)
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
 
 		if key == "" {
 			return nil, fmt.Errorf("field[%d]: key is required", i)
@@ -701,10 +753,21 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 			return nil, fmt.Errorf("field[%d]: invalid type '%s'", i, typ)
 		}
 
+		normalized = append(normalized, normalizedField{
+			dto:   f,
+			key:   key,
+			label: label,
+			typ:   typ,
+		})
+	}
+
+	for i, nf := range normalized {
+		f := nf.dto
+
 		var optionsJSON datatypes.JSON
-		if typ == string(models.FieldSelect) || typ == string(models.FieldRadio) {
+		if nf.typ == string(models.FieldSelect) || nf.typ == string(models.FieldRadio) {
 			if len(f.Options) == 0 {
-				return nil, fmt.Errorf("field[%d]: options required for type '%s'", i, typ)
+				return nil, fmt.Errorf("field[%d]: options required for type '%s'", i, nf.typ)
 			}
 			seenVal := map[string]bool{}
 			for oi, opt := range f.Options {
@@ -722,19 +785,25 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 			optionsJSON = datatypes.JSON([]byte("null"))
 		}
 
-		validationJSON, err := normalizeValidationRules(typ, f.Validation)
+		validationJSON, err := normalizeValidationRules(nf.typ, f.Validation)
+		if err != nil {
+			return nil, fmt.Errorf("field[%d]: %w", i, err)
+		}
+
+		visibilityJSON, err := normalizeVisibility(f.Visibility, seenKey, nf.key)
 		if err != nil {
 			return nil, fmt.Errorf("field[%d]: %w", i, err)
 		}
 
 		out = append(out, models.FormField{
 			FormID:     formID,
-			Key:        key,
-			Label:      label,
-			Type:       models.FormFieldType(typ),
+			Key:        nf.key,
+			Label:      nf.label,
+			Type:       models.FormFieldType(nf.typ),
 			Required:   f.Required,
 			Options:    optionsJSON,
 			Validation: validationJSON,
+			Visibility: visibilityJSON,
 			Order:      f.Order,
 		})
 	}
@@ -756,6 +825,22 @@ func isValidFieldType(t string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeFieldType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	switch t {
+	case "phone":
+		return string(models.FieldTel)
+	case "dropdown", "select_one", "single_select", "selectone":
+		return string(models.FieldSelect)
+	case "paragraph", "long_text", "longtext", "multi_line", "multiline":
+		return string(models.FieldTextarea)
+	case "short_text", "shorttext", "single_line", "singleline":
+		return string(models.FieldText)
+	default:
+		return t
 	}
 }
 
@@ -820,6 +905,62 @@ func normalizeValidationRules(fieldType string, v *models.FormFieldValidation) (
 	return datatypes.JSON(b), nil
 }
 
+func normalizeVisibility(v *models.FormFieldVisibility, keys map[string]bool, selfKey string) (datatypes.JSON, error) {
+	if v == nil || len(v.Rules) == 0 {
+		return datatypes.JSON([]byte("null")), nil
+	}
+
+	match := strings.ToLower(strings.TrimSpace(v.Match))
+	if match == "" {
+		match = "all"
+	}
+	if match != "all" && match != "any" {
+		return nil, fmt.Errorf("visibility.match must be 'all' or 'any'")
+	}
+	v.Match = match
+
+	for i := range v.Rules {
+		r := v.Rules[i]
+		key := strings.ToLower(strings.TrimSpace(r.FieldKey))
+		if key == "" {
+			return nil, fmt.Errorf("visibility.rules[%d].fieldKey is required", i)
+		}
+		if key == selfKey {
+			return nil, fmt.Errorf("visibility.rules[%d].fieldKey cannot reference itself", i)
+		}
+		if keys != nil && !keys[key] {
+			return nil, fmt.Errorf("visibility.rules[%d].fieldKey '%s' not found", i, key)
+		}
+
+		op := strings.ToLower(strings.TrimSpace(r.Operator))
+		if op == "" {
+			return nil, fmt.Errorf("visibility.rules[%d].operator is required", i)
+		}
+		switch op {
+		case "equals", "not_equals":
+			if r.Value == nil {
+				return nil, fmt.Errorf("visibility.rules[%d].value is required", i)
+			}
+		case "in", "not_in":
+			if len(r.Values) == 0 {
+				return nil, fmt.Errorf("visibility.rules[%d].values is required", i)
+			}
+		default:
+			return nil, fmt.Errorf("visibility.rules[%d].operator must be one of: equals, not_equals, in, not_in", i)
+		}
+
+		r.FieldKey = key
+		r.Operator = op
+		v.Rules[i] = r
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, errors.New("invalid visibility rules")
+	}
+	return datatypes.JSON(b), nil
+}
+
 func isStringFieldType(t string) bool {
 	switch t {
 	case string(models.FieldText),
@@ -845,11 +986,118 @@ func hasAnyValidationRule(v *models.FormFieldValidation) bool {
 			v.Max != nil)
 }
 
+func decodeVisibility(j datatypes.JSON) *models.FormFieldVisibility {
+	if len(j) == 0 || string(j) == "null" {
+		return nil
+	}
+	var v models.FormFieldVisibility
+	if err := json.Unmarshal(j, &v); err != nil {
+		return nil
+	}
+	if len(v.Rules) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(v.Match) == "" {
+		v.Match = "all"
+	}
+	return &v
+}
+
+func isFieldVisible(f models.FormField, values map[string]any) bool {
+	vis := decodeVisibility(f.Visibility)
+	if vis == nil || len(vis.Rules) == 0 {
+		return true
+	}
+
+	match := strings.ToLower(strings.TrimSpace(vis.Match))
+	if match != "any" && match != "all" {
+		match = "all"
+	}
+
+	if match == "any" {
+		for _, r := range vis.Rules {
+			if evaluateVisibilityRule(r, values) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, r := range vis.Rules {
+		if !evaluateVisibilityRule(r, values) {
+			return false
+		}
+	}
+	return true
+}
+
+func evaluateVisibilityRule(r models.FormFieldCondition, values map[string]any) bool {
+	key := strings.TrimSpace(r.FieldKey)
+	if key == "" {
+		return false
+	}
+	val, ok := values[key]
+	if !ok || val == nil {
+		return false
+	}
+
+	op := strings.ToLower(strings.TrimSpace(r.Operator))
+	switch op {
+	case "equals":
+		return valueEquals(val, r.Value)
+	case "not_equals":
+		return !valueEquals(val, r.Value)
+	case "in":
+		return valueIn(val, r.Values)
+	case "not_in":
+		return !valueIn(val, r.Values)
+	default:
+		return false
+	}
+}
+
+func valueEquals(a any, b any) bool {
+	if a == nil || b == nil {
+		return false
+	}
+
+	switch av := a.(type) {
+	case bool:
+		if bv, ok := b.(bool); ok {
+			return av == bv
+		}
+	case string:
+		if bs, ok := b.(string); ok {
+			return strings.TrimSpace(av) == strings.TrimSpace(bs)
+		}
+	}
+
+	if af, err := toFloat64(a); err == nil {
+		if bf, err := toFloat64(b); err == nil {
+			return af == bf
+		}
+	}
+
+	return fmt.Sprint(a) == fmt.Sprint(b)
+}
+
+func valueIn(val any, list []any) bool {
+	if len(list) == 0 {
+		return false
+	}
+	for _, v := range list {
+		if valueEquals(val, v) {
+			return true
+		}
+	}
+	return false
+}
+
 /* =========================
    Submission validation
 ========================= */
 
-func validateSubmission(fields []models.FormField, values map[string]any) error {
+func validateSubmission(fields []models.FormField, values map[string]any) (map[string]any, error) {
 	fieldByKey := map[string]models.FormField{}
 	for _, f := range fields {
 		fieldByKey[f.Key] = f
@@ -857,63 +1105,77 @@ func validateSubmission(fields []models.FormField, values map[string]any) error 
 
 	for k := range values {
 		if _, ok := fieldByKey[k]; !ok {
-			return fmt.Errorf("unknown field '%s'", k)
+			return nil, fmt.Errorf("unknown field '%s'", k)
 		}
 	}
 
+	// snapshot values for visibility evaluation
+	snapshot := make(map[string]any, len(values))
+	for k, v := range values {
+		snapshot[k] = v
+	}
+
+	clean := make(map[string]any, len(values))
+
 	for _, f := range fields {
-		v, exists := values[f.Key]
+		v, exists := snapshot[f.Key]
+
+		if !isFieldVisible(f, snapshot) {
+			continue
+		}
 
 		rules := decodeValidation(f.Validation)
 
 		if !exists || v == nil {
 			if f.Required {
-				return fmt.Errorf("field '%s' is required", f.Key)
+				return nil, fmt.Errorf("field '%s' is required", f.Key)
 			}
 			continue
 		}
+
+		clean[f.Key] = v
 
 		switch f.Type {
 		case models.FieldCheckbox:
 			b, ok := v.(bool)
 			if !ok {
-				return fmt.Errorf("field '%s' must be boolean", f.Key)
+				return nil, fmt.Errorf("field '%s' must be boolean", f.Key)
 			}
 			if f.Required && !b {
-				return fmt.Errorf("field '%s' must be accepted", f.Key)
+				return nil, fmt.Errorf("field '%s' must be accepted", f.Key)
 			}
 
 		case models.FieldNumber:
 			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
 				if f.Required {
-					return fmt.Errorf("field '%s' is required", f.Key)
+					return nil, fmt.Errorf("field '%s' is required", f.Key)
 				}
 				continue
 			}
 
 			num, err := toFloat64(v)
 			if err != nil {
-				return fmt.Errorf("field '%s' must be a number", f.Key)
+				return nil, fmt.Errorf("field '%s' must be a number", f.Key)
 			}
 
 			if rules != nil {
 				if rules.Min != nil && num < *rules.Min {
-					return fmt.Errorf("field '%s' must be >= %g", f.Key, *rules.Min)
+					return nil, fmt.Errorf("field '%s' must be >= %g", f.Key, *rules.Min)
 				}
 				if rules.Max != nil && num > *rules.Max {
-					return fmt.Errorf("field '%s' must be <= %g", f.Key, *rules.Max)
+					return nil, fmt.Errorf("field '%s' must be <= %g", f.Key, *rules.Max)
 				}
 			}
 
 		case models.FieldSelect, models.FieldRadio:
 			sv, ok := valueToString(v)
 			if !ok {
-				return fmt.Errorf("field '%s' must be string", f.Key)
+				return nil, fmt.Errorf("field '%s' must be string", f.Key)
 			}
 			sv = strings.TrimSpace(sv)
 			if sv == "" {
 				if f.Required {
-					return fmt.Errorf("field '%s' is required", f.Key)
+					return nil, fmt.Errorf("field '%s' is required", f.Key)
 				}
 				continue
 			}
@@ -924,22 +1186,22 @@ func validateSubmission(fields []models.FormField, values map[string]any) error 
 				allowed[o.Value] = true
 			}
 			if !allowed[sv] {
-				return fmt.Errorf("field '%s' has invalid option", f.Key)
+				return nil, fmt.Errorf("field '%s' has invalid option", f.Key)
 			}
 
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
-				return err
+				return nil, err
 			}
 
 		default: // text, textarea, email, tel, date
 			sv, ok := valueToString(v)
 			if !ok {
-				return fmt.Errorf("field '%s' must be string", f.Key)
+				return nil, fmt.Errorf("field '%s' must be string", f.Key)
 			}
 			sv = strings.TrimSpace(sv)
 			if sv == "" {
 				if f.Required {
-					return fmt.Errorf("field '%s' is required", f.Key)
+					return nil, fmt.Errorf("field '%s' is required", f.Key)
 				}
 				continue
 			}
@@ -947,25 +1209,25 @@ func validateSubmission(fields []models.FormField, values map[string]any) error 
 			switch f.Type {
 			case models.FieldEmail:
 				if !emailRe.MatchString(sv) {
-					return fmt.Errorf("field '%s' must be a valid email", f.Key)
+					return nil, fmt.Errorf("field '%s' must be a valid email", f.Key)
 				}
 			case models.FieldTel:
 				if !phoneRe.MatchString(sv) {
-					return fmt.Errorf("field '%s' must be a valid phone number", f.Key)
+					return nil, fmt.Errorf("field '%s' must be a valid phone number", f.Key)
 				}
 			case models.FieldDate:
 				if _, err := time.Parse("2006-01-02", sv); err != nil {
-					return fmt.Errorf("field '%s' must be a valid date (YYYY-MM-DD)", f.Key)
+					return nil, fmt.Errorf("field '%s' must be a valid date (YYYY-MM-DD)", f.Key)
 				}
 			}
 
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	return clean, nil
 }
 
 func applyStringRules(key, value string, rules *models.FormFieldValidation) error {

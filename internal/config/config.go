@@ -17,6 +17,8 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Redis    RedisConfig    `json:"redis"`
 	SMTP     SMTPConfig     `json:"smtp"`
+	AWS      AWSConfig      `json:"aws"`
+	SES      SESConfig      `json:"ses"`
 	CORS     CORSConfig     `json:"cors"`
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
@@ -101,6 +103,25 @@ type SMTPConfig struct {
 	TLS      bool   `json:"tls" env:"SMTP_TLS"`
 }
 
+type AWSConfig struct {
+	Region          string `json:"region" env:"AWS_REGION"`
+	AccessKeyID     string `json:"-" env:"AWS_ACCESS_KEY_ID"`
+	SecretAccessKey string `json:"-" env:"AWS_SECRET_ACCESS_KEY"`
+	SessionToken    string `json:"-" env:"AWS_SESSION_TOKEN"`
+}
+
+func (a AWSConfig) Enabled() bool {
+	return strings.TrimSpace(a.Region) != ""
+}
+
+type SESConfig struct {
+	FromEmail string `json:"from_email" env:"SES_FROM_EMAIL"`
+}
+
+func (s SESConfig) Enabled() bool {
+	return strings.TrimSpace(s.FromEmail) != ""
+}
+
 type CORSConfig struct {
 	AllowedOrigins   []string `json:"allowed_origins" env:"CORS_ALLOW_ORIGIN"`
 	AllowedMethods   []string `json:"allowed_methods" env:"CORS_ALLOW_METHODS"`
@@ -156,9 +177,9 @@ func Load() (*Config, error) {
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 		},
-		Redis: RedisConfig{
-			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
-			Password:     getEnv("REDIS_PASSWORD", ""),
+	Redis: RedisConfig{
+		URL:          getEnv("REDIS_URL", "redis://redis:6379"),
+		Password:     getEnv("REDIS_PASSWORD", ""),
 			DB:           getEnvAsInt("REDIS_DB", 0),
 			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
 			MinIdleConns: getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
@@ -168,18 +189,27 @@ func Load() (*Config, error) {
 			PoolTimeout:  getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
 			IdleTimeout:  getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
 		},
-		SMTP: SMTPConfig{
-			Host:     getEnv("SMTP_HOST", ""),
-			Port:     getEnv("SMTP_PORT", "587"),
-			User:     getEnv("SMTP_USER", ""),
-			Password: getEnv("SMTP_PASS", ""),
-			From:     getEnv("SMTP_FROM", ""),
-			TLS:      getEnvAsBool("SMTP_TLS", true),
-		},
-		CORS: CORSConfig{
-			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
-			AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
-			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
+	SMTP: SMTPConfig{
+		Host:     getEnv("SMTP_HOST", ""),
+		Port:     getEnv("SMTP_PORT", "587"),
+		User:     getEnv("SMTP_USER", ""),
+		Password: getEnv("SMTP_PASS", ""),
+		From:     getEnv("SMTP_FROM", ""),
+		TLS:      getEnvAsBool("SMTP_TLS", true),
+	},
+	AWS: AWSConfig{
+		Region:          getEnv("AWS_REGION", ""),
+		AccessKeyID:     getEnv("AWS_ACCESS_KEY_ID", ""),
+		SecretAccessKey: getEnv("AWS_SECRET_ACCESS_KEY", ""),
+		SessionToken:    getEnv("AWS_SESSION_TOKEN", ""),
+	},
+	SES: SESConfig{
+		FromEmail: getEnv("SES_FROM_EMAIL", ""),
+	},
+	CORS: CORSConfig{
+		AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
+		AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
+		AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
 			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
 			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count"}),
 			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
@@ -277,6 +307,17 @@ func validateConfig(cfg *Config) error {
 		}
 		if strings.TrimSpace(cfg.SMTP.Password) == "" {
 			return fmt.Errorf("SMTP_PASS is required when SMTP_HOST is set")
+		}
+	}
+
+	if strings.TrimSpace(cfg.SES.FromEmail) != "" {
+		if strings.TrimSpace(cfg.AWS.Region) == "" {
+			return fmt.Errorf("AWS_REGION is required when SES_FROM_EMAIL is set")
+		}
+		ak := strings.TrimSpace(cfg.AWS.AccessKeyID)
+		sk := strings.TrimSpace(cfg.AWS.SecretAccessKey)
+		if (ak == "") != (sk == "") {
+			return fmt.Errorf("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together")
 		}
 	}
 
