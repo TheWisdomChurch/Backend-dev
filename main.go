@@ -50,19 +50,38 @@ func ensureCORSDefaults(cfg *config.Config) {
 		return
 	}
 
+	// If CORS_ALLOW_ORIGIN is explicitly set, respect it.
+	if v, ok := os.LookupEnv("CORS_ALLOW_ORIGIN"); ok && strings.TrimSpace(v) != "" {
+		return
+	}
+
+	// Otherwise, ensure app URLs are allowed (useful for production).
+	existing := make(map[string]struct{}, len(cfg.CORS.AllowedOrigins))
+	for _, o := range cfg.CORS.AllowedOrigins {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		existing[o] = struct{}{}
+	}
+
+	candidates := []string{
+		strings.TrimSpace(cfg.App.FrontendURL),
+		strings.TrimSpace(cfg.App.AdminPortalURL),
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if _, ok := existing[c]; ok {
+			continue
+		}
+		cfg.CORS.AllowedOrigins = append(cfg.CORS.AllowedOrigins, c)
+		existing[c] = struct{}{}
+	}
+
 	if len(cfg.CORS.AllowedOrigins) == 0 {
-		candidates := []string{
-			strings.TrimSpace(cfg.App.FrontendURL),
-			strings.TrimSpace(cfg.App.AdminPortalURL),
-		}
-		for _, c := range candidates {
-			if c != "" {
-				cfg.CORS.AllowedOrigins = append(cfg.CORS.AllowedOrigins, c)
-			}
-		}
-		if len(cfg.CORS.AllowedOrigins) == 0 {
-			cfg.CORS.AllowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
-		}
+		cfg.CORS.AllowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
 	}
 }
 
@@ -144,6 +163,9 @@ func setupRouter(
 	auth := api.Group("/auth")
 	auth.Use(middleware.DeviceFingerprint(secure))
 	auth.POST("/login", authHandler.Login)
+	// Backwards-compatible aliases for older admin clients
+	auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
+	auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
 	auth.POST("/register", authHandler.Register)
 	auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
 	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
