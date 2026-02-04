@@ -341,15 +341,28 @@ func main() {
 		emailQueue = noopEmailSender{}
 		logger.Println("⚠️ Email queue disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
-		emailSender, err := email.NewSender(
-			cfg.Redis.URL,
-			cfg.SMTP.Host,
-			cfg.SMTP.Port,
-			cfg.SMTP.User,
-			cfg.SMTP.Password,
-			cfg.SMTP.From,
-			cfg.SMTP.TLS,
-		)
+		var emailSender email.ContextEmailSender
+		var err error
+
+		if cfg.SES.Enabled() {
+			emailSender, err = email.NewSESSender(cfg.Redis.URL, cfg.AWS.Region, cfg.SES.FromEmail)
+			if err == nil {
+				logger.Println("✅ Email sender initialized (AWS SES)")
+			}
+		} else {
+			emailSender, err = email.NewSender(
+				cfg.Redis.URL,
+				cfg.SMTP.Host,
+				cfg.SMTP.Port,
+				cfg.SMTP.User,
+				cfg.SMTP.Password,
+				cfg.SMTP.From,
+				cfg.SMTP.TLS,
+			)
+			if err == nil {
+				logger.Println("✅ Email sender initialized (SMTP)")
+			}
+		}
 		if err != nil {
 			if cfg.App.Environment == "production" {
 				logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
