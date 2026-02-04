@@ -163,6 +163,9 @@ func setupRouter(
 	auth := api.Group("/auth")
 	auth.Use(middleware.DeviceFingerprint(secure))
 	auth.POST("/login", authHandler.Login)
+	// Backwards-compatible aliases for older admin clients
+	auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
+	auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
 	auth.POST("/register", authHandler.Register)
 	auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
 	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
