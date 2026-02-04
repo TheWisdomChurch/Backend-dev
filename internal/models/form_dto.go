@@ -8,12 +8,13 @@ type FormFieldOptionDTO struct {
 
 type FormFieldDTO struct {
 	ID         string               `json:"id,omitempty"`
-	Key        string               `json:"key" binding:"required"`
+	Key        string               `json:"key,omitempty"`
 	Label      string               `json:"label" binding:"required"`
-	Type       string               `json:"type" binding:"required,oneof=text email tel textarea select checkbox radio number date"`
+	Type       string               `json:"type" binding:"required"`
 	Required   bool                 `json:"required"`
 	Options    []FormFieldOptionDTO `json:"options,omitempty" binding:"omitempty,dive"`
 	Validation *FormFieldValidation `json:"validation,omitempty"`
+	Visibility *FormFieldVisibility `json:"visibility,omitempty"`
 	Order      int                  `json:"order"`
 }
 
