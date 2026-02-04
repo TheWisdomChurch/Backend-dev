@@ -125,6 +125,12 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 	}
 }
 
+type noopEmailSender struct{}
+
+func (noopEmailSender) SendHTML(string, string, string) error {
+	return nil
+}
+
 func setupRouter(
 	cfg *config.Config,
 	testimonialHandler *handlers.TestimonialHandler,
@@ -276,6 +282,15 @@ func main() {
 	}
 	cfg.App.Environment = env
 
+	disableOTP := isTrueEnv("DISABLE_OTP")
+	disableEmail := isTrueEnv("DISABLE_EMAIL") || disableOTP
+	if disableOTP {
+		logger.Println("⚠️ DISABLE_OTP=true: OTP verification is disabled for login/password reset.")
+	}
+	if disableEmail {
+		logger.Println("⚠️ DISABLE_EMAIL=true: outbound email sending is disabled.")
+	}
+
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	} else if strings.TrimSpace(cfg.Server.GinMode) != "" {
@@ -321,31 +336,35 @@ func main() {
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
 	// Email sender
-	emailSender, err := email.NewSender(
-		cfg.Redis.URL,
-		cfg.SMTP.Host,
-		cfg.SMTP.Port,
-		cfg.SMTP.User,
-		cfg.SMTP.Password,
-		cfg.SMTP.From,
-		cfg.SMTP.TLS,
-	)
-	if err != nil {
-		if cfg.App.Environment == "production" {
-			logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
-		}
-		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
-	}
-
-	// ✅ NEW: async email queue (fast auth endpoints)
 	var emailQueue service.EmailSender
-	if emailSender != nil {
-		q := email.NewQueue(emailSender, logger, 2000)
-		q.Start(3) // 3 workers is fine for small/medium traffic
-		emailQueue = q
-		logger.Println("✅ Email queue started")
+	if disableEmail {
+		emailQueue = noopEmailSender{}
+		logger.Println("⚠️ Email queue disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
-		logger.Println("⚠️ Email queue not started (no sender)")
+		emailSender, err := email.NewSender(
+			cfg.Redis.URL,
+			cfg.SMTP.Host,
+			cfg.SMTP.Port,
+			cfg.SMTP.User,
+			cfg.SMTP.Password,
+			cfg.SMTP.From,
+			cfg.SMTP.TLS,
+		)
+		if err != nil {
+			if cfg.App.Environment == "production" {
+				logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
+			}
+			logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
+		}
+
+		if emailSender != nil {
+			q := email.NewQueue(emailSender, logger, 2000)
+			q.Start(3) // 3 workers is fine for small/medium traffic
+			emailQueue = q
+			logger.Println("✅ Email queue started")
+		} else {
+			logger.Println("⚠️ Email queue not started (no sender)")
+		}
 	}
 
 	// Bunny uploader
@@ -405,6 +424,7 @@ func main() {
 		branding,
 		securityService,
 		trustedDeviceRepo,
+		disableOTP,
 	)
 
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
