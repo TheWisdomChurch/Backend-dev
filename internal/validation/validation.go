@@ -133,7 +133,7 @@ func validationMessage(field string, fe validator.FieldError) string {
 	case "oneof":
 		return fmt.Sprintf("%s must be one of [%s]", field, fe.Param())
 	case "rfc3339":
-		return fmt.Sprintf("%s must be RFC3339 datetime", field)
+		return fmt.Sprintf("%s must be RFC3339 or YYYY-MM-DDTHH:MM", field)
 	case "date_ymd":
 		return fmt.Sprintf("%s must be a valid date (YYYY-MM-DD)", field)
 	case "phone":
@@ -148,8 +148,18 @@ func validateRFC3339(fl validator.FieldLevel) bool {
 	if val == "" {
 		return true
 	}
-	_, err := time.Parse(time.RFC3339, val)
-	return err == nil
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if _, err := time.Parse(layout, val); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDateYMD(fl validator.FieldLevel) bool {

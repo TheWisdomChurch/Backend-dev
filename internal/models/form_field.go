@@ -32,6 +32,20 @@ type FormFieldValidation struct {
 	Max       *float64 `json:"max,omitempty"`
 }
 
+// FormFieldVisibility controls conditional display logic for fields.
+type FormFieldVisibility struct {
+	Match string               `json:"match,omitempty"` // all|any (default all)
+	Rules []FormFieldCondition `json:"rules,omitempty"`
+}
+
+// FormFieldCondition defines a single visibility rule.
+type FormFieldCondition struct {
+	FieldKey string `json:"fieldKey"`
+	Operator string `json:"operator"`        // equals|not_equals|in|not_in
+	Value    any    `json:"value,omitempty"` // for equals/not_equals
+	Values   []any  `json:"values,omitempty"` // for in/not_in
+}
+
 type FormField struct {
 	ID string `gorm:"primaryKey;type:uuid;default:uuid_generate_v4()" json:"id"`
 
@@ -48,6 +62,9 @@ type FormField struct {
 
 	// Validation rules blob; interpreted by the service during submission validation
 	Validation datatypes.JSON `gorm:"type:jsonb" json:"validation,omitempty"`
+
+	// Visibility rules blob; interpreted by the service during submission validation
+	Visibility datatypes.JSON `gorm:"type:jsonb" json:"visibility,omitempty"`
 
 	Order int `gorm:"not null;default:0" json:"order"`
 
