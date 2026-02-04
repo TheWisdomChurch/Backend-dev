@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
@@ -132,6 +133,10 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 
 	user, err := h.svc.UpdateUser(id, updates)
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "User not found")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -141,6 +146,10 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 func (h *AdminHandler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.svc.DeleteUser(id); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "User not found")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}

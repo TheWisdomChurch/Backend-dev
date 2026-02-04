@@ -13,8 +13,9 @@ type WorkforceRepository interface {
 	Stats() (*models.WorkforceStatsResponse, error)
 
 	// Birthday helpers
-	ListByMonth(month int) ([]models.WorkforceMember, error)
-	ListByMonthDay(month, day int) ([]models.WorkforceMember, error)
+	ListByMonth(month int, status string) ([]models.WorkforceMember, error)
+	ListByMonthDay(month, day int, status string) ([]models.WorkforceMember, error)
+	BirthdayCountsByMonth(status string) (map[int]int64, int64, error)
 }
 
 type workforceRepository struct {
@@ -119,20 +120,56 @@ func (r *workforceRepository) Stats() (*models.WorkforceStatsResponse, error) {
 	}, nil
 }
 
-func (r *workforceRepository) ListByMonth(month int) ([]models.WorkforceMember, error) {
+func (r *workforceRepository) ListByMonth(month int, status string) ([]models.WorkforceMember, error) {
 	var items []models.WorkforceMember
-	err := r.db.DB.
-		Where("birthday_month = ?", month).
-		Order("birthday_day ASC, last_name ASC").
+	q := r.db.DB.Where("birthday_month = ?", month)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	err := q.Order("birthday_day ASC, last_name ASC").
 		Find(&items).Error
 	return items, err
 }
 
-func (r *workforceRepository) ListByMonthDay(month, day int) ([]models.WorkforceMember, error) {
+func (r *workforceRepository) ListByMonthDay(month, day int, status string) ([]models.WorkforceMember, error) {
 	var items []models.WorkforceMember
-	err := r.db.DB.
-		Where("birthday_month = ? AND birthday_day = ?", month, day).
-		Order("last_name ASC").
+	q := r.db.DB.Where("birthday_month = ? AND birthday_day = ?", month, day)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	err := q.Order("last_name ASC").
 		Find(&items).Error
 	return items, err
+}
+
+func (r *workforceRepository) BirthdayCountsByMonth(status string) (map[int]int64, int64, error) {
+	type row struct {
+		Month int
+		Count int64
+	}
+
+	var rows []row
+	q := r.db.DB.Model(&models.WorkforceMember{}).
+		Select("birthday_month as month, COUNT(*) as count").
+		Where("birthday_month IS NOT NULL")
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	err := q.Group("birthday_month").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	counts := make(map[int]int64, 12)
+	var total int64
+	for _, r := range rows {
+		if r.Month < 1 || r.Month > 12 {
+			continue
+		}
+		counts[r.Month] = r.Count
+		total += r.Count
+	}
+
+	return counts, total, nil
 }
