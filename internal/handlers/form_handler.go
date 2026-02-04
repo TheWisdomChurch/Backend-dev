@@ -103,7 +103,7 @@ func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 
 func (h *FormHandler) PublishAdminForm(c *gin.Context) {
 	id := c.Param("id")
-	slug, err := h.svc.Publish(id)
+	slug, publicURL, err := h.svc.Publish(id)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
@@ -112,7 +112,11 @@ func (h *FormHandler) PublishAdminForm(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "Form published", gin.H{"slug": slug})
+	resp := gin.H{"slug": slug}
+	if publicURL != nil {
+		resp["publicUrl"] = *publicURL
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Form published", resp)
 }
 
 func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
