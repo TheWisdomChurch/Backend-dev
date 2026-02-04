@@ -91,6 +91,10 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.svc.Delete(id); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete form")
 		return
 	}

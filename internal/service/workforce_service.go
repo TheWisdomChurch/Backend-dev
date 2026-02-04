@@ -2,7 +2,9 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
@@ -15,6 +17,12 @@ type WorkforceService interface {
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
 	Stats() (*models.WorkforceStatsResponse, error)
+
+	// Birthday scheduler helpers
+	BirthdayStats() (*models.BirthdayStatsResponse, error)
+	BirthdaysByMonth(month int) ([]models.WorkforceMember, error)
+	BirthdaysToday(now time.Time) ([]models.WorkforceMember, error)
+	SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error)
 }
 
 type workforceService struct {
@@ -46,7 +54,7 @@ func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.W
 		return nil, errors.New("department is required")
 	}
 
-	month, day, err := normalizeBirthday(req.BirthdayMonth, req.BirthdayDay)
+	month, day, err := parseBirthday(req.BirthdayMonth, req.BirthdayDay, req.Birthday)
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +105,8 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 	if req.Notes != nil {
 		updates["notes"] = req.Notes
 	}
-	if req.BirthdayMonth != nil || req.BirthdayDay != nil {
-		month, day, err := normalizeBirthday(req.BirthdayMonth, req.BirthdayDay)
+	if req.BirthdayMonth != nil || req.BirthdayDay != nil || req.Birthday != nil {
+		month, day, err := parseBirthday(req.BirthdayMonth, req.BirthdayDay, req.Birthday)
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +123,95 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 
 func (s *workforceService) Stats() (*models.WorkforceStatsResponse, error) {
 	return s.repo.Stats()
+}
+
+func (s *workforceService) BirthdayStats() (*models.BirthdayStatsResponse, error) {
+	counts, total, err := s.repo.BirthdayCountsByMonth(string(models.WorkforceStatusServing))
+	if err != nil {
+		return nil, err
+	}
+
+	months := make([]models.BirthdayMonthCount, 0, 12)
+	for m := 1; m <= 12; m++ {
+		months = append(months, models.BirthdayMonthCount{
+			Month: m,
+			Count: counts[m],
+		})
+	}
+
+	return &models.BirthdayStatsResponse{
+		Total:   total,
+		ByMonth: months,
+	}, nil
+}
+
+func (s *workforceService) BirthdaysByMonth(month int) ([]models.WorkforceMember, error) {
+	if month < 1 || month > 12 {
+		return nil, errors.New("month must be 1-12")
+	}
+	return s.repo.ListByMonth(month, string(models.WorkforceStatusServing))
+}
+
+func (s *workforceService) BirthdaysToday(now time.Time) ([]models.WorkforceMember, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	month := int(now.Month())
+	day := now.Day()
+	return s.repo.ListByMonthDay(month, day, string(models.WorkforceStatusServing))
+}
+
+func (s *workforceService) SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error) {
+	if s.sender == nil {
+		return nil, errors.New("email sender is not configured")
+	}
+	if month < 1 || month > 12 {
+		return nil, errors.New("month must be 1-12")
+	}
+	if day < 1 || day > 31 {
+		return nil, errors.New("day must be 1-31")
+	}
+
+	members, err := s.repo.ListByMonthDay(month, day, string(models.WorkforceStatusServing))
+	if err != nil {
+		return nil, err
+	}
+
+	appName := strings.TrimSpace(s.branding.AppName)
+	if appName == "" {
+		appName = "Wisdom House"
+	}
+
+	dateLabel := fmt.Sprintf("%02d/%02d", day, month)
+	subject := fmt.Sprintf("Happy Birthday from %s", appName)
+	heroURL := email.TemplateAssetURL(s.branding, "birthday", "hero.png")
+
+	result := &models.BirthdaySendResult{
+		Targeted: len(members),
+	}
+
+	for i := range members {
+		addr := strings.TrimSpace(members[i].Email)
+		if addr == "" {
+			result.Skipped++
+			continue
+		}
+		fullName := strings.TrimSpace(strings.Join([]string{members[i].FirstName, members[i].LastName}, " "))
+		body := email.RenderBirthdayEmail(email.BirthdayTemplateData{
+			Branding:      s.branding,
+			RecipientName: fullName,
+			BirthdayDate:  dateLabel,
+			HeroImageURL:  heroURL,
+		})
+
+		if err := s.sender.SendHTML(addr, subject, body); err != nil {
+			result.Skipped++
+			continue
+		}
+		result.Sent++
+	}
+
+	return result, nil
 }
 
 func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
@@ -142,23 +239,6 @@ func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
 }
 
 // normalizeBirthday validates optional month/day (1-12, 1-31). Returns nil pointers when absent.
-func normalizeBirthday(monthPtr, dayPtr *int) (*int, *int, error) {
-	if monthPtr == nil && dayPtr == nil {
-		return nil, nil, nil
-	}
-	if monthPtr == nil || dayPtr == nil {
-		return nil, nil, errors.New("birthdayMonth and birthdayDay must both be provided")
-	}
-	m := *monthPtr
-	d := *dayPtr
-	if m < 1 || m > 12 {
-		return nil, nil, errors.New("birthdayMonth must be 1-12")
-	}
-	if d < 1 || d > 31 {
-		return nil, nil, errors.New("birthdayDay must be 1-31")
-	}
-	return &m, &d, nil
-}
 
 func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 	if s.sender == nil || member == nil || strings.TrimSpace(member.Email) == "" {
