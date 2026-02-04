@@ -43,7 +43,7 @@ type Event struct {
 	Image       *string `gorm:"type:text" json:"image,omitempty"`
 	BannerImage *string `gorm:"type:text" json:"bannerImage,omitempty"`
 
-	// Optional Bunny object keys (DB columns required)
+	// Optional storage object keys (DB columns required)
 	ImageKey       *string `gorm:"column:image_key;type:text" json:"-"`
 	BannerImageKey *string `gorm:"column:banner_image_key;type:text" json:"-"`
 

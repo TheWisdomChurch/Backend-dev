@@ -12,16 +12,16 @@ import (
 )
 
 type UploadHandler struct {
-	bunny *service.BunnyUploader
+	spaces *service.SpacesUploader
 }
 
-func NewUploadHandler(bunny *service.BunnyUploader) *UploadHandler {
-	return &UploadHandler{bunny: bunny}
+func NewUploadHandler(spaces *service.SpacesUploader) *UploadHandler {
+	return &UploadHandler{spaces: spaces}
 }
 
 func (h *UploadHandler) UploadImage(c *gin.Context) {
-	if h.bunny == nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "CDN uploader not configured")
+	if h.spaces == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Storage uploader not configured")
 		return
 	}
 
@@ -53,7 +53,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 
 	folder := c.DefaultPostForm("folder", "uploads")
 
-	objectKey, err := h.bunny.BuildGenericAssetKey(folder, ext)
+	objectKey, err := h.spaces.BuildGenericAssetKey(folder, ext)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
 		return
@@ -62,9 +62,9 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 
-	cdnURL, err := h.bunny.Upload(ctx, objectKey, ct, src)
+	cdnURL, err := h.spaces.Upload(ctx, objectKey, ct, src)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadGateway, "upload to CDN failed")
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
 		return
 	}
 
