@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -112,6 +113,10 @@ func (h *TestimonialHandler) DeleteTestimonial(c *gin.Context) {
 	}
 
 	if err := h.svc.DeleteTestimonial(id); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete testimonial")
 		return
 	}

@@ -2,6 +2,11 @@
 package service
 
 import (
+	"errors"
+	"strings"
+
+	"golang.org/x/crypto/bcrypt"
+	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
 
@@ -14,12 +19,77 @@ type adminServiceImpl struct {
 
 // DeleteUser implements [AdminService].
 func (s *adminServiceImpl) DeleteUser(id string) error {
-	panic("unimplemented")
+	if s.userRepo == nil {
+		return errors.New("user repository not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("user id is required")
+	}
+	if _, err := s.userRepo.FindByID(id); err != nil {
+		return err
+	}
+	return s.userRepo.DeleteHard(id)
 }
 
 // UpdateUser implements [AdminService].
 func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (interface{}, error) {
-	panic("unimplemented")
+	if s.userRepo == nil {
+		return nil, errors.New("user repository not configured")
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("user id is required")
+	}
+	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if v, ok := data["first_name"].(string); ok && strings.TrimSpace(v) != "" {
+		user.FirstName = strings.TrimSpace(v)
+	}
+	if v, ok := data["last_name"].(string); ok && strings.TrimSpace(v) != "" {
+		user.LastName = strings.TrimSpace(v)
+	}
+	if v, ok := data["email"].(string); ok && strings.TrimSpace(v) != "" {
+		emailNorm := normalizeEmail(v)
+		if emailNorm == "" {
+			return nil, errors.New("invalid email")
+		}
+		existing, _ := s.userRepo.FindByEmail(emailNorm)
+		if existing != nil && existing.ID != user.ID {
+			return nil, errors.New("email already in use")
+		}
+		user.Email = emailNorm
+	}
+	if v, ok := data["role"].(string); ok && strings.TrimSpace(v) != "" {
+		role, err := normalizeRole(v)
+		if err != nil {
+			return nil, err
+		}
+		user.Role = role
+	}
+	if v, ok := data["password"].(string); ok {
+		if strings.TrimSpace(v) == "" {
+			return nil, errors.New("password cannot be empty")
+		}
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(v), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		user.Password = string(hashedPassword)
+	}
+	if v, ok := data["is_active"].(bool); ok {
+		user.IsActive = v
+	}
+	if v, ok := data["admin_approved"].(bool); ok {
+		user.AdminApproved = v
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+	user.Password = ""
+	return user, nil
 }
 
 // NewAdminService creates a new admin service
@@ -71,15 +141,46 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role
 		return nil, err
 	}
 
-	// For now, return placeholder
-	return map[string]interface{}{
-		"id":         "user-id",
-		"first_name": firstName,
-		"last_name":  lastName,
-		"email":      email,
-		"role":       role,
-		"created_at": "2024-01-14",
-	}, nil
+	if s.userRepo == nil {
+		return nil, errors.New("user repository not configured")
+	}
+
+	emailNorm := normalizeEmail(email)
+	if emailNorm == "" {
+		return nil, errors.New("invalid email")
+	}
+
+	existing, _ := s.userRepo.FindByEmail(emailNorm)
+	if existing != nil {
+		return nil, errors.New("user already exists")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	user := &models.User{
+		FirstName: strings.TrimSpace(firstName),
+		LastName:  strings.TrimSpace(lastName),
+		Email:     emailNorm,
+		Password:  string(hashedPassword),
+		Role:      role,
+		IsActive:  true,
+		AdminApproved: func() bool {
+			if role == "admin" {
+				return false
+			}
+			return true
+		}(),
+	}
+
+	if err := s.userRepo.Create(user); err != nil {
+		return nil, err
+	}
+
+	user.Password = ""
+	return user, nil
 }
 
 func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {

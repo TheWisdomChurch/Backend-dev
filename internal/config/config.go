@@ -19,12 +19,16 @@ type Config struct {
 	SMTP     SMTPConfig     `json:"smtp"`
 	AWS      AWSConfig      `json:"aws"`
 	SES      SESConfig      `json:"ses"`
+	Brevo    BrevoConfig    `json:"brevo"`
 	CORS     CORSConfig     `json:"cors"`
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
 
 	// BunnyCDN / Bunny Storage config (OPTIONAL)
 	Bunny BunnyConfig `json:"bunny"`
+
+	// DigitalOcean Spaces (S3-compatible) config (OPTIONAL)
+	Spaces SpacesConfig `json:"spaces"`
 }
 
 type BunnyConfig struct {
@@ -52,6 +56,43 @@ func (b BunnyConfig) Validate() error {
 	}
 	if zone == "" || key == "" || pull == "" {
 		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
+	}
+	return nil
+}
+
+type SpacesConfig struct {
+	Bucket        string `json:"bucket" env:"SPACES_BUCKET"`
+	Region        string `json:"region" env:"SPACES_REGION"`
+	Endpoint      string `json:"endpoint" env:"SPACES_ENDPOINT"`
+	AccessKey     string `json:"-" env:"SPACES_ACCESS_KEY"`
+	SecretKey     string `json:"-" env:"SPACES_SECRET_KEY"`
+	PublicBaseURL string `json:"public_base_url" env:"SPACES_PUBLIC_BASE_URL"`
+	BasePath      string `json:"base_path" env:"SPACES_BASE_PATH"`
+	PublicRead    bool   `json:"public_read" env:"SPACES_PUBLIC_READ"`
+
+	EmailTemplatePath string `json:"email_template_path" env:"SPACES_EMAIL_TEMPLATE_PATH"`
+}
+
+func (s SpacesConfig) Enabled() bool {
+	return strings.TrimSpace(s.Bucket) != "" &&
+		strings.TrimSpace(s.AccessKey) != "" &&
+		strings.TrimSpace(s.SecretKey) != "" &&
+		strings.TrimSpace(s.Region) != ""
+}
+
+func (s SpacesConfig) Validate() error {
+	bucket := strings.TrimSpace(s.Bucket)
+	access := strings.TrimSpace(s.AccessKey)
+	secret := strings.TrimSpace(s.SecretKey)
+	region := strings.TrimSpace(s.Region)
+	endpoint := strings.TrimSpace(s.Endpoint)
+
+	if bucket == "" && access == "" && secret == "" && region == "" && endpoint == "" {
+		return nil
+	}
+
+	if bucket == "" || access == "" || secret == "" || region == "" {
+		return fmt.Errorf("Spaces config incomplete: require SPACES_BUCKET, SPACES_REGION, SPACES_ACCESS_KEY, SPACES_SECRET_KEY (and optionally SPACES_ENDPOINT, SPACES_PUBLIC_BASE_URL)")
 	}
 	return nil
 }
@@ -122,6 +163,17 @@ func (s SESConfig) Enabled() bool {
 	return strings.TrimSpace(s.FromEmail) != ""
 }
 
+type BrevoConfig struct {
+	APIKey    string `json:"-" env:"BREVO_API_KEY"`
+	FromEmail string `json:"from_email" env:"BREVO_FROM_EMAIL"`
+	FromName  string `json:"from_name" env:"BREVO_FROM_NAME"`
+	BaseURL   string `json:"base_url" env:"BREVO_BASE_URL"`
+}
+
+func (b BrevoConfig) Enabled() bool {
+	return strings.TrimSpace(b.APIKey) != "" && strings.TrimSpace(b.FromEmail) != ""
+}
+
 type CORSConfig struct {
 	AllowedOrigins   []string `json:"allowed_origins" env:"CORS_ALLOW_ORIGIN"`
 	AllowedMethods   []string `json:"allowed_methods" env:"CORS_ALLOW_METHODS"`
@@ -177,9 +229,9 @@ func Load() (*Config, error) {
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 		},
-	Redis: RedisConfig{
-		URL:          getEnv("REDIS_URL", "redis://redis:6379"),
-		Password:     getEnv("REDIS_PASSWORD", ""),
+		Redis: RedisConfig{
+			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
+			Password:     getEnv("REDIS_PASSWORD", ""),
 			DB:           getEnvAsInt("REDIS_DB", 0),
 			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
 			MinIdleConns: getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
@@ -189,27 +241,33 @@ func Load() (*Config, error) {
 			PoolTimeout:  getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
 			IdleTimeout:  getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
 		},
-	SMTP: SMTPConfig{
-		Host:     getEnv("SMTP_HOST", ""),
-		Port:     getEnv("SMTP_PORT", "587"),
-		User:     getEnv("SMTP_USER", ""),
-		Password: getEnv("SMTP_PASS", ""),
-		From:     getEnv("SMTP_FROM", ""),
-		TLS:      getEnvAsBool("SMTP_TLS", true),
-	},
-	AWS: AWSConfig{
-		Region:          getEnv("AWS_REGION", ""),
-		AccessKeyID:     getEnv("AWS_ACCESS_KEY_ID", ""),
-		SecretAccessKey: getEnv("AWS_SECRET_ACCESS_KEY", ""),
-		SessionToken:    getEnv("AWS_SESSION_TOKEN", ""),
-	},
-	SES: SESConfig{
-		FromEmail: getEnv("SES_FROM_EMAIL", ""),
-	},
-	CORS: CORSConfig{
-		AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
-		AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
-		AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
+		SMTP: SMTPConfig{
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     getEnv("SMTP_PORT", "587"),
+			User:     getEnv("SMTP_USER", ""),
+			Password: getEnv("SMTP_PASS", ""),
+			From:     getEnv("SMTP_FROM", ""),
+			TLS:      getEnvAsBool("SMTP_TLS", true),
+		},
+		AWS: AWSConfig{
+			Region:          getEnv("AWS_REGION", ""),
+			AccessKeyID:     getEnv("AWS_ACCESS_KEY_ID", ""),
+			SecretAccessKey: getEnv("AWS_SECRET_ACCESS_KEY", ""),
+			SessionToken:    getEnv("AWS_SESSION_TOKEN", ""),
+		},
+		SES: SESConfig{
+			FromEmail: getEnv("SES_FROM_EMAIL", ""),
+		},
+		Brevo: BrevoConfig{
+			APIKey:    getEnv("BREVO_API_KEY", ""),
+			FromEmail: getEnv("BREVO_FROM_EMAIL", ""),
+			FromName:  getEnv("BREVO_FROM_NAME", ""),
+			BaseURL:   strings.TrimRight(getEnv("BREVO_BASE_URL", ""), "/"),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
+			AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
+			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
 			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
 			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count"}),
 			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
@@ -239,6 +297,17 @@ func Load() (*Config, error) {
 			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
 			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
 			BasePath:      strings.Trim(strings.TrimSpace(getEnv("BUNNYCDN_BASE_PATH", "uploads")), "/"),
+		},
+		Spaces: SpacesConfig{
+			Bucket:            getEnv("SPACES_BUCKET", ""),
+			Region:            getEnv("SPACES_REGION", ""),
+			Endpoint:          strings.TrimRight(getEnv("SPACES_ENDPOINT", ""), "/"),
+			AccessKey:         getEnv("SPACES_ACCESS_KEY", ""),
+			SecretKey:         getEnv("SPACES_SECRET_KEY", ""),
+			PublicBaseURL:     strings.TrimRight(getEnv("SPACES_PUBLIC_BASE_URL", ""), "/"),
+			BasePath:          strings.Trim(strings.TrimSpace(getEnv("SPACES_BASE_PATH", "")), "/"),
+			PublicRead:        getEnvAsBool("SPACES_PUBLIC_READ", true),
+			EmailTemplatePath: strings.Trim(strings.TrimSpace(getEnv("SPACES_EMAIL_TEMPLATE_PATH", "email_template")), "/"),
 		},
 	}
 
@@ -310,6 +379,15 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	if strings.TrimSpace(cfg.Brevo.APIKey) != "" || strings.TrimSpace(cfg.Brevo.FromEmail) != "" {
+		if strings.TrimSpace(cfg.Brevo.APIKey) == "" {
+			return fmt.Errorf("BREVO_API_KEY is required when BREVO_FROM_EMAIL is set")
+		}
+		if strings.TrimSpace(cfg.Brevo.FromEmail) == "" {
+			return fmt.Errorf("BREVO_FROM_EMAIL is required when BREVO_API_KEY is set")
+		}
+	}
+
 	if strings.TrimSpace(cfg.SES.FromEmail) != "" {
 		if strings.TrimSpace(cfg.AWS.Region) == "" {
 			return fmt.Errorf("AWS_REGION is required when SES_FROM_EMAIL is set")
@@ -319,6 +397,10 @@ func validateConfig(cfg *Config) error {
 		if (ak == "") != (sk == "") {
 			return fmt.Errorf("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together")
 		}
+	}
+
+	if err := cfg.Spaces.Validate(); err != nil {
+		return err
 	}
 
 	if err := cfg.Bunny.Validate(); err != nil {
