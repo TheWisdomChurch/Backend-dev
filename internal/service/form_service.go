@@ -35,7 +35,7 @@ type FormService interface {
 	Create(req *models.CreateFormRequest) (*models.Form, error)
 	Update(id string, req *models.UpdateFormRequest) (*models.Form, error)
 	Delete(id string) error
-	Publish(id string) (string, error)
+	Publish(id string) (string, *string, error)
 
 	GetPublic(slug string) (*models.PublicFormPayload, error)
 	Submit(slug string, req *models.SubmitFormRequest) error
@@ -53,10 +53,48 @@ type formService struct {
 	// In your codebase EventRepository is a concrete type (pointer), not an interface.
 	// So keep it as a pointer and nil-check works.
 	eventRepo *repository.EventRepository
+
+	publicBaseURL string
 }
 
-func NewFormService(repo repository.FormRepository, eventRepo *repository.EventRepository) FormService {
-	return &formService{repo: repo, eventRepo: eventRepo}
+func NewFormService(repo repository.FormRepository, eventRepo *repository.EventRepository, publicBaseURL string) FormService {
+	return &formService{
+		repo:          repo,
+		eventRepo:     eventRepo,
+		publicBaseURL: strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
+	}
+}
+
+func (s *formService) buildPublicURL(slug string) *string {
+	slug = strings.Trim(strings.TrimSpace(slug), "/")
+	if slug == "" || s.publicBaseURL == "" {
+		return nil
+	}
+	u := fmt.Sprintf("%s/forms/%s", s.publicBaseURL, slug)
+	return &u
+}
+
+func (s *formService) attachPublicURL(form *models.Form) {
+	if form == nil {
+		return
+	}
+	if !form.IsPublished || form.Slug == nil {
+		return
+	}
+	if form.Status == models.FormStatusInvalid {
+		return
+	}
+	slug := strings.TrimSpace(*form.Slug)
+	if slug == "" {
+		return
+	}
+	form.PublicURL = s.buildPublicURL(slug)
+}
+
+func (s *formService) attachPublicURLs(forms []models.Form) {
+	for i := range forms {
+		s.attachPublicURL(&forms[i])
+	}
 }
 
 func (s *formService) List(page, limit int) ([]models.Form, int64, error) {
@@ -67,11 +105,21 @@ func (s *formService) List(page, limit int) ([]models.Form, int64, error) {
 		limit = 10
 	}
 	offset := (page - 1) * limit
-	return s.repo.List(offset, limit)
+	items, total, err := s.repo.List(offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.attachPublicURLs(items)
+	return items, total, nil
 }
 
 func (s *formService) GetByID(id string) (*models.Form, error) {
-	return s.repo.GetByID(id)
+	form, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	s.attachPublicURL(form)
+	return form, nil
 }
 
 func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error) {
@@ -79,13 +127,6 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 		return nil, errors.New("title is required")
 	}
 	title := strings.TrimSpace(req.Title)
-	exists, err := s.repo.TitleExists(title, "")
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, errors.New("a form with this title already exists")
-	}
 
 	settingsJSON, err := encodeSettings(req.Settings)
 	if err != nil {
@@ -97,6 +138,7 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 		Description: req.Description,
 		EventID:     req.EventID,
 		IsPublished: false,
+		Status:      models.FormStatusDraft,
 		Settings:    settingsJSON,
 	}
 
@@ -111,7 +153,12 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 		return nil, err
 	}
 
-	return s.repo.GetByID(form.ID)
+	created, err := s.repo.GetByID(form.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.attachPublicURL(created)
+	return created, nil
 }
 
 func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.Form, error) {
@@ -124,13 +171,6 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		t := strings.TrimSpace(*req.Title)
 		if t == "" {
 			return nil, errors.New("title cannot be empty")
-		}
-		exists, err := s.repo.TitleExists(t, existing.ID)
-		if err != nil {
-			return nil, err
-		}
-		if exists {
-			return nil, errors.New("a form with this title already exists")
 		}
 		existing.Title = t
 	}
@@ -163,21 +203,26 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		return nil, err
 	}
 
-	return s.repo.GetByID(existing.ID)
+	updated, err := s.repo.GetByID(existing.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.attachPublicURL(updated)
+	return updated, nil
 }
 
 func (s *formService) Delete(id string) error {
 	return s.repo.Delete(id)
 }
 
-func (s *formService) Publish(id string) (string, error) {
+func (s *formService) Publish(id string) (string, *string, error) {
 	form, err := s.repo.GetByID(id)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	if len(form.Fields) == 0 {
-		return "", errors.New("cannot publish: add at least one field")
+		return "", nil, errors.New("cannot publish: add at least one field")
 	}
 
 	// ensure fields valid (published mode)
@@ -194,36 +239,71 @@ func (s *formService) Publish(id string) (string, error) {
 		})
 	}
 	if _, err := buildAndValidateFields(form.ID, dtoFields, false); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	base := slugify(form.Title)
-	if base == "" {
-		base = "form"
-	}
-
-	slug := base
-	i := 2
-	for {
-		exists, err := s.repo.SlugExists(slug)
-		if err != nil {
-			return "", err
+	settings, _ := decodeSettings(form.Settings)
+	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
+		t, parseErr := parseFlexibleTime(*settings.ExpiresAt)
+		if parseErr != nil {
+			return "", nil, errors.New("form expiresAt is invalid on server")
 		}
-		if !exists {
-			break
+		if !t.After(time.Now()) {
+			return "", nil, errors.New("expiresAt must be in the future to publish")
 		}
-		slug = fmt.Sprintf("%s-%d", base, i)
-		i++
 	}
 
+	slug := ""
+	if form.Slug != nil {
+		slug = strings.TrimSpace(*form.Slug)
+	}
+	if slug == "" {
+		base := slugify(form.Title)
+		if base == "" {
+			base = "form"
+		}
+
+		slug = base
+		i := 2
+		for {
+			exists, err := s.repo.SlugExists(slug)
+			if err != nil {
+				return "", nil, err
+			}
+			if !exists {
+				break
+			}
+			slug = fmt.Sprintf("%s-%d", base, i)
+			i++
+		}
+	}
+
+	prevStatus := form.Status
+	now := time.Now().UTC()
 	form.IsPublished = true
+	form.Status = models.FormStatusPublished
 	form.Slug = &slug
+	if form.PublishedAt == nil || prevStatus != models.FormStatusPublished {
+		form.PublishedAt = &now
+	}
 
 	if err := s.repo.Update(form); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	return slug, nil
+	publicURL := s.buildPublicURL(slug)
+	if form.EventID != nil && s.eventRepo != nil && publicURL != nil {
+		ev, evErr := s.eventRepo.GetByID(*form.EventID)
+		if evErr != nil {
+			return "", nil, evErr
+		}
+		ev.RegisterLink = publicURL
+		if err := s.eventRepo.Update(ev); err != nil {
+			return "", nil, err
+		}
+	}
+
+	return slug, publicURL, nil
 }
 
 func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) {
