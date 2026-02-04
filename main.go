@@ -635,7 +635,11 @@ func main() {
 	)
 
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
-	formService := service.NewFormService(formRepo, eventRepo)
+	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
+	if publicBaseURL == "" {
+		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
+	}
+	formService := service.NewFormService(formRepo, eventRepo, publicBaseURL)
 
 	notificationService := service.NewNotificationService(
 		subscriberRepo,
