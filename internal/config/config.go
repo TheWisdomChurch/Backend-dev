@@ -20,9 +20,7 @@ type Config struct {
 	CORS     CORSConfig     `json:"cors"`
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
-
-	// BunnyCDN / Bunny Storage config (OPTIONAL)
-	Bunny BunnyConfig `json:"bunny"`
+	Bunny    BunnyConfig    `json:"bunny"`
 }
 
 type BunnyConfig struct {
@@ -55,10 +53,8 @@ func (b BunnyConfig) Validate() error {
 }
 
 type DatabaseConfig struct {
-	// Prefer DATABASE_URL (Supabase / managed Postgres)
 	URL string `json:"url" env:"DATABASE_URL"`
 
-	// Fallback: parts-based (local/docker Postgres)
 	Host     string `json:"host" env:"DATABASE_HOST"`
 	Port     string `json:"port" env:"DATABASE_PORT"`
 	User     string `json:"user" env:"DATABASE_USERNAME"`
@@ -116,7 +112,7 @@ type JWTConfig struct {
 }
 
 type AppConfig struct {
-	Environment               string        `json:"environment" env:"ENVIRONMENT"` // "development" | "production"
+	Environment               string        `json:"environment" env:"ENVIRONMENT"`
 	LogLevel                  string        `json:"log_level" env:"LOG_LEVEL"`
 	Name                      string        `json:"name" env:"APP_NAME"`
 	Version                   string        `json:"version" env:"APP_VERSION"`
@@ -135,6 +131,51 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	env := strings.ToLower(strings.TrimSpace(getEnv("ENVIRONMENT", "development")))
+
+	// -------------------------------------------------------------------------
+	// SMTP: support both legacy SMTP_* and new APP_SMTP_* (local Postfix relay)
+	// -------------------------------------------------------------------------
+	smtpHost := getEnv("SMTP_HOST", "")
+	if smtpHost == "" {
+		smtpHost = getEnv("APP_SMTP_HOST", "")
+	}
+
+	smtpPort := getEnv("SMTP_PORT", "")
+	if smtpPort == "" {
+		smtpPort = getEnv("APP_SMTP_PORT", "")
+	}
+	if smtpPort == "" {
+		// Default to 25 (local MTA). You can override with APP_SMTP_PORT / SMTP_PORT.
+		smtpPort = "25"
+	}
+
+	smtpUser := getEnv("SMTP_USER", "")
+	if smtpUser == "" {
+		smtpUser = getEnv("APP_SMTP_USER", "")
+	}
+
+	smtpPass := getEnv("SMTP_PASS", "")
+	if smtpPass == "" {
+		smtpPass = getEnv("APP_SMTP_PASS", "")
+	}
+
+	smtpFrom := getEnv("SMTP_FROM", "")
+	if smtpFrom == "" {
+		fromEmail := strings.TrimSpace(getEnv("APP_SMTP_FROM_EMAIL", ""))
+		fromName := strings.TrimSpace(getEnv("APP_SMTP_FROM_NAME", ""))
+		switch {
+		case fromEmail != "" && fromName != "":
+			smtpFrom = fmt.Sprintf("%s <%s>", fromName, fromEmail)
+		case fromEmail != "":
+			smtpFrom = fromEmail
+		}
+	}
+
+	// TLS: prefer explicit SMTP_TLS; otherwise APP_SMTP_TLS; default false for local relay
+	smtpTLS := getEnvAsBool("SMTP_TLS", false)
+	if os.Getenv("SMTP_TLS") == "" {
+		smtpTLS = getEnvAsBool("APP_SMTP_TLS", smtpTLS)
+	}
 
 	cfg := &Config{
 		Database: DatabaseConfig{
@@ -169,12 +210,12 @@ func Load() (*Config, error) {
 			IdleTimeout:  getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
 		},
 		SMTP: SMTPConfig{
-			Host:     getEnv("SMTP_HOST", ""),
-			Port:     getEnv("SMTP_PORT", "587"),
-			User:     getEnv("SMTP_USER", ""),
-			Password: getEnv("SMTP_PASS", ""),
-			From:     getEnv("SMTP_FROM", ""),
-			TLS:      getEnvAsBool("SMTP_TLS", true),
+			Host:     smtpHost,
+			Port:     smtpPort,
+			User:     smtpUser,
+			Password: smtpPass,
+			From:     smtpFrom,
+			TLS:      smtpTLS,
 		},
 		CORS: CORSConfig{
 			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
@@ -237,7 +278,6 @@ func (c *DatabaseConfig) ConnectionString() string {
 func (c *DatabaseConfig) DSN() string {
 	raw := strings.TrimSpace(c.URL)
 	if raw == "" {
-		// parts-based: never print password
 		return fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
 			c.Host, c.Port, c.User, c.DBName, c.SSLMode)
 	}
@@ -249,8 +289,7 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// In production, require DATABASE_URL (recommended),
-	// but still allow parts-based config if fully provided.
+	// Require DB config in production
 	if cfg.App.Environment == "production" {
 		if strings.TrimSpace(cfg.Database.URL) == "" {
 			if strings.TrimSpace(cfg.Database.Host) == "" {
@@ -271,12 +310,15 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	// SMTP: allow auth-less local relay (Postfix), require user/pass only for remote hosts
 	if strings.TrimSpace(cfg.SMTP.Host) != "" {
-		if strings.TrimSpace(cfg.SMTP.User) == "" {
-			return fmt.Errorf("SMTP_USER is required when SMTP_HOST is set")
-		}
-		if strings.TrimSpace(cfg.SMTP.Password) == "" {
-			return fmt.Errorf("SMTP_PASS is required when SMTP_HOST is set")
+		host := strings.ToLower(strings.TrimSpace(cfg.SMTP.Host))
+		isLocal := host == "localhost" || host == "127.0.0.1" || host == "host.docker.internal"
+
+		if !isLocal {
+			if strings.TrimSpace(cfg.SMTP.User) == "" || strings.TrimSpace(cfg.SMTP.Password) == "" {
+				return fmt.Errorf("SMTP_USER and SMTP_PASS are required when SMTP_HOST is not local (e.g. Brevo, Gmail)")
+			}
 		}
 	}
 
@@ -337,7 +379,6 @@ func splitEnv(key string, defaultValue []string) []string {
 func redactPostgresURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
-		// fallback best-effort
 		return raw
 	}
 	if u.User != nil {
