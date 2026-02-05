@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -33,28 +35,456 @@ import (
 // @host localhost:8080
 // @BasePath /api/v1
 
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+func isTrueEnv(key string) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch val {
+	case "1", "true", "t", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func ensureCORSDefaults(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+
+	// If CORS_ALLOW_ORIGIN is explicitly set, respect it.
+	if v, ok := os.LookupEnv("CORS_ALLOW_ORIGIN"); ok && strings.TrimSpace(v) != "" {
+		return
+	}
+
+	// Otherwise, ensure app URLs are allowed (useful for production).
+	existing := make(map[string]struct{}, len(cfg.CORS.AllowedOrigins))
+	for _, o := range cfg.CORS.AllowedOrigins {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		existing[o] = struct{}{}
+	}
+
+	candidates := []string{
+		strings.TrimSpace(cfg.App.FrontendURL),
+		strings.TrimSpace(cfg.App.AdminPortalURL),
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if _, ok := existing[c]; ok {
+			continue
+		}
+		cfg.CORS.AllowedOrigins = append(cfg.CORS.AllowedOrigins, c)
+		existing[c] = struct{}{}
+	}
+
+	if len(cfg.CORS.AllowedOrigins) == 0 {
+		cfg.CORS.AllowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
+	}
+}
+
+func verifyDatabaseConnection(db *database.Database) error {
+	if db == nil {
+		return errors.New("database is nil")
+	}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return sqlDB.PingContext(ctx)
+}
+
+// -----------------------------------------------------------------------------
+// Redis-based lock (for birthday scheduler)
+// -----------------------------------------------------------------------------
+
+type redisLock struct {
+	client *redis.Client
+}
+
+func newRedisLock(redisURL string) *redisLock {
+	if strings.TrimSpace(redisURL) == "" {
+		return nil
+	}
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil
+	}
+	return &redisLock{client: redis.NewClient(opts)}
+}
+
+func (l *redisLock) Acquire(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if l == nil || l.client == nil {
+		return true, nil
+	}
+	return l.client.SetNX(ctx, key, "1", ttl).Result()
+}
+
+// -----------------------------------------------------------------------------
+// Background jobs
+// -----------------------------------------------------------------------------
+
+func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Hour
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			count, err := svc.CleanupExpiredForms(time.Now().UTC())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Form cleanup failed: %v", err)
+				}
+				continue
+			}
+			if count > 0 && logger != nil {
+				logger.Printf("🧹 Cleaned up %d expired forms", count)
+			}
+		}
+	}
+}
+
+func parseHourMinute(raw string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("time must be HH:MM")
+	}
+	hour, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("hour must be numeric")
+	}
+	minute, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("minute must be numeric")
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("time must be valid 24h clock")
+	}
+	return hour, minute, nil
+}
+
+func nextRunAt(now time.Time, hour, minute int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func startBirthdayScheduler(
+	ctx context.Context,
+	logger *log.Logger,
+	lock *redisLock,
+	workforceSvc service.WorkforceService,
+	memberSvc service.MemberService,
+	tz string,
+	sendAt string,
+) {
+	if workforceSvc == nil && memberSvc == nil {
+		return
+	}
+
+	if strings.TrimSpace(sendAt) == "" {
+		sendAt = "09:00"
+	}
+	hour, minute, err := parseHourMinute(sendAt)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TIME=%q, using 09:00", sendAt)
+		}
+		hour, minute = 9, 0
+	}
+
+	loc := time.UTC
+	if strings.TrimSpace(tz) != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		} else if logger != nil {
+			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TZ=%q, using UTC", tz)
+		}
+	}
+
+	for {
+		now := time.Now().In(loc)
+		next := nextRunAt(now, hour, minute)
+		timer := time.NewTimer(time.Until(next))
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		dateKey := next.Format("2006-01-02")
+		if lock != nil {
+			ok, err := lock.Acquire(ctx, "birthday_send:"+dateKey, 36*time.Hour)
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Birthday scheduler lock failed: %v", err)
+				}
+				continue
+			}
+			if !ok {
+				if logger != nil {
+					logger.Printf("ℹ️ Birthday scheduler already ran for %s", dateKey)
+				}
+				continue
+			}
+		}
+
+		if workforceSvc != nil {
+			result, err := workforceSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Workforce birthday send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("🎂 Workforce birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+		}
+
+		if memberSvc != nil {
+			result, err := memberSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Member birthday send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("🎉 Member birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+// No-op email sender (used when DISABLE_EMAIL / DISABLE_OTP)
+// -----------------------------------------------------------------------------
+
+type noopEmailSender struct{}
+
+func (noopEmailSender) SendHTML(string, string, string) error {
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Router
+// -----------------------------------------------------------------------------
+
+func setupRouter(
+	cfg *config.Config,
+	testimonialHandler *handlers.TestimonialHandler,
+	authHandler *handlers.AuthHandler,
+	adminHandler *handlers.AdminHandler,
+	uploadHandler *handlers.UploadHandler,
+	eventHandler *handlers.EventHandler,
+	reelHandler *handlers.ReelHandler,
+	analyticsHandler *handlers.AnalyticsHandler,
+	formHandler *handlers.FormHandler,
+	notificationHandler *handlers.NotificationHandler,
+	otpHandler *handlers.OTPHandler,
+	workforceHandler *handlers.WorkforceHandler,
+	memberHandler *handlers.MemberHandler,
+	emailTemplateHandler *handlers.EmailTemplateHandler,
+) *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(middleware.RequestID())
+	router.Use(middleware.Logger(cfg.App.LogLevel))
+	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.CORS(&cfg.CORS))
+	router.Use(middleware.RateLimiter(middleware.RateLimiterOptions{
+		RedisURL: cfg.Redis.URL,
+		Prefix:   "rl",
+	}))
+
+	// Swagger + basic health
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+
+	api := router.Group("/api/v1")
+
+	secure := strings.TrimSpace(cfg.App.Environment) == "production"
+	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
+	sessionGuard := middleware.SessionTimeout(30*time.Minute, secure)
+
+	// AUTH
+	auth := api.Group("/auth")
+	auth.Use(middleware.DeviceFingerprint(secure))
+	auth.POST("/login", authHandler.Login)
+	// Backwards-compatible aliases for older admin clients
+	auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
+	auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
+	auth.POST("/register", authHandler.Register)
+	auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
+	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
+	auth.POST("/otp/verify", authHandler.VerifyLoginOTP)
+	auth.POST("/otp/resend", authHandler.ResendLoginOTP)
+
+	authProtected := auth.Group("")
+	authProtected.Use(authGuard, sessionGuard)
+	authProtected.GET("/me", authHandler.GetCurrentUser)
+	authProtected.PATCH("/profile", authHandler.UpdateProfile)
+	authProtected.POST("/change-password", authHandler.ChangePassword)
+	authProtected.DELETE("/account", authHandler.DeleteAccount)
+	authProtected.POST("/clear-data", authHandler.ClearData)
+	authProtected.POST("/refresh", authHandler.RefreshToken)
+	authProtected.POST("/logout", authHandler.Logout)
+
+	// OTP
+	api.POST("/otp/send", otpHandler.SendOTP)
+	api.POST("/otp/verify", otpHandler.VerifyOTP)
+
+	// Public testimonials
+	api.GET("/testimonials", testimonialHandler.GetPaginatedTestimonials)
+	api.GET("/testimonials/all", testimonialHandler.GetAllTestimonials)
+	api.GET("/testimonials/:id", testimonialHandler.GetTestimonialByID)
+	api.POST("/testimonials", testimonialHandler.CreateTestimonial)
+
+	// Public events/reels
+	api.GET("/events", eventHandler.List)
+	api.GET("/events/:id", eventHandler.Get)
+	api.GET("/reels", reelHandler.List)
+
+	// Notifications (newsletter-style)
+	api.POST("/notifications/subscribe", notificationHandler.Subscribe)
+	api.POST("/notifications/unsubscribe", notificationHandler.Unsubscribe)
+	api.GET("/notifications/unsubscribe", notificationHandler.UnsubscribeByLink)
+
+	// Public forms
+	api.GET("/forms/:slug", formHandler.GetPublicForm)
+	api.POST("/forms/:slug/submissions", formHandler.SubmitPublicForm)
+
+	// Workforce public apply
+	api.POST("/workforce/apply", workforceHandler.Apply)
+
+	// ADMIN
+	admin := api.Group("/admin")
+	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"))
+
+	admin.GET("/dashboard", adminHandler.GetDashboardStats)
+	admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
+	admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
+
+	admin.GET("/users", adminHandler.ListUsers)
+	admin.GET("/users/:id", adminHandler.GetUserByID)
+	admin.POST("/users", adminHandler.CreateUser)
+	admin.PATCH("/users/:id", adminHandler.UpdateUser)
+	admin.DELETE("/users/:id", adminHandler.DeleteUser)
+	admin.POST("/users/:id/approve", adminHandler.ApproveUser)
+
+	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
+
+	// Forms
+	admin.GET("/forms", formHandler.ListAdminForms)
+	admin.GET("/forms/:id", formHandler.GetAdminForm)
+	admin.POST("/forms", formHandler.CreateAdminForm)
+	admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
+	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
+	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
+	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
+	admin.GET("/forms/stats", formHandler.GetFormStats)
+
+	// Notifications (admin)
+	admin.GET("/notifications/subscribers", notificationHandler.ListSubscribers)
+	admin.POST("/notifications/send", notificationHandler.SendNotification)
+
+	// Email templates
+	admin.POST("/email/templates/send", emailTemplateHandler.SendTemplate)
+
+	// Uploads
+	admin.POST("/uploads/images", uploadHandler.UploadImage)
+
+	// Events
+	admin.GET("/events", eventHandler.List)
+	admin.POST("/events", eventHandler.Create)
+	admin.PUT("/events/:id", eventHandler.Update)
+	admin.DELETE("/events/:id", eventHandler.Delete)
+	admin.POST("/events/:id/image", eventHandler.UploadImage)
+	admin.POST("/events/:id/banner", eventHandler.UploadBanner)
+
+	// Reels
+	admin.GET("/reels", reelHandler.List)
+	admin.POST("/reels", reelHandler.Create)
+	admin.DELETE("/reels/:id", reelHandler.Delete)
+
+	// Workforce admin
+	admin.GET("/workforce", workforceHandler.List)
+	admin.POST("/workforce", workforceHandler.Create)
+	admin.PUT("/workforce/:id", workforceHandler.Update)
+	admin.GET("/workforce/stats", workforceHandler.Stats)
+	admin.GET("/workforce/birthdays/stats", workforceHandler.BirthdayStats)
+	admin.GET("/workforce/birthdays/month/:month", workforceHandler.BirthdaysByMonth)
+	admin.GET("/workforce/birthdays/today", workforceHandler.BirthdaysToday)
+	admin.POST("/workforce/birthdays/send-today", workforceHandler.SendBirthdaysToday)
+
+	// Members admin
+	admin.GET("/members", memberHandler.List)
+	admin.POST("/members", memberHandler.Create)
+	admin.PUT("/members/:id", memberHandler.Update)
+	admin.DELETE("/members/:id", memberHandler.Delete)
+	admin.GET("/members/birthdays/stats", memberHandler.BirthdayStats)
+	admin.GET("/members/birthdays/month/:month", memberHandler.BirthdaysByMonth)
+	admin.GET("/members/birthdays/today", memberHandler.BirthdaysToday)
+	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
+
+	// Super-admin
+	superAdmin := admin.Group("")
+	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
+	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
+
+	return router
+}
+
+// -----------------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------------
+
 func main() {
 	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
 
-	// 0) Load config
 	logger.Println("Loading configuration...")
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Fatalf("❌ Failed to load configuration: %v", err)
 	}
 
-	// Initialize validation rules and naming.
 	validation.Init()
 
-	// Normalize environment
 	env := strings.ToLower(strings.TrimSpace(cfg.App.Environment))
 	if env == "" {
 		env = "development"
 	}
 	cfg.App.Environment = env
 
-	// 1) Setup Gin mode
-	// Prefer explicit production behavior
+	disableOTP := isTrueEnv("DISABLE_OTP")
+	disableEmail := isTrueEnv("DISABLE_EMAIL") || disableOTP
+	if disableOTP {
+		logger.Println("⚠️ DISABLE_OTP=true: OTP verification is disabled for login/password reset.")
+	}
+	if disableEmail {
+		logger.Println("⚠️ DISABLE_EMAIL=true: outbound email sending is disabled.")
+	}
+
+	// Gin mode
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	} else if strings.TrimSpace(cfg.Server.GinMode) != "" {
@@ -63,7 +493,9 @@ func main() {
 		gin.SetMode(gin.DebugMode)
 	}
 
-	// 2) Connect DB (AutoMigrate handled in database.NewDatabase with RUN_AUTOMIGRATE gate)
+	ensureCORSDefaults(cfg)
+
+	// Database
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
 	if err != nil {
 		logger.Fatalf("❌ Failed to connect to database: %v", err)
@@ -75,53 +507,65 @@ func main() {
 		logger.Println("✅ Database connection closed")
 	}()
 
-	// 3) Verify DB connectivity
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
 
-	// ✅ MIGRATION MODE EARLY EXIT
-	// When RUN_AUTOMIGRATE=true, we only want to run migrations and exit.
+	// Migration-only mode
 	if isTrueEnv("RUN_AUTOMIGRATE") {
 		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
 		return
 	}
 
-	// 4) Init repos
+	// -------------------------------------------------------------------------
+	// Repositories
+	// -------------------------------------------------------------------------
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
-
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
-
 	formRepo := repository.NewFormRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
+	memberRepo := repository.NewMemberRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
-	// 5) Email sender (required in production)
-	emailSender, err := email.NewSender(
-		cfg.Redis.URL,
-		cfg.SMTP.Host,
-		cfg.SMTP.Port,
-		cfg.SMTP.User,
-		cfg.SMTP.Password,
-		cfg.SMTP.From,
-		cfg.SMTP.TLS,
-	)
-	if err != nil {
-		if cfg.App.Environment == "production" {
-			logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
+	// -------------------------------------------------------------------------
+	// Email sender (SMTP → Postfix → Brevo)
+	// -------------------------------------------------------------------------
+	var emailSender service.EmailSender
+	if disableEmail {
+		emailSender = noopEmailSender{}
+		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
+	} else {
+		s, err := email.NewSender(
+			cfg.Redis.URL,
+			cfg.SMTP.Host,
+			cfg.SMTP.Port,
+			cfg.SMTP.User,
+			cfg.SMTP.Password,
+			cfg.SMTP.From,
+			cfg.SMTP.TLS,
+		)
+		if err != nil {
+			if cfg.App.Environment == "production" {
+				logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
+			}
+			logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
+			emailSender = noopEmailSender{}
+		} else {
+			emailSender = s
+			logger.Println("✅ Email sender initialized (SMTP relay via Postfix)")
 		}
-		logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
 	}
 
-	// 6) Bunny uploader service (optional)
-	// Professional approach: if incomplete, simply disable—do not hack env vars.
+	// -------------------------------------------------------------------------
+	// Asset uploader (BunnyCDN-based, matches config.Bunny)
+	// -------------------------------------------------------------------------
 	var bunnyUploader *service.BunnyUploader
 	if cfg.Bunny.Enabled() {
 		bunnyUploader = service.NewBunnyUploader(
@@ -131,11 +575,14 @@ func main() {
 			cfg.Bunny.PullZone,
 			cfg.Bunny.BasePath,
 		)
+		logger.Println("✅ Bunny uploader initialized")
 	} else {
 		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
 	}
 
-	// 7) Branding / template assets
+	// -------------------------------------------------------------------------
+	// Branding / email template assets
+	// -------------------------------------------------------------------------
 	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
 	if templateAssetBaseURL == "" && cfg.Bunny.Enabled() {
 		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
@@ -156,9 +603,13 @@ func main() {
 		TemplateAssetBaseURL: templateAssetBaseURL,
 	}
 
-	// 8) Services
+	// -------------------------------------------------------------------------
+	// Services
+	// -------------------------------------------------------------------------
 	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
+
 	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
+
 	securityService := service.NewSecurityService(
 		securityEventRepo,
 		trustedDeviceRepo,
@@ -166,6 +617,7 @@ func main() {
 		branding,
 		cfg.App.FrontendURL,
 	)
+
 	authService := service.NewAuthService(
 		userRepo,
 		otpService,
@@ -175,15 +627,32 @@ func main() {
 		branding,
 		securityService,
 		trustedDeviceRepo,
+		disableOTP,
 	)
+
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
 
-	formService := service.NewFormService(formRepo, eventRepo)
-	notificationService := service.NewNotificationService(subscriberRepo, notificationRepo, eventRepo, emailSender, branding)
+	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
+	if publicBaseURL == "" {
+		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
+	}
+	formService := service.NewFormService(formRepo, eventRepo, publicBaseURL)
+
+	notificationService := service.NewNotificationService(
+		subscriberRepo,
+		notificationRepo,
+		eventRepo,
+		emailSender,
+		branding,
+	)
+
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	memberService := service.NewMemberService(memberRepo, emailSender, branding)
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
-	// 9) Handlers
+	// -------------------------------------------------------------------------
+	// Handlers
+	// -------------------------------------------------------------------------
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
@@ -195,14 +664,40 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
+	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 
-	// 10) Background jobs (only start in normal server mode)
+	// -------------------------------------------------------------------------
+	// Background jobs
+	// -------------------------------------------------------------------------
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
+
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 
-	// 11) Router
+	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
+	if schedulerEnabled {
+		lock := newRedisLock(cfg.Redis.URL)
+		tz := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TZ"))
+		sendAt := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TIME"))
+		go startBirthdayScheduler(cleanupCtx, logger, lock, workforceService, memberService, tz, sendAt)
+	}
+	if isTrueEnv("BIRTHDAY_SCHEDULER_ONLY") {
+		if !schedulerEnabled {
+			logger.Println("⚠️ BIRTHDAY_SCHEDULER_ONLY=true but BIRTHDAY_SCHEDULER_ENABLED=false")
+		}
+		logger.Println("🎂 Birthday scheduler worker mode enabled (API server disabled)")
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-quit
+		logger.Printf("🛑 Received signal: %v", sig)
+		cleanupCancel()
+		return
+	}
+
+	// -------------------------------------------------------------------------
+	// HTTP server
+	// -------------------------------------------------------------------------
 	router := setupRouter(
 		cfg,
 		testimonialHandler,
@@ -216,10 +711,10 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		memberHandler,
 		emailTemplateHandler,
 	)
 
-	// 12) Server
 	server := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
 		Handler:           router,
@@ -230,7 +725,7 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// 13) Graceful shutdown
+	// Graceful shutdown
 	shutdownErr := make(chan error, 1)
 	go func() {
 		host := "localhost"
@@ -256,7 +751,6 @@ func main() {
 		if err != nil {
 			logger.Fatalf("❌ Server failed: %v", err)
 		}
-		// Server exited normally; just return
 		logger.Println("ℹ️ Server exited.")
 		return
 	}
@@ -272,299 +766,4 @@ func main() {
 		logger.Fatalf("❌ Server forced to shutdown: %v", err)
 	}
 	logger.Println("👋 Server exited gracefully")
-}
-
-func isTrueEnv(key string) bool {
-	return strings.ToLower(strings.TrimSpace(os.Getenv(key))) == "true"
-}
-
-func verifyDatabaseConnection(db *database.Database) error {
-	var result int
-	if err := db.Raw("SELECT 1").Scan(&result).Error; err != nil {
-		return fmt.Errorf("database connection failed: %v", err)
-	}
-	return nil
-}
-
-func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
-	if svc == nil || interval <= 0 {
-		return
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	runCleanup := func() {
-		count, err := svc.CleanupExpiredForms(time.Now().UTC())
-		if err != nil {
-			logger.Printf("⚠️ Failed to cleanup expired forms: %v", err)
-			return
-		}
-		if count > 0 {
-			logger.Printf("🧹 Cleaned up %d expired forms", count)
-		}
-	}
-
-	// Run once at startup
-	runCleanup()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			runCleanup()
-		}
-	}
-}
-
-// setupRouter wires routes + middleware
-func setupRouter(
-	cfg *config.Config,
-	testimonialHandler *handlers.TestimonialHandler,
-	authHandler *handlers.AuthHandler,
-	adminHandler *handlers.AdminHandler,
-	uploadHandler *handlers.UploadHandler,
-	eventHandler *handlers.EventHandler,
-	reelHandler *handlers.ReelHandler,
-	analyticsHandler *handlers.AnalyticsHandler,
-	formHandler *handlers.FormHandler,
-	notificationHandler *handlers.NotificationHandler,
-	otpHandler *handlers.OTPHandler,
-	workforceHandler *handlers.WorkforceHandler,
-	emailTemplateHandler *handlers.EmailTemplateHandler,
-) *gin.Engine {
-	router := gin.New()
-	sessionTimeout := middleware.SessionTimeout(30*time.Minute, cfg.App.Environment == "production")
-
-	// Global middleware
-	router.Use(gin.Recovery())
-	router.Use(middleware.DeviceFingerprint(cfg.App.Environment == "production"))
-	router.Use(middleware.Logger(cfg.App.LogLevel))
-	router.Use(middleware.CORS(&cfg.CORS))
-	router.Use(middleware.SecurityHeaders())
-	router.Use(middleware.RequestID())
-	router.Use(middleware.RateLimiter())
-
-	// Basic routes
-	router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"name":        cfg.App.Name,
-			"version":     cfg.App.Version,
-			"environment": cfg.App.Environment,
-			"status":      "operational",
-			"timestamp":   time.Now().UTC(),
-			"endpoints": gin.H{
-				"health":          "/health",
-				"api_docs":        "/swagger/index.html",
-				"api_v1":          "/api/v1",
-				"testimonials":    "/api/v1/testimonials",
-				"auth":            "/api/v1/auth",
-				"admin":           "/api/v1/admin",
-				"events":          "/api/v1/events",
-				"reels":           "/api/v1/reels",
-				"forms_admin":     "/api/v1/admin/forms",
-				"forms_public":    "/api/v1/forms/:slug",
-				"subscribers":     "/api/v1/subscribers",
-				"notifications":   "/api/v1/admin/notifications",
-				"otp_send":        "/api/v1/otp/send",
-				"otp_verify":      "/api/v1/otp/verify",
-				"workforce_apply": "/api/v1/workforce/apply",
-			},
-		})
-	})
-
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":    "healthy",
-			"service":   cfg.App.Name,
-			"version":   cfg.App.Version,
-			"timestamp": time.Now().UTC().Unix(),
-			"uptime":    time.Since(startTime).String(),
-			"database":  "connected",
-		})
-	})
-
-	api := router.Group("/api/v1")
-	{
-		// PUBLIC
-		testimonials := api.Group("/testimonials")
-		{
-			testimonials.GET("", testimonialHandler.GetAllTestimonials)
-			testimonials.GET("/paginated", testimonialHandler.GetPaginatedTestimonials)
-			testimonials.GET("/:id", testimonialHandler.GetTestimonialByID)
-			testimonials.POST("", testimonialHandler.CreateTestimonial)
-		}
-
-		publicForms := api.Group("/forms")
-		{
-			publicForms.GET("/:slug", formHandler.GetPublicForm)
-			publicForms.POST("/:slug/submissions", formHandler.SubmitPublicForm)
-		}
-
-		subscribers := api.Group("/subscribers")
-		{
-			subscribers.POST("", notificationHandler.Subscribe)
-			subscribers.POST("/unsubscribe", notificationHandler.Unsubscribe)
-			subscribers.GET("/unsubscribe", notificationHandler.UnsubscribeByLink)
-		}
-
-		api.POST("/workforce/apply", workforceHandler.Apply)
-
-		otp := api.Group("/otp")
-		{
-			otp.POST("/send", otpHandler.SendOTP)
-			otp.POST("/verify", otpHandler.VerifyOTP)
-		}
-
-		// AUTH
-		auth := api.Group("/auth")
-		{
-			auth.POST("/login", authHandler.Login)
-			auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
-			auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/refresh", authHandler.RefreshToken)
-			auth.POST("/logout", authHandler.Logout)
-			auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
-			auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
-
-			protected := auth.Group("")
-			protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
-			{
-				protected.GET("/me", authHandler.GetCurrentUser)
-				protected.PUT("/update-profile", authHandler.UpdateProfile)
-				protected.POST("/change-password", authHandler.ChangePassword)
-				protected.DELETE("/delete-account", authHandler.DeleteAccount)
-				protected.POST("/clear-data", authHandler.ClearData)
-			}
-		}
-
-		// ADMIN (protected)
-		admin := api.Group("/admin")
-		admin.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
-		admin.Use(middleware.RoleMiddleware("admin"))
-		{
-			admin.PUT("/testimonials/:id", testimonialHandler.UpdateTestimonial)
-			admin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
-			admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
-
-			admin.GET("/dashboard", adminHandler.GetDashboardStats)
-			admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
-
-			admin.GET("/users", adminHandler.GetAllUsers)
-			admin.GET("/users/:id", adminHandler.GetUserByID)
-			admin.POST("/users", adminHandler.CreateUser)
-			admin.PUT("/users/:id", adminHandler.UpdateUser)
-			admin.DELETE("/users/:id", adminHandler.DeleteUser)
-
-			admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
-
-			admin.GET("/forms", formHandler.ListAdminForms)
-			admin.GET("/forms/stats", formHandler.GetFormStats)
-			admin.POST("/forms", formHandler.CreateAdminForm)
-			admin.GET("/forms/:id", formHandler.GetAdminForm)
-			admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
-			admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
-			admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
-			admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
-
-			admin.GET("/subscribers", notificationHandler.ListSubscribers)
-			admin.POST("/notifications", notificationHandler.SendNotification)
-			admin.POST("/emails/templates/send", emailTemplateHandler.SendTemplate)
-
-			// Generic CDN upload for admin dashboard
-			admin.POST("/uploads", uploadHandler.UploadImage)
-
-			admin.GET("/workforce", workforceHandler.List)
-			admin.POST("/workforce", workforceHandler.Create)
-			admin.PATCH("/workforce/:id", workforceHandler.Update)
-			admin.GET("/workforce/stats", workforceHandler.Stats)
-
-			superAdmin := admin.Group("")
-			superAdmin.Use(middleware.RoleMiddleware("super_admin"))
-			{
-				superAdmin.PATCH("/users/:id/approve", adminHandler.ApproveUser)
-				superAdmin.PATCH("/workforce/:id/approve", workforceHandler.Approve)
-			}
-		}
-
-		// EVENTS (admin-only)
-		events := api.Group("/events")
-		events.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
-		events.Use(middleware.RoleMiddleware("admin"))
-		{
-			events.GET("", eventHandler.List)
-			events.POST("", eventHandler.Create)
-			events.GET("/:id", eventHandler.Get)
-			events.PUT("/:id", eventHandler.Update)
-			events.DELETE("/:id", eventHandler.Delete)
-
-			events.POST("/:id/image", eventHandler.UploadImage)
-			events.POST("/:id/banner", eventHandler.UploadBanner)
-		}
-
-		// REELS (admin-only)
-		reels := api.Group("/reels")
-		reels.Use(middleware.AuthMiddleware(cfg.JWT.Secret), sessionTimeout)
-		reels.Use(middleware.RoleMiddleware("admin"))
-		{
-			reels.GET("", reelHandler.List)
-			reels.POST("", reelHandler.Create)
-			reels.DELETE("/:id", reelHandler.Delete)
-		}
-
-		api.GET("/ping", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"message":   "pong",
-				"timestamp": time.Now().UTC().Unix(),
-				"status":    "success",
-				"service":   cfg.App.Name,
-			})
-		})
-	}
-
-	if cfg.App.Environment == "development" {
-		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	}
-
-	router.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":         "Not Found",
-			"message":       fmt.Sprintf("Route %s %s not found", c.Request.Method, c.Request.URL.Path),
-			"path":          c.Request.URL.Path,
-			"method":        c.Request.Method,
-			"timestamp":     time.Now().UTC().Unix(),
-			"documentation": "/swagger/index.html",
-		})
-	})
-
-	if cfg.App.Environment == "development" && cfg.App.Debug {
-		setupRouteDebugging(router)
-	}
-
-	return router
-}
-
-var startTime = time.Now()
-
-func setupRouteDebugging(router *gin.Engine) {
-	router.Use(func(c *gin.Context) {
-		if !routesPrinted {
-			routesPrinted = true
-			printRoutes(router)
-		}
-		c.Next()
-	})
-}
-
-var routesPrinted bool
-
-func printRoutes(router *gin.Engine) {
-	fmt.Println("\n📋 Registered Routes:")
-	fmt.Println("===================")
-	for _, route := range router.Routes() {
-		fmt.Printf("  %-6s %s\n", route.Method, route.Path)
-	}
-	fmt.Println("===================")
 }

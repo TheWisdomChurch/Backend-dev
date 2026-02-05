@@ -9,9 +9,8 @@ func SecurityHeaders() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 
-		// API backend: a minimal CSP is fine. Swagger needs relaxed CSP.
 		path := c.Request.URL.Path
-		if path == "/swagger/" || path == "/swagger/index.html" || len(path) >= 9 && path[:9] == "/swagger/" {
+		if path == "/swagger/" || path == "/swagger/index.html" || (len(path) >= 9 && path[:9] == "/swagger/") {
 			c.Header("Content-Security-Policy",
 				"default-src 'self' 'unsafe-inline'; "+
 					"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "+

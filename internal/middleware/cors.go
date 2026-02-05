@@ -17,49 +17,31 @@ func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
 	allowedMethods := upperAll(cleanStringSlice(cfg.AllowedMethods))
 	allowedHeaders := cleanStringSlice(cfg.AllowedHeaders)
 	exposedHeaders := cleanStringSlice(cfg.ExposedHeaders)
-
 	allowCredentials := cfg.AllowCredentials
 
-	// ---- Defaults (important for preflight stability) ----
 	if len(allowedMethods) == 0 {
 		allowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 	}
 	if len(allowedHeaders) == 0 {
-		// Include what browsers commonly ask for in preflight
-		allowedHeaders = []string{
-			"Origin",
-			"Content-Type",
-			"Authorization",
-			"Accept",
-			"X-Requested-With",
-		}
+		allowedHeaders = []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With"}
 	}
 
-	// IMPORTANT: if credentials are allowed, wildcard origins are invalid.
 	if allowCredentials {
 		allowedOrigins = filterOutWildcard(allowedOrigins)
 	}
 
-	// Build an origin validator supporting exact + wildcard.
 	originValidator, exactOrigins := createOriginValidator(allowedOrigins, allowCredentials)
 
 	corsConfig := cors.Config{
-		// Setting AllowOrigins is important: gin-contrib/cors behaves more consistently
-		// when this list contains exact origins (wildcards are handled via AllowOriginFunc).
 		AllowOrigins:     exactOrigins,
 		AllowMethods:     allowedMethods,
 		AllowHeaders:     allowedHeaders,
 		ExposeHeaders:    exposedHeaders,
 		AllowCredentials: allowCredentials,
-
-		// If MaxAge is 0 in cfg, set a sane default
-		MaxAge: 12 * time.Hour,
-
-		// Use function for wildcard matching + extra validation
-		AllowOriginFunc: originValidator,
+		MaxAge:           12 * time.Hour,
+		AllowOriginFunc:  originValidator,
 	}
 
-	// If cfg.MaxAge is explicitly provided, honor it
 	if cfg.MaxAge > 0 {
 		corsConfig.MaxAge = time.Duration(cfg.MaxAge) * time.Second
 	}
@@ -68,19 +50,23 @@ func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
 }
 
 func cleanStringSlice(slice []string) []string {
-	cleaned := make([]string, 0, len(slice))
-	for _, item := range slice {
-		if trimmed := strings.TrimSpace(item); trimmed != "" {
-			cleaned = append(cleaned, trimmed)
+	out := make([]string, 0, len(slice))
+	for _, v := range slice {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			out = append(out, v)
 		}
 	}
-	return cleaned
+	return out
 }
 
 func upperAll(slice []string) []string {
-	out := make([]string, len(slice))
-	for i, v := range slice {
-		out[i] = strings.ToUpper(v)
+	out := make([]string, 0, len(slice))
+	for _, v := range slice {
+		v = strings.ToUpper(strings.TrimSpace(v))
+		if v != "" {
+			out = append(out, v)
+		}
 	}
 	return out
 }
@@ -97,16 +83,10 @@ func filterOutWildcard(origins []string) []string {
 	return out
 }
 
-func normalizeOrigin(origin string) string {
-	return strings.TrimSpace(origin)
-}
+func normalizeOrigin(origin string) string { return strings.TrimSpace(origin) }
 
-// createOriginValidator returns:
-// 1) a validator func(origin) bool
-// 2) the list of exact origins (non-wildcard) for cors.Config.AllowOrigins
 func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func(string) bool, []string) {
 	type wildcard struct {
-		raw     string
 		pattern *regexp.Regexp
 	}
 
@@ -123,7 +103,6 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 		}
 
 		if o == "*" {
-			// Only permissible when credentials are NOT used.
 			if !allowCredentials {
 				allowAll = true
 			}
@@ -134,11 +113,10 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 			escaped := regexp.QuoteMeta(o)
 			escaped = strings.ReplaceAll(escaped, "\\*", ".*")
 			re := regexp.MustCompile("^" + escaped + "$")
-			wildcards = append(wildcards, wildcard{raw: o, pattern: re})
+			wildcards = append(wildcards, wildcard{pattern: re})
 			continue
 		}
 
-		// exact origin
 		if _, exists := exact[o]; !exists {
 			exact[o] = struct{}{}
 			exactList = append(exactList, o)
@@ -151,12 +129,10 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 			return false
 		}
 
-		// Must be a valid absolute origin: scheme + host
 		u, err := url.Parse(origin)
 		if err != nil || u.Scheme == "" || u.Host == "" {
 			return false
 		}
-		// Only allow http/https origins
 		if u.Scheme != "http" && u.Scheme != "https" {
 			return false
 		}
@@ -164,11 +140,9 @@ func createOriginValidator(allowedOrigins []string, allowCredentials bool) (func
 		if allowAll {
 			return true
 		}
-
 		if _, ok := exact[origin]; ok {
 			return true
 		}
-
 		for _, w := range wildcards {
 			if w.pattern.MatchString(origin) {
 				return true

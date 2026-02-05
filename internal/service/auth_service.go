@@ -27,6 +27,7 @@ type authServiceImpl struct {
 	branding      email.Branding
 	security      SecurityService
 	trustedDevs   repository.TrustedDeviceRepository
+	disableOTP    bool
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -51,7 +52,7 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository) AuthService {
+func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool) AuthService {
 	return &authServiceImpl{
 		userRepo:      userRepo,
 		otp:           otp,
@@ -61,6 +62,7 @@ func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecre
 		branding:      branding,
 		security:      security,
 		trustedDevs:   trustedDevs,
+		disableOTP:    disableOTP,
 	}
 }
 
@@ -99,9 +101,12 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 	user.LastFailedLoginAt = nil
 
 	needOTP := true
+	if s.disableOTP {
+		needOTP = false
+	}
 
 	// Step-up: untrusted/new/expired device requires OTP
-	if s.trustedDevs != nil && meta.DeviceID != "" {
+	if !s.disableOTP && s.trustedDevs != nil && meta.DeviceID != "" {
 		if dev, err := s.trustedDevs.Find(user.ID, meta.DeviceID); err == nil && dev != nil && dev.Trusted && dev.ExpiresAt.After(time.Now().UTC()) {
 			needOTP = false
 		}
@@ -158,6 +163,9 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 }
 
 func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string, meta LoginMetadata) (*models.User, error) {
+	if s.disableOTP {
+		return nil, errors.New("otp is disabled")
+	}
 	if s.otp == nil {
 		return nil, errors.New("otp service not configured")
 	}
@@ -274,6 +282,9 @@ func (s *authServiceImpl) sendFailedLoginAlert(user *models.User, meta LoginMeta
 }
 
 func (s *authServiceImpl) RequestPasswordReset(email, actionURL string) (*models.SendOTPResponse, error) {
+	if s.disableOTP {
+		return nil, errors.New("otp is disabled")
+	}
 	if s.otp == nil {
 		return nil, errors.New("otp service not configured")
 	}
@@ -317,6 +328,9 @@ func (s *authServiceImpl) RequestPasswordReset(email, actionURL string) (*models
 }
 
 func (s *authServiceImpl) ResetPasswordWithOTP(emailStr, code, purpose, newPassword string) error {
+	if s.disableOTP {
+		return errors.New("otp is disabled")
+	}
 	if s.otp == nil {
 		return errors.New("otp service not configured")
 	}
@@ -437,6 +451,9 @@ func (s *authServiceImpl) UntrustDevice(userID, deviceID string) error {
 // ResendLoginOTP issues a fresh login OTP for an already authenticated email/password attempt.
 // It skips password validation; call this only after a recent OTP-required login response.
 func (s *authServiceImpl) ResendLoginOTP(email string, meta LoginMetadata) (*LoginResult, error) {
+	if s.disableOTP {
+		return nil, errors.New("otp is disabled")
+	}
 	if s.otp == nil {
 		return nil, errors.New("otp service not configured")
 	}

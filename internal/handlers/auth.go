@@ -64,6 +64,28 @@ func (h *AuthHandler) generateToken(user *models.User) (string, error) {
    Cookies
 ============================================================================ */
 
+/* ============================================================================
+   Cookies
+============================================================================ */
+
+func (h *AuthHandler) cookieSameSite() http.SameSite {
+	// Cross-site requests from admin-portalwisdomchurch.org -> api.wisdomchurchhq.org
+	// REQUIRE SameSite=None (and Secure=true), otherwise browser won't send cookies
+	// on fetch/XHR even if credentials: "include".
+	if h.secure {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
+func (h *AuthHandler) cookieSecure() bool {
+	// SameSite=None requires Secure=true in modern browsers.
+	if h.secure {
+		return true
+	}
+	return false
+}
+
 func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe bool) {
 	// Session cookie by default
 	maxAge := 0
@@ -74,32 +96,42 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 		expires = time.Now().Add(7 * 24 * time.Hour)
 	}
 
+	sameSite := h.cookieSameSite()
+	secure := h.cookieSecure()
+
+	// NOTE: Domain left empty => host-only cookie for api.wisdomchurchhq.org
+	// This is correct and safest. Only set Domain if you truly need cross-subdomain.
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token,
 		Path:     "/",
-		Domain:   "", // keep empty unless you need cross-subdomain sharing
+		Domain:   "",
 		MaxAge:   maxAge,
 		Expires:  expires,
-		Secure:   h.secure,
+		Secure:   secure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
+
 	// Track inactivity (30 minutes)
 	now := time.Now()
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "last_activity",
 		Value:    now.UTC().Format(time.RFC3339),
 		Path:     "/",
+		Domain:   "",
 		MaxAge:   int((30 * time.Minute) / time.Second),
 		Expires:  now.Add(30 * time.Minute),
-		Secure:   h.secure,
+		Secure:   secure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
 }
 
 func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
+	sameSite := h.cookieSameSite()
+	secure := h.cookieSecure()
+
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
 		Value:    "",
@@ -107,10 +139,11 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 		Domain:   "",
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
-		Secure:   h.secure,
+		Secure:   secure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
+
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "last_activity",
 		Value:    "",
@@ -118,11 +151,12 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 		Domain:   "",
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
-		Secure:   h.secure,
+		Secure:   secure,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
 }
+
 
 /* ============================================================================
    Handlers
