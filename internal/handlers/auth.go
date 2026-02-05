@@ -1,3 +1,4 @@
+// internal/handlers/auth_handler.go
 package handlers
 
 import (
@@ -25,8 +26,7 @@ type AuthHandler struct {
 func NewAuthHandler(service service.AuthService) *AuthHandler {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		// Fail fast in production; in dev you still want visibility.
-		// You can also panic here to crash on startup if preferred.
+		// In production you might want to panic here instead of just logging.
 		fmt.Println("WARNING: JWT_SECRET not set")
 	}
 
@@ -40,7 +40,9 @@ func NewAuthHandler(service service.AuthService) *AuthHandler {
 }
 
 /* ============================================================================
+
    JWT
+
 ============================================================================ */
 
 func (h *AuthHandler) generateToken(user *models.User) (string, error) {
@@ -61,17 +63,13 @@ func (h *AuthHandler) generateToken(user *models.User) (string, error) {
 }
 
 /* ============================================================================
-   Cookies
-============================================================================ */
 
-/* ============================================================================
    Cookies
+
 ============================================================================ */
 
 func (h *AuthHandler) cookieSameSite() http.SameSite {
-	// Cross-site requests from admin-portalwisdomchurch.org -> api.wisdomchurchhq.org
-	// REQUIRE SameSite=None (and Secure=true), otherwise browser won't send cookies
-	// on fetch/XHR even if credentials: "include".
+	// Cross-site requests from admin/FE -> api.* require SameSite=None + Secure=true
 	if h.secure {
 		return http.SameSiteNoneMode
 	}
@@ -99,8 +97,7 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 	sameSite := h.cookieSameSite()
 	secure := h.cookieSecure()
 
-	// NOTE: Domain left empty => host-only cookie for api.wisdomchurchhq.org
-	// This is correct and safest. Only set Domain if you truly need cross-subdomain.
+	// Domain left empty => host-only cookie (api.wisdomchurchhq.org)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token,
@@ -157,9 +154,10 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 	})
 }
 
-
 /* ============================================================================
+
    Handlers
+
 ============================================================================ */
 
 // Login establishes cookie-based session ONLY here
@@ -188,6 +186,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	result, err := h.service.Login(req.Email, req.Password, meta)
 	if err != nil {
 		status := http.StatusUnauthorized
+
 		if errors.Is(err, service.ErrAdminPending) {
 			status = http.StatusForbidden
 		} else if errors.Is(err, service.ErrUserNotFound) {
@@ -195,6 +194,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		} else if errors.Is(err, service.ErrWrongPassword) {
 			status = http.StatusUnauthorized
 		}
+
 		utils.ErrorResponse(c, status, err.Error())
 		return
 	}
@@ -512,6 +512,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	userID := ""
 	if tokenCookie, err := c.Cookie("auth_token"); err == nil && tokenCookie != "" && len(h.jwtSecret) > 0 {
+		// Try unverified parse first
 		if t, _, err := new(jwt.Parser).ParseUnverified(tokenCookie, jwt.MapClaims{}); err == nil {
 			if claims, ok := t.Claims.(jwt.MapClaims); ok {
 				if uid, ok := claims["user_id"].(string); ok {
@@ -519,7 +520,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 				}
 			}
 		} else {
-			// try full parse to validate signature
+			// Fallback: parse with verification
 			if t, err2 := jwt.Parse(tokenCookie, func(token *jwt.Token) (interface{}, error) {
 				return h.jwtSecret, nil
 			}); err2 == nil {
@@ -544,6 +545,12 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	})
 }
 
+/* ============================================================================
+
+   Password reset
+
+============================================================================ */
+
 func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
@@ -553,9 +560,19 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
+	// Do NOT leak if the user exists. For ErrUserNotFound we still return 200.
 	resp, err := h.service.RequestPasswordReset(req.Email, "")
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		if errors.Is(err, service.ErrUserNotFound) {
+			utils.SuccessResponse(c, http.StatusOK,
+				"If an account exists for that email, a password reset email has been sent.",
+				nil,
+			)
+			return
+		}
+
+		// Any other error is internal (email provider / DB / etc.)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start password reset process")
 		return
 	}
 
@@ -581,12 +598,20 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	}
 
 	if err := h.service.ResetPasswordWithOTP(req.Email, req.Code, req.Purpose, req.NewPassword); err != nil {
+		// You can specialize error handling here if your service exposes
+		// ErrOTPInvalid, ErrOTPExpired, etc. For now, we keep it generic.
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Password reset successful", nil)
 }
+
+/* ============================================================================
+
+   OTP-based login
+
+============================================================================ */
 
 func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 	var req struct {
