@@ -11,6 +11,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
+	github.com/wneessen/go-mail v0.7.2
 	golang.org/x/crypto v0.47.0
 	golang.org/x/time v0.14.0
 	gorm.io/driver/postgres v1.6.0
@@ -40,7 +41,7 @@ require (
 	github.com/go-openapi/swag v0.19.15 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.27.0 // indirect
+	github.com/go-playground/validator/v10 v10.27.0
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
