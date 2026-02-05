@@ -35,8 +35,9 @@ import (
 // @host localhost:8080
 // @BasePath /api/v1
 
-// ... keep your imports ...
-// add nothing else needed here (same import list)
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 
 func isTrueEnv(key string) bool {
 	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
@@ -101,6 +102,10 @@ func verifyDatabaseConnection(db *database.Database) error {
 	return sqlDB.PingContext(ctx)
 }
 
+// -----------------------------------------------------------------------------
+// Redis-based lock (for birthday scheduler)
+// -----------------------------------------------------------------------------
+
 type redisLock struct {
 	client *redis.Client
 }
@@ -123,7 +128,14 @@ func (l *redisLock) Acquire(ctx context.Context, key string, ttl time.Duration) 
 	return l.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
+// -----------------------------------------------------------------------------
+// Background jobs
+// -----------------------------------------------------------------------------
+
 func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+	if svc == nil {
+		return
+	}
 	if interval <= 0 {
 		interval = time.Hour
 	}
@@ -177,7 +189,15 @@ func nextRunAt(now time.Time, hour, minute int) time.Time {
 	return next
 }
 
-func startBirthdayScheduler(ctx context.Context, logger *log.Logger, lock *redisLock, workforceSvc service.WorkforceService, memberSvc service.MemberService, tz string, sendAt string) {
+func startBirthdayScheduler(
+	ctx context.Context,
+	logger *log.Logger,
+	lock *redisLock,
+	workforceSvc service.WorkforceService,
+	memberSvc service.MemberService,
+	tz string,
+	sendAt string,
+) {
 	if workforceSvc == nil && memberSvc == nil {
 		return
 	}
@@ -255,11 +275,19 @@ func startBirthdayScheduler(ctx context.Context, logger *log.Logger, lock *redis
 	}
 }
 
+// -----------------------------------------------------------------------------
+// No-op email sender (used when DISABLE_EMAIL / DISABLE_OTP)
+// -----------------------------------------------------------------------------
+
 type noopEmailSender struct{}
 
 func (noopEmailSender) SendHTML(string, string, string) error {
 	return nil
 }
+
+// -----------------------------------------------------------------------------
+// Router
+// -----------------------------------------------------------------------------
 
 func setupRouter(
 	cfg *config.Config,
@@ -288,6 +316,7 @@ func setupRouter(
 		Prefix:   "rl",
 	}))
 
+	// Swagger + basic health
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 
@@ -297,6 +326,7 @@ func setupRouter(
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
 	sessionGuard := middleware.SessionTimeout(30*time.Minute, secure)
 
+	// AUTH
 	auth := api.Group("/auth")
 	auth.Use(middleware.DeviceFingerprint(secure))
 	auth.POST("/login", authHandler.Login)
@@ -319,28 +349,34 @@ func setupRouter(
 	authProtected.POST("/refresh", authHandler.RefreshToken)
 	authProtected.POST("/logout", authHandler.Logout)
 
+	// OTP
 	api.POST("/otp/send", otpHandler.SendOTP)
 	api.POST("/otp/verify", otpHandler.VerifyOTP)
 
+	// Public testimonials
 	api.GET("/testimonials", testimonialHandler.GetPaginatedTestimonials)
 	api.GET("/testimonials/all", testimonialHandler.GetAllTestimonials)
 	api.GET("/testimonials/:id", testimonialHandler.GetTestimonialByID)
 	api.POST("/testimonials", testimonialHandler.CreateTestimonial)
 
+	// Public events/reels
 	api.GET("/events", eventHandler.List)
 	api.GET("/events/:id", eventHandler.Get)
-
 	api.GET("/reels", reelHandler.List)
 
+	// Notifications (newsletter-style)
 	api.POST("/notifications/subscribe", notificationHandler.Subscribe)
 	api.POST("/notifications/unsubscribe", notificationHandler.Unsubscribe)
 	api.GET("/notifications/unsubscribe", notificationHandler.UnsubscribeByLink)
 
+	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
 	api.POST("/forms/:slug/submissions", formHandler.SubmitPublicForm)
 
+	// Workforce public apply
 	api.POST("/workforce/apply", workforceHandler.Apply)
 
+	// ADMIN
 	admin := api.Group("/admin")
 	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"))
 
@@ -357,6 +393,7 @@ func setupRouter(
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 
+	// Forms
 	admin.GET("/forms", formHandler.ListAdminForms)
 	admin.GET("/forms/:id", formHandler.GetAdminForm)
 	admin.POST("/forms", formHandler.CreateAdminForm)
@@ -366,13 +403,17 @@ func setupRouter(
 	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
 	admin.GET("/forms/stats", formHandler.GetFormStats)
 
+	// Notifications (admin)
 	admin.GET("/notifications/subscribers", notificationHandler.ListSubscribers)
 	admin.POST("/notifications/send", notificationHandler.SendNotification)
 
+	// Email templates
 	admin.POST("/email/templates/send", emailTemplateHandler.SendTemplate)
 
+	// Uploads
 	admin.POST("/uploads/images", uploadHandler.UploadImage)
 
+	// Events
 	admin.GET("/events", eventHandler.List)
 	admin.POST("/events", eventHandler.Create)
 	admin.PUT("/events/:id", eventHandler.Update)
@@ -380,10 +421,12 @@ func setupRouter(
 	admin.POST("/events/:id/image", eventHandler.UploadImage)
 	admin.POST("/events/:id/banner", eventHandler.UploadBanner)
 
+	// Reels
 	admin.GET("/reels", reelHandler.List)
 	admin.POST("/reels", reelHandler.Create)
 	admin.DELETE("/reels/:id", reelHandler.Delete)
 
+	// Workforce admin
 	admin.GET("/workforce", workforceHandler.List)
 	admin.POST("/workforce", workforceHandler.Create)
 	admin.PUT("/workforce/:id", workforceHandler.Update)
@@ -393,6 +436,7 @@ func setupRouter(
 	admin.GET("/workforce/birthdays/today", workforceHandler.BirthdaysToday)
 	admin.POST("/workforce/birthdays/send-today", workforceHandler.SendBirthdaysToday)
 
+	// Members admin
 	admin.GET("/members", memberHandler.List)
 	admin.POST("/members", memberHandler.Create)
 	admin.PUT("/members/:id", memberHandler.Update)
@@ -402,12 +446,17 @@ func setupRouter(
 	admin.GET("/members/birthdays/today", memberHandler.BirthdaysToday)
 	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
 
+	// Super-admin
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
 
 	return router
 }
+
+// -----------------------------------------------------------------------------
+// main
+// -----------------------------------------------------------------------------
 
 func main() {
 	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
@@ -435,6 +484,7 @@ func main() {
 		logger.Println("⚠️ DISABLE_EMAIL=true: outbound email sending is disabled.")
 	}
 
+	// Gin mode
 	if cfg.App.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	} else if strings.TrimSpace(cfg.Server.GinMode) != "" {
@@ -445,6 +495,7 @@ func main() {
 
 	ensureCORSDefaults(cfg)
 
+	// Database
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
 	if err != nil {
 		logger.Fatalf("❌ Failed to connect to database: %v", err)
@@ -460,12 +511,15 @@ func main() {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
 
+	// Migration-only mode
 	if isTrueEnv("RUN_AUTOMIGRATE") {
 		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
 		return
 	}
 
-	// Repos
+	// -------------------------------------------------------------------------
+	// Repositories
+	// -------------------------------------------------------------------------
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
@@ -480,122 +534,66 @@ func main() {
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
-	// Email sender
-	var emailQueue service.EmailSender
+	// -------------------------------------------------------------------------
+	// Email sender (SMTP → Postfix → Brevo)
+	// -------------------------------------------------------------------------
+	var emailSender service.EmailSender
 	if disableEmail {
-		emailQueue = noopEmailSender{}
-		logger.Println("⚠️ Email queue disabled (DISABLE_EMAIL/DISABLE_OTP)")
+		emailSender = noopEmailSender{}
+		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
-		var emailSender email.ContextEmailSender
-		var err error
-
-		if cfg.Brevo.Enabled() {
-			fromName := strings.TrimSpace(cfg.Brevo.FromName)
-			if fromName == "" {
-				fromName = cfg.App.Name
-			}
-			emailSender, err = email.NewBrevoSender(
-				cfg.Redis.URL,
-				cfg.Brevo.APIKey,
-				cfg.Brevo.FromEmail,
-				fromName,
-				cfg.Brevo.BaseURL,
-			)
-			if err == nil {
-				logger.Println("✅ Email sender initialized (Brevo)")
-			}
-		} else {
-			// AWS SES setup is intentionally disabled while Brevo is in use.
-			// Uncomment when SES is ready in production.
-			// if cfg.SES.Enabled() {
-			// 	emailSender, err = email.NewSESSender(cfg.Redis.URL, cfg.AWS.Region, cfg.SES.FromEmail)
-			// 	if err == nil {
-			// 		logger.Println("✅ Email sender initialized (AWS SES)")
-			// 	}
-			// } else {
-			// 	emailSender, err = email.NewSender(
-			// 		cfg.Redis.URL,
-			// 		cfg.SMTP.Host,
-			// 		cfg.SMTP.Port,
-			// 		cfg.SMTP.User,
-			// 		cfg.SMTP.Password,
-			// 		cfg.SMTP.From,
-			// 		cfg.SMTP.TLS,
-			// 	)
-			// 	if err == nil {
-			// 		logger.Println("✅ Email sender initialized (SMTP)")
-			// 	}
-			// }
-			emailSender, err = email.NewSender(
-				cfg.Redis.URL,
-				cfg.SMTP.Host,
-				cfg.SMTP.Port,
-				cfg.SMTP.User,
-				cfg.SMTP.Password,
-				cfg.SMTP.From,
-				cfg.SMTP.TLS,
-			)
-			if err == nil {
-				logger.Println("✅ Email sender initialized (SMTP)")
-			}
-		}
+		s, err := email.NewSender(
+			cfg.Redis.URL,
+			cfg.SMTP.Host,
+			cfg.SMTP.Port,
+			cfg.SMTP.User,
+			cfg.SMTP.Password,
+			cfg.SMTP.From,
+			cfg.SMTP.TLS,
+		)
 		if err != nil {
 			if cfg.App.Environment == "production" {
 				logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
 			}
 			logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
-		}
-
-		if emailSender != nil {
-			q := email.NewQueue(emailSender, logger, 2000)
-			q.Start(3) // 3 workers is fine for small/medium traffic
-			emailQueue = q
-			logger.Println("✅ Email queue started")
+			emailSender = noopEmailSender{}
 		} else {
-			logger.Println("⚠️ Email queue not started (no sender)")
+			emailSender = s
+			logger.Println("✅ Email sender initialized (SMTP relay via Postfix)")
 		}
 	}
 
-	// DigitalOcean Spaces uploader
-	var spacesUploader *service.SpacesUploader
-	if cfg.Spaces.Enabled() {
-		spacesUploader, err = service.NewSpacesUploader(
-			cfg.Spaces.Bucket,
-			cfg.Spaces.Region,
-			cfg.Spaces.Endpoint,
-			cfg.Spaces.AccessKey,
-			cfg.Spaces.SecretKey,
-			cfg.Spaces.PublicBaseURL,
-			cfg.Spaces.BasePath,
-			cfg.Spaces.PublicRead,
+	// -------------------------------------------------------------------------
+	// Asset uploader (BunnyCDN-based, matches config.Bunny)
+	// -------------------------------------------------------------------------
+	var bunnyUploader *service.BunnyUploader
+	if cfg.Bunny.Enabled() {
+		bunnyUploader = service.NewBunnyUploader(
+			cfg.Bunny.StorageZone,
+			cfg.Bunny.StorageKey,
+			cfg.Bunny.StorageRegion,
+			cfg.Bunny.PullZone,
+			cfg.Bunny.BasePath,
 		)
-		if err != nil {
-			if cfg.App.Environment == "production" {
-				logger.Fatalf("❌ Failed to initialize Spaces uploader (required in production): %v", err)
-			}
-			logger.Printf("⚠️ Spaces uploader not initialized (uploads disabled): %v", err)
-		} else {
-			logger.Println("✅ Spaces uploader initialized")
-		}
+		logger.Println("✅ Bunny uploader initialized")
 	} else {
-		logger.Println("ℹ️ Spaces uploads disabled (not configured).")
+		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
+	}
+	var assetUploader service.AssetUploader
+	if bunnyUploader != nil {
+		assetUploader = bunnyUploader
 	}
 
-	// Branding
+	// -------------------------------------------------------------------------
+	// Branding / email template assets
+	// -------------------------------------------------------------------------
 	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
-	if templateAssetBaseURL == "" && cfg.Spaces.Enabled() {
-		spacesBase := strings.TrimRight(cfg.Spaces.PublicBaseURL, "/")
-		if spacesBase == "" && spacesUploader != nil {
-			spacesBase = strings.TrimRight(spacesUploader.PublicBaseURL, "/")
+	if templateAssetBaseURL == "" && cfg.Bunny.Enabled() {
+		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
+		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
+			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
 		}
-		base := spacesBase
-		if strings.TrimSpace(cfg.Spaces.BasePath) != "" {
-			base += "/" + strings.Trim(cfg.Spaces.BasePath, "/")
-		}
-		if strings.TrimSpace(cfg.Spaces.EmailTemplatePath) != "" {
-			base += "/" + strings.Trim(cfg.Spaces.EmailTemplatePath, "/")
-		}
-		templateAssetBaseURL = base
+		templateAssetBaseURL = base + "/email-templates"
 	}
 
 	branding := email.Branding{
@@ -609,15 +607,17 @@ func main() {
 		TemplateAssetBaseURL: templateAssetBaseURL,
 	}
 
-	// ✅ Services (changed: pass emailQueue instead of emailSender)
-	testimonialService := service.NewTestimonialService(testimonialRepo, spacesUploader)
+	// -------------------------------------------------------------------------
+	// Services
+	// -------------------------------------------------------------------------
+	testimonialService := service.NewTestimonialService(testimonialRepo, assetUploader)
 
-	otpService := service.NewOTPService(otpRepo, emailQueue, branding, userRepo)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
 
 	securityService := service.NewSecurityService(
 		securityEventRepo,
 		trustedDeviceRepo,
-		emailQueue,
+		emailSender,
 		branding,
 		cfg.App.FrontendURL,
 	)
@@ -627,7 +627,7 @@ func main() {
 		otpService,
 		cfg.JWT.Secret,
 		cfg.JWT.Expiration,
-		emailQueue,
+		emailSender,
 		branding,
 		securityService,
 		trustedDeviceRepo,
@@ -635,6 +635,7 @@ func main() {
 	)
 
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
+
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	if publicBaseURL == "" {
 		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
@@ -645,20 +646,22 @@ func main() {
 		subscriberRepo,
 		notificationRepo,
 		eventRepo,
-		emailQueue,
+		emailSender,
 		branding,
 	)
 
-	workforceService := service.NewWorkforceService(workforceRepo, emailQueue, branding)
-	memberService := service.NewMemberService(memberRepo, emailQueue, branding)
-	emailTemplateService := service.NewEmailTemplateService(emailQueue, branding)
+	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	memberService := service.NewMemberService(memberRepo, emailSender, branding)
+	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
-	// Handlers (unchanged)
+	// -------------------------------------------------------------------------
+	// Handlers
+	// -------------------------------------------------------------------------
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	uploadHandler := handlers.NewUploadHandler(spacesUploader)
-	eventHandler := handlers.NewEventHandler(eventRepo, spacesUploader)
+	uploadHandler := handlers.NewUploadHandler(assetUploader)
+	eventHandler := handlers.NewEventHandler(eventRepo, assetUploader)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 	formHandler := handlers.NewFormHandler(formService)
@@ -668,10 +671,14 @@ func main() {
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 
+	// -------------------------------------------------------------------------
 	// Background jobs
+	// -------------------------------------------------------------------------
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
+
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
+
 	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
 	if schedulerEnabled {
 		lock := newRedisLock(cfg.Redis.URL)
@@ -692,7 +699,9 @@ func main() {
 		return
 	}
 
-	// Router
+	// -------------------------------------------------------------------------
+	// HTTP server
+	// -------------------------------------------------------------------------
 	router := setupRouter(
 		cfg,
 		testimonialHandler,
@@ -710,7 +719,6 @@ func main() {
 		emailTemplateHandler,
 	)
 
-	// Server
 	server := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
 		Handler:           router,
@@ -721,7 +729,7 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	// Graceful shutdown (unchanged)
+	// Graceful shutdown
 	shutdownErr := make(chan error, 1)
 	go func() {
 		host := "localhost"
