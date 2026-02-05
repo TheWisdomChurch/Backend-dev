@@ -12,10 +12,10 @@ import (
 )
 
 type UploadHandler struct {
-	spaces *service.SpacesUploader
+	spaces service.AssetUploader
 }
 
-func NewUploadHandler(spaces *service.SpacesUploader) *UploadHandler {
+func NewUploadHandler(spaces service.AssetUploader) *UploadHandler {
 	return &UploadHandler{spaces: spaces}
 }
 

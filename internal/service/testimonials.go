@@ -25,10 +25,10 @@ type TestimonialService interface {
 
 type testimonialService struct {
 	repo     repository.TestimonialRepository
-	uploader *SpacesUploader
+	uploader AssetUploader
 }
 
-func NewTestimonialService(repo repository.TestimonialRepository, uploader *SpacesUploader) TestimonialService {
+func NewTestimonialService(repo repository.TestimonialRepository, uploader AssetUploader) TestimonialService {
 	return &testimonialService{repo: repo, uploader: uploader}
 }
 
