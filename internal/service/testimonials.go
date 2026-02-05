@@ -25,10 +25,10 @@ type TestimonialService interface {
 
 type testimonialService struct {
 	repo     repository.TestimonialRepository
-	uploader *BunnyUploader
+	uploader *SpacesUploader
 }
 
-func NewTestimonialService(repo repository.TestimonialRepository, uploader *BunnyUploader) TestimonialService {
+func NewTestimonialService(repo repository.TestimonialRepository, uploader *SpacesUploader) TestimonialService {
 	return &testimonialService{repo: repo, uploader: uploader}
 }
 
@@ -133,7 +133,7 @@ func (s *testimonialService) ApproveTestimonial(id uuid.UUID) (*models.Testimoni
 	return testimonial, nil
 }
 
-// maybeUploadImage uploads a base64/dataURL image to Bunny and returns the CDN URL pointer.
+// maybeUploadImage uploads a base64/dataURL image to Spaces and returns the public URL pointer.
 // If input is nil or already a URL (http/https), it is returned as-is.
 func (s *testimonialService) maybeUploadImage(image *string) (*string, error) {
 	if image == nil || s.uploader == nil {

@@ -45,6 +45,8 @@ type CreateWorkforceRequest struct {
 	// birthday in MM/DD (month/day) components
 	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int `json:"birthdayDay,omitempty"`
+	// birthday in DD/MM format (day/month)
+	Birthday *string `json:"birthday,omitempty"`
 }
 
 type UpdateWorkforceRequest struct {
@@ -56,8 +58,9 @@ type UpdateWorkforceRequest struct {
 	Status     *WorkforceStatus `json:"status,omitempty" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes      *string          `json:"notes,omitempty"`
 
-	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
-	BirthdayDay   *int `json:"birthdayDay,omitempty"`
+	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"`
 }
 
 type WorkforceStatsResponse struct {
@@ -71,4 +74,20 @@ type WorkforceBucket struct {
 	Department string `json:"department"`
 	Status     string `json:"status"`
 	Count      int64  `json:"count"`
+}
+
+type BirthdayMonthCount struct {
+	Month int   `json:"month"`
+	Count int64 `json:"count"`
+}
+
+type BirthdayStatsResponse struct {
+	Total   int64                `json:"total"`
+	ByMonth []BirthdayMonthCount `json:"byMonth"`
+}
+
+type BirthdaySendResult struct {
+	Targeted int `json:"targeted"`
+	Sent     int `json:"sent"`
+	Skipped  int `json:"skipped"`
 }

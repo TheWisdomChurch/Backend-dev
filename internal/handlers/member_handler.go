@@ -14,28 +14,35 @@ import (
 	"wisdomHouse-backend/pkg/utils"
 )
 
-type WorkforceHandler struct {
-	svc service.WorkforceService
+type MemberHandler struct {
+	svc service.MemberService
 }
 
-func NewWorkforceHandler(svc service.WorkforceService) *WorkforceHandler {
-	return &WorkforceHandler{svc: svc}
+func NewMemberHandler(svc service.MemberService) *MemberHandler {
+	return &MemberHandler{svc: svc}
 }
 
-func (h *WorkforceHandler) List(c *gin.Context) {
+func (h *MemberHandler) List(c *gin.Context) {
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 
-	department := c.Query("department")
-	status := c.Query("status")
+	var activePtr *bool
+	if v := strings.TrimSpace(c.Query("active")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "active must be true or false")
+			return
+		}
+		activePtr = &b
+	}
 
-	items, total, err := h.svc.List(page, limit, department, status)
+	items, total, err := h.svc.List(page, limit, activePtr)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load workforce")
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load members")
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Workforce loaded", gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Members loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,
@@ -44,8 +51,8 @@ func (h *WorkforceHandler) List(c *gin.Context) {
 	})
 }
 
-func (h *WorkforceHandler) Create(c *gin.Context) {
-	var req models.CreateWorkforceRequest
+func (h *MemberHandler) Create(c *gin.Context) {
+	var req models.CreateMemberRequest
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -59,25 +66,10 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Member created", member)
 }
 
-func (h *WorkforceHandler) Apply(c *gin.Context) {
-	var req models.CreateWorkforceRequest
-	if !validation.BindJSON(c, &req) {
-		return
-	}
-
-	member, err := h.svc.Create(&req)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusCreated, "Application submitted", member)
-}
-
-func (h *WorkforceHandler) Update(c *gin.Context) {
+func (h *MemberHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 
-	var req models.UpdateWorkforceRequest
+	var req models.UpdateMemberRequest
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -91,28 +83,16 @@ func (h *WorkforceHandler) Update(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Member updated", member)
 }
 
-func (h *WorkforceHandler) Approve(c *gin.Context) {
+func (h *MemberHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-
-	member, err := h.svc.Approve(id)
-	if err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Workforce request approved", member)
+	utils.SuccessResponse(c, http.StatusOK, "Member deleted", nil)
 }
 
-func (h *WorkforceHandler) Stats(c *gin.Context) {
-	stats, err := h.svc.Stats()
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load workforce stats")
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Workforce stats retrieved", stats)
-}
-
-func (h *WorkforceHandler) BirthdayStats(c *gin.Context) {
+func (h *MemberHandler) BirthdayStats(c *gin.Context) {
 	stats, err := h.svc.BirthdayStats()
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load birthday stats")
@@ -121,7 +101,7 @@ func (h *WorkforceHandler) BirthdayStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Birthday stats retrieved", stats)
 }
 
-func (h *WorkforceHandler) BirthdaysByMonth(c *gin.Context) {
+func (h *MemberHandler) BirthdaysByMonth(c *gin.Context) {
 	raw := strings.TrimSpace(c.Param("month"))
 	month, err := strconv.Atoi(raw)
 	if err != nil || month < 1 || month > 12 {
@@ -139,7 +119,7 @@ func (h *WorkforceHandler) BirthdaysByMonth(c *gin.Context) {
 	})
 }
 
-func (h *WorkforceHandler) BirthdaysToday(c *gin.Context) {
+func (h *MemberHandler) BirthdaysToday(c *gin.Context) {
 	items, err := h.svc.BirthdaysToday(time.Now())
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load today's birthdays")
@@ -150,7 +130,7 @@ func (h *WorkforceHandler) BirthdaysToday(c *gin.Context) {
 	})
 }
 
-func (h *WorkforceHandler) SendBirthdaysToday(c *gin.Context) {
+func (h *MemberHandler) SendBirthdaysToday(c *gin.Context) {
 	now := time.Now()
 	result, err := h.svc.SendBirthdayGreetings(int(now.Month()), now.Day())
 	if err != nil {
