@@ -1,9 +1,7 @@
-// internal/handlers/form_handler.go
 package handlers
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,26 +21,17 @@ func NewFormHandler(svc service.FormService) *FormHandler {
 	return &FormHandler{svc: svc}
 }
 
-/* =========================
-   ADMIN
-========================= */
-
 func (h *FormHandler) ListAdminForms(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+
 	items, total, err := h.svc.List(page, limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load forms")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Forms loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,
@@ -62,7 +51,7 @@ func (h *FormHandler) GetAdminForm(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": form})
+	utils.SuccessResponse(c, http.StatusOK, "Form loaded", form)
 }
 
 func (h *FormHandler) CreateAdminForm(c *gin.Context) {
@@ -75,7 +64,7 @@ func (h *FormHandler) CreateAdminForm(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": form})
+	utils.SuccessResponse(c, http.StatusCreated, "Form created", form)
 }
 
 func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
@@ -96,21 +85,25 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": form})
+	utils.SuccessResponse(c, http.StatusOK, "Form updated", form)
 }
 
 func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.svc.Delete(id); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete form")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Form deleted"})
+	utils.SuccessResponse(c, http.StatusOK, "Form deleted", nil)
 }
 
 func (h *FormHandler) PublishAdminForm(c *gin.Context) {
 	id := c.Param("id")
-	slug, err := h.svc.Publish(id)
+	slug, publicURL, err := h.svc.Publish(id)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
@@ -119,21 +112,17 @@ func (h *FormHandler) PublishAdminForm(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"slug": slug}})
+	resp := gin.H{"slug": slug}
+	if publicURL != nil {
+		resp["publicUrl"] = *publicURL
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Form published", resp)
 }
 
-// ListAdminSubmissions returns submissions for a specific form with pagination and optional date range.
 func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 	formID := c.Param("id")
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 {
-		limit = 10
-	}
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 
 	start, end, err := parseTimeRange(c)
 	if err != nil {
@@ -147,7 +136,7 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Submissions loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,
@@ -156,7 +145,6 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 	})
 }
 
-// GetFormStats returns total counts, per-form counts, and recent submissions for analytics.
 func (h *FormHandler) GetFormStats(c *gin.Context) {
 	start, end, err := parseTimeRange(c)
 	if err != nil {
@@ -173,10 +161,6 @@ func (h *FormHandler) GetFormStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Form stats retrieved", stats)
 }
 
-/* =========================
-   PUBLIC
-========================= */
-
 func (h *FormHandler) GetPublicForm(c *gin.Context) {
 	slug := c.Param("slug")
 
@@ -189,8 +173,7 @@ func (h *FormHandler) GetPublicForm(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form")
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"data": payload})
+	utils.SuccessResponse(c, http.StatusOK, "Form loaded", payload)
 }
 
 func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
@@ -200,7 +183,6 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
-
 	if req.Values == nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Values are required")
 		return
@@ -208,7 +190,6 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 
 	err := h.svc.Submit(slug, &req)
 	if err != nil {
-		// Service returns readable error strings; map to 400 except not found
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
 			return
@@ -217,10 +198,9 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Registration submitted"})
+	utils.SuccessResponse(c, http.StatusOK, "Registration submitted", nil)
 }
 
-// parseTimeRange parses optional start/end query params as RFC3339 timestamps.
 func parseTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
 	startStr := c.Query("start")
 	endStr := c.Query("end")
@@ -242,6 +222,5 @@ func parseTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
 		}
 		end = &t
 	}
-
 	return start, end, nil
 }
