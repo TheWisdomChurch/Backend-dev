@@ -18,10 +18,10 @@ import (
 
 type EventHandler struct {
 	repo   *repository.EventRepository
-	spaces *service.SpacesUploader
+	spaces service.AssetUploader
 }
 
-func NewEventHandler(repo *repository.EventRepository, spaces *service.SpacesUploader) *EventHandler {
+func NewEventHandler(repo *repository.EventRepository, spaces service.AssetUploader) *EventHandler {
 	return &EventHandler{repo: repo, spaces: spaces}
 }
 

@@ -579,6 +579,10 @@ func main() {
 	} else {
 		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
 	}
+	var assetUploader service.AssetUploader
+	if bunnyUploader != nil {
+		assetUploader = bunnyUploader
+	}
 
 	// -------------------------------------------------------------------------
 	// Branding / email template assets
@@ -606,7 +610,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	// Services
 	// -------------------------------------------------------------------------
-	testimonialService := service.NewTestimonialService(testimonialRepo, bunnyUploader)
+	testimonialService := service.NewTestimonialService(testimonialRepo, assetUploader)
 
 	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
 
@@ -656,8 +660,8 @@ func main() {
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
-	uploadHandler := handlers.NewUploadHandler(bunnyUploader)
-	eventHandler := handlers.NewEventHandler(eventRepo, bunnyUploader)
+	uploadHandler := handlers.NewUploadHandler(assetUploader)
+	eventHandler := handlers.NewEventHandler(eventRepo, assetUploader)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 	formHandler := handlers.NewFormHandler(formService)
