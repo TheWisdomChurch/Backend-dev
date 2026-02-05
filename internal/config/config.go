@@ -20,8 +20,14 @@ type Config struct {
 	CORS     CORSConfig     `json:"cors"`
 	JWT      JWTConfig      `json:"jwt"`
 	App      AppConfig      `json:"app"`
-	Bunny    BunnyConfig    `json:"bunny"`
+
+	// BunnyCDN / Bunny Storage config (OPTIONAL)
+	Bunny BunnyConfig `json:"bunny"`
 }
+
+/* ========================================================================== */
+/*  BunnyCDN                                                                 */
+/* ========================================================================== */
 
 type BunnyConfig struct {
 	StorageZone   string `json:"storage_zone" env:"BUNNYCDN_STORAGE_ZONE"`
@@ -52,9 +58,15 @@ func (b BunnyConfig) Validate() error {
 	return nil
 }
 
+/* ========================================================================== */
+/*  Database                                                                  */
+/* ========================================================================== */
+
 type DatabaseConfig struct {
+	// Prefer DATABASE_URL (Supabase / managed Postgres)
 	URL string `json:"url" env:"DATABASE_URL"`
 
+	// Fallback: parts-based (local/docker Postgres)
 	Host     string `json:"host" env:"DATABASE_HOST"`
 	Port     string `json:"port" env:"DATABASE_PORT"`
 	User     string `json:"user" env:"DATABASE_USERNAME"`
@@ -88,6 +100,10 @@ type RedisConfig struct {
 	IdleTimeout  time.Duration `json:"idle_timeout" env:"REDIS_IDLE_TIMEOUT"`
 }
 
+/* ========================================================================== */
+/*  SMTP                                                                      */
+/* ========================================================================== */
+
 type SMTPConfig struct {
 	Host     string `json:"host" env:"SMTP_HOST"`
 	Port     string `json:"port" env:"SMTP_PORT"`
@@ -96,6 +112,10 @@ type SMTPConfig struct {
 	From     string `json:"from" env:"SMTP_FROM"`
 	TLS      bool   `json:"tls" env:"SMTP_TLS"`
 }
+
+/* ========================================================================== */
+/*  CORS / JWT / App                                                          */
+/* ========================================================================== */
 
 type CORSConfig struct {
 	AllowedOrigins   []string `json:"allowed_origins" env:"CORS_ALLOW_ORIGIN"`
@@ -112,7 +132,7 @@ type JWTConfig struct {
 }
 
 type AppConfig struct {
-	Environment               string        `json:"environment" env:"ENVIRONMENT"`
+	Environment               string        `json:"environment" env:"ENVIRONMENT"` // "development" | "production"
 	LogLevel                  string        `json:"log_level" env:"LOG_LEVEL"`
 	Name                      string        `json:"name" env:"APP_NAME"`
 	Version                   string        `json:"version" env:"APP_VERSION"`
@@ -126,6 +146,10 @@ type AppConfig struct {
 	FormCleanupInterval       time.Duration `json:"form_cleanup_interval" env:"APP_FORM_CLEANUP_INTERVAL"`
 	EmailTemplateAssetBaseURL string        `json:"email_template_asset_base_url" env:"APP_EMAIL_TEMPLATE_ASSET_BASE_URL"`
 }
+
+/* ========================================================================== */
+/*  Load()                                                                    */
+/* ========================================================================== */
 
 func Load() (*Config, error) {
 	_ = godotenv.Load()
@@ -259,6 +283,10 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+/* ========================================================================== */
+/*  DB helpers                                                                */
+/* ========================================================================== */
+
 // ConnectionString prefers DATABASE_URL when provided; otherwise uses parts-based DSN.
 func (c *DatabaseConfig) ConnectionString() string {
 	if strings.TrimSpace(c.URL) != "" {
@@ -278,18 +306,24 @@ func (c *DatabaseConfig) ConnectionString() string {
 func (c *DatabaseConfig) DSN() string {
 	raw := strings.TrimSpace(c.URL)
 	if raw == "" {
+		// parts-based: never print password
 		return fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
 			c.Host, c.Port, c.User, c.DBName, c.SSLMode)
 	}
 	return redactPostgresURL(raw)
 }
 
+/* ========================================================================== */
+/*  Validation                                                                */
+/* ========================================================================== */
+
 func validateConfig(cfg *Config) error {
 	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
 
-	// Require DB config in production
+	// In production, require DATABASE_URL (recommended),
+	// but still allow parts-based config if fully provided.
 	if cfg.App.Environment == "production" {
 		if strings.TrimSpace(cfg.Database.URL) == "" {
 			if strings.TrimSpace(cfg.Database.Host) == "" {
@@ -327,6 +361,10 @@ func validateConfig(cfg *Config) error {
 	}
 	return nil
 }
+
+/* ========================================================================== */
+/*  Env helpers                                                               */
+/* ========================================================================== */
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
@@ -379,6 +417,7 @@ func splitEnv(key string, defaultValue []string) []string {
 func redactPostgresURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
+		// fallback best-effort
 		return raw
 	}
 	if u.User != nil {
