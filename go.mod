@@ -16,6 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
+	github.com/wneessen/go-mail v0.7.2
 	golang.org/x/crypto v0.47.0
 	golang.org/x/time v0.14.0
 	gorm.io/driver/postgres v1.6.0
