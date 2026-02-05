@@ -49,6 +49,15 @@ func isTrueEnv(key string) bool {
 	}
 }
 
+func hasAnyEnv(keys ...string) bool {
+	for _, key := range keys {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureCORSDefaults(cfg *config.Config) {
 	if cfg == nil {
 		return
@@ -86,6 +95,115 @@ func ensureCORSDefaults(cfg *config.Config) {
 
 	if len(cfg.CORS.AllowedOrigins) == 0 {
 		cfg.CORS.AllowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
+	}
+}
+
+type chainedEmailSender struct {
+	primary      service.EmailSender
+	fallback     service.EmailSender
+	primaryName  string
+	fallbackName string
+	logger       *log.Logger
+}
+
+func (s chainedEmailSender) SendHTML(to, subject, body string) error {
+	if s.primary == nil {
+		if s.fallback != nil {
+			return s.fallback.SendHTML(to, subject, body)
+		}
+		return nil
+	}
+	if err := s.primary.SendHTML(to, subject, body); err != nil {
+		if s.fallback != nil {
+			if s.logger != nil {
+				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
+			}
+			if err2 := s.fallback.SendHTML(to, subject, body); err2 == nil {
+				return nil
+			} else {
+				return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, err2)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender {
+	if cfg == nil {
+		return noopEmailSender{}
+	}
+
+	var primary service.EmailSender
+	var fallback service.EmailSender
+	var primaryName string
+	var fallbackName string
+
+	// Prefer SMTP (Postfix/local relay) if configured.
+	if strings.TrimSpace(cfg.SMTP.Host) != "" {
+		s, err := email.NewSender(
+			cfg.Redis.URL,
+			cfg.SMTP.Host,
+			cfg.SMTP.Port,
+			cfg.SMTP.User,
+			cfg.SMTP.Password,
+			cfg.SMTP.From,
+			cfg.SMTP.TLS,
+		)
+		if err != nil {
+			logger.Printf("⚠️ SMTP sender not initialized: %v", err)
+		} else {
+			primary = s
+			primaryName = "SMTP"
+			logger.Println("✅ Email sender initialized (SMTP relay)")
+		}
+	}
+
+	// Next: Brevo
+	if hasAnyEnv("BREVO_API_KEY", "BREVO_FROM_EMAIL", "BREVO_FROM_NAME", "BREVO_BASE_URL") {
+		s, err := email.NewBrevoSender(cfg.Redis.URL, "", "", "", "")
+		if err != nil {
+			logger.Printf("⚠️ Brevo email sender not initialized: %v", err)
+		} else if primary == nil {
+			primary = s
+			primaryName = "Brevo"
+			logger.Println("✅ Email sender initialized (Brevo API)")
+		} else if fallback == nil {
+			fallback = s
+			fallbackName = "Brevo"
+			logger.Println("✅ Email fallback configured (Brevo API)")
+		}
+	}
+
+	// Next: AWS SES
+	if hasAnyEnv("AWS_REGION", "SES_FROM_EMAIL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY") {
+		s, err := email.NewSESSender(cfg.Redis.URL, "", "")
+		if err != nil {
+			logger.Printf("⚠️ SES email sender not initialized: %v", err)
+		} else if primary == nil {
+			primary = s
+			primaryName = "SES"
+			logger.Println("✅ Email sender initialized (AWS SES)")
+		} else if fallback == nil {
+			fallback = s
+			fallbackName = "SES"
+			logger.Println("✅ Email fallback configured (AWS SES)")
+		}
+	}
+
+	if primary == nil {
+		logger.Println("⚠️ Email sender not configured (no SMTP/Brevo/SES). Outbound email disabled.")
+		return noopEmailSender{}
+	}
+	if fallback == nil {
+		return primary
+	}
+	return chainedEmailSender{
+		primary:      primary,
+		fallback:     fallback,
+		primaryName:  primaryName,
+		fallbackName: fallbackName,
+		logger:       logger,
 	}
 }
 
@@ -535,32 +653,14 @@ func main() {
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
 	// -------------------------------------------------------------------------
-	// Email sender (SMTP → Postfix → Brevo)
+	// Email sender (Brevo / SES)
 	// -------------------------------------------------------------------------
 	var emailSender service.EmailSender
 	if disableEmail {
 		emailSender = noopEmailSender{}
 		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
-		s, err := email.NewSender(
-			cfg.Redis.URL,
-			cfg.SMTP.Host,
-			cfg.SMTP.Port,
-			cfg.SMTP.User,
-			cfg.SMTP.Password,
-			cfg.SMTP.From,
-			cfg.SMTP.TLS,
-		)
-		if err != nil {
-			if cfg.App.Environment == "production" {
-				logger.Fatalf("❌ Failed to initialize email sender (required in production): %v", err)
-			}
-			logger.Printf("⚠️ Email sender not initialized (emails will not send): %v", err)
-			emailSender = noopEmailSender{}
-		} else {
-			emailSender = s
-			logger.Println("✅ Email sender initialized (SMTP relay via Postfix)")
-		}
+		emailSender = initEmailSender(cfg, logger)
 	}
 
 	// -------------------------------------------------------------------------
