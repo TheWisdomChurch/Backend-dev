@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/datatypes"
 
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -43,6 +44,7 @@ type FormService interface {
 	// Admin submissions
 	ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
 	Stats(start, end *time.Time) (*models.FormStatsResponse, error)
+	StatsByForm(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
 	CleanupExpiredForms(now time.Time) (int64, error)
 }
 
@@ -54,13 +56,27 @@ type formService struct {
 	// So keep it as a pointer and nil-check works.
 	eventRepo *repository.EventRepository
 
+	sequenceRepo *repository.RegistrationSequenceRepository
+	sender       EmailSender
+	branding     email.Branding
+
 	publicBaseURL string
 }
 
-func NewFormService(repo repository.FormRepository, eventRepo *repository.EventRepository, publicBaseURL string) FormService {
+func NewFormService(
+	repo repository.FormRepository,
+	eventRepo *repository.EventRepository,
+	sequenceRepo *repository.RegistrationSequenceRepository,
+	sender EmailSender,
+	branding email.Branding,
+	publicBaseURL string,
+) FormService {
 	return &formService{
 		repo:          repo,
 		eventRepo:     eventRepo,
+		sequenceRepo: sequenceRepo,
+		sender:       sender,
+		branding:     branding,
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
 	}
 }
@@ -376,16 +392,32 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	// Extract common fields into columns for analytics
 	name, email, phone, addr := extractCommonFields(cleanValues)
 
+	var regCode *string
+	if s.sequenceRepo != nil {
+		if code, err := s.buildRegistrationCode(form); err == nil && code != "" {
+			regCode = &code
+		}
+	}
+
 	sub := &models.FormSubmission{
 		FormID:         form.ID,
 		Name:           name,
 		Email:          email,
 		ContactNumber:  phone,
 		ContactAddress: addr,
+		RegistrationCode: regCode,
 		Values:         datatypes.JSON(valuesJSON),
 	}
 
-	return s.repo.CreateSubmission(sub)
+	if err := s.repo.CreateSubmission(sub); err != nil {
+		return err
+	}
+
+	if regCode != nil && email != nil && s.sender != nil {
+		s.sendRegistrationCodeEmail(form, *email, name, *regCode)
+	}
+
+	return nil
 }
 
 func (s *formService) ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error) {
@@ -420,6 +452,10 @@ func (s *formService) Stats(start, end *time.Time) (*models.FormStatsResponse, e
 		PerForm:          perForm,
 		Recent:           recent,
 	}, nil
+}
+
+func (s *formService) StatsByForm(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error) {
+	return s.repo.CountSubmissionsByDay(formID, start, end)
 }
 
 func (s *formService) CleanupExpiredForms(now time.Time) (int64, error) {
@@ -1401,4 +1437,74 @@ func extractCommonFields(values map[string]any) (*string, *string, *string, *str
 	addr := lookup("address", "contactAddress")
 
 	return name, email, phone, addr
+}
+
+func (s *formService) buildRegistrationCode(form *models.Form) (string, error) {
+	if form == nil || s.sequenceRepo == nil {
+		return "", nil
+	}
+	title := strings.TrimSpace(form.Title)
+	if form.EventID != nil && s.eventRepo != nil {
+		if ev, err := s.eventRepo.GetByID(*form.EventID); err == nil && ev != nil {
+			if strings.TrimSpace(ev.Title) != "" {
+				title = strings.TrimSpace(ev.Title)
+			}
+		}
+	}
+	initials := buildInitials(title)
+	if initials == "" {
+		initials = "GEN"
+	}
+	prefix := fmt.Sprintf("REG-%s", initials)
+	seq, err := s.sequenceRepo.Next(prefix)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s-%04d", prefix, seq), nil
+}
+
+func buildInitials(value string) string {
+	parts := regexp.MustCompile(`[A-Za-z0-9]+`).FindAllString(value, -1)
+	if len(parts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		r := []rune(part)
+		if len(r) == 0 {
+			continue
+		}
+		b.WriteString(strings.ToUpper(string(r[0])))
+		if b.Len() >= 6 {
+			break
+		}
+	}
+	return b.String()
+}
+
+func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr string, name *string, code string) {
+	if strings.TrimSpace(emailAddr) == "" || s.sender == nil {
+		return
+	}
+	recipient := "there"
+	if name != nil && strings.TrimSpace(*name) != "" {
+		recipient = strings.TrimSpace(*name)
+	}
+	eventName := ""
+	if form != nil {
+		eventName = strings.TrimSpace(form.Title)
+	}
+	subject := "Your registration code"
+	message := fmt.Sprintf("Your registration code for %s is %s.", eventName, code)
+	body := email.RenderRegistrationCodeEmail(email.RegistrationCodeTemplateData{
+		Branding:      s.branding,
+		RecipientName: recipient,
+		EventName:     eventName,
+		Code:          code,
+		Message:       message,
+	})
+	_ = s.sender.SendHTML(emailAddr, subject, body)
 }

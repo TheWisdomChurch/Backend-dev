@@ -91,3 +91,47 @@ func RenderBirthdayEmail(data BirthdayTemplateData) string {
 		footerBlock(b) +
 		"</div></body></html>"
 }
+
+type RegistrationCodeTemplateData struct {
+	Branding      Branding
+	RecipientName string
+	EventName     string
+	Code          string
+	Message       string
+}
+
+func RenderRegistrationCodeEmail(data RegistrationCodeTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	name := strings.TrimSpace(data.RecipientName)
+	if name == "" {
+		name = "there"
+	} else {
+		name = html.EscapeString(name)
+	}
+	eventName := strings.TrimSpace(data.EventName)
+	if eventName == "" {
+		eventName = "your registration"
+	} else {
+		eventName = html.EscapeString(eventName)
+	}
+	code := html.EscapeString(strings.TrimSpace(data.Code))
+	message := strings.TrimSpace(data.Message)
+	if message == "" {
+		message = "Your registration code is ready."
+	}
+
+	logoBlock := renderLogoBlock(b)
+
+	return "<!DOCTYPE html>" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f8fafc;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		logoBlock +
+		"<h2 style=\"margin:0 0 12px;font-size:22px;color:#0b2447;\">Hello " + name + ",</h2>" +
+		"<p style=\"margin:0 0 12px;font-size:15px;color:#334155;\">" + html.EscapeString(message) + "</p>" +
+		"<p style=\"margin:0 0 8px;font-size:15px;color:#334155;\">Event: <strong>" + eventName + "</strong></p>" +
+		"<div style=\"margin:16px 0;padding:14px 18px;background:#f1f5f9;border-radius:12px;display:inline-block;\">" +
+		"<span style=\"font-size:20px;letter-spacing:2px;font-weight:700;\">" + code + "</span>" +
+		"</div>" +
+		footerBlock(b) +
+		"</div></body></html>"
+}

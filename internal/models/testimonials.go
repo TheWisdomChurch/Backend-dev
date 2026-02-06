@@ -16,6 +16,10 @@ type Testimonial struct {
 	Testimony   string         `json:"testimony" gorm:"column:testimony;type:text;not null" binding:"required"`
 	IsAnonymous bool           `json:"isAnonymous" gorm:"column:is_anonymous;default:false"`
 	IsApproved  bool           `json:"isApproved" gorm:"column:is_approved;default:false"`
+	ApprovedByID    *string    `json:"approvedById,omitempty" gorm:"column:approved_by_id;type:uuid"`
+	ApprovedByName  *string    `json:"approvedByName,omitempty" gorm:"column:approved_by_name;type:varchar(120)"`
+	ApprovedByEmail *string    `json:"approvedByEmail,omitempty" gorm:"column:approved_by_email;type:varchar(255)"`
+	ApprovedAt      *time.Time `json:"approvedAt,omitempty" gorm:"column:approved_at"`
 	CreatedAt   time.Time      `json:"createdAt" gorm:"column:created_at;autoCreateTime"` // Changed from "date" to "createdAt"
 	UpdatedAt   time.Time      `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`

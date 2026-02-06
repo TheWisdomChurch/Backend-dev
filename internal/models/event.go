@@ -33,6 +33,12 @@ type Event struct {
 	Category   EventCategory `gorm:"type:varchar(30);not null" json:"category" binding:"required,oneof=Outreach Conference Workshop Prayer Revival Summit"`
 	Status     EventStatus   `gorm:"type:varchar(20);not null" json:"status" binding:"omitempty,oneof=upcoming happening past"`
 	IsFeatured bool          `gorm:"not null;default:false" json:"isFeatured"`
+	IsApproved bool          `gorm:"not null;default:false" json:"isApproved"`
+
+	ApprovedByID    *string    `gorm:"type:uuid" json:"approvedById,omitempty"`
+	ApprovedByName  *string    `gorm:"type:varchar(120)" json:"approvedByName,omitempty"`
+	ApprovedByEmail *string    `gorm:"type:varchar(255)" json:"approvedByEmail,omitempty"`
+	ApprovedAt      *time.Time `json:"approvedAt,omitempty"`
 
 	Tags         []string `gorm:"type:text[];default:'{}'" json:"tags"`
 	RegisterLink *string  `gorm:"type:text" json:"registerLink,omitempty"`
