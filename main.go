@@ -500,7 +500,6 @@ func setupRouter(
 
 	admin.GET("/dashboard", adminHandler.GetDashboardStats)
 	admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
-	admin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
 
 	admin.GET("/users", adminHandler.ListUsers)
 	admin.GET("/users/:id", adminHandler.GetUserByID)
@@ -519,11 +518,19 @@ func setupRouter(
 	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
 	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
 	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
+	admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
 	admin.GET("/forms/stats", formHandler.GetFormStats)
 
 	// Notifications (admin)
 	admin.GET("/notifications/subscribers", notificationHandler.ListSubscribers)
 	admin.POST("/notifications/send", notificationHandler.SendNotification)
+	admin.GET("/notifications/inbox", adminNotificationHandler.List)
+	admin.PATCH("/notifications/:id/read", adminNotificationHandler.MarkRead)
+	admin.POST("/notifications/read-all", adminNotificationHandler.MarkAllRead)
+
+	// Approval requests
+	admin.GET("/requests", approvalRequestHandler.List)
+	admin.GET("/requests/timeline", approvalRequestHandler.Timeline)
 
 	// Email templates
 	admin.POST("/email/templates/send", emailTemplateHandler.SendTemplate)
@@ -568,6 +575,9 @@ func setupRouter(
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
+	superAdmin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
+	superAdmin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
+	superAdmin.PATCH("/events/:id/approve", eventHandler.Approve)
 
 	return router
 }
@@ -594,9 +604,13 @@ func main() {
 	cfg.App.Environment = env
 
 	disableOTP := isTrueEnv("DISABLE_OTP")
+	disableLoginOTP := isTrueEnv("DISABLE_LOGIN_OTP")
 	disableEmail := isTrueEnv("DISABLE_EMAIL") || disableOTP
 	if disableOTP {
 		logger.Println("⚠️ DISABLE_OTP=true: OTP verification is disabled for login/password reset.")
+	}
+	if disableLoginOTP {
+		logger.Println("⚠️ DISABLE_LOGIN_OTP=true: OTP challenges are disabled for login.")
 	}
 	if disableEmail {
 		logger.Println("⚠️ DISABLE_EMAIL=true: outbound email sending is disabled.")
@@ -646,6 +660,10 @@ func main() {
 	formRepo := repository.NewFormRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
+	approvalRequestRepo := repository.NewApprovalRequestRepository(db)
+	adminNotificationRepo := repository.NewAdminNotificationRepository(db)
+	ticketSequenceRepo := repository.NewTicketSequenceRepository(db)
+	registrationSequenceRepo := repository.NewRegistrationSequenceRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
 	memberRepo := repository.NewMemberRepository(db)
@@ -710,7 +728,24 @@ func main() {
 	// -------------------------------------------------------------------------
 	// Services
 	// -------------------------------------------------------------------------
-	testimonialService := service.NewTestimonialService(testimonialRepo, assetUploader)
+	adminNotificationService := service.NewAdminNotificationService(
+		adminNotificationRepo,
+		userRepo,
+		emailSender,
+		branding,
+	)
+
+	approvalService := service.NewApprovalService(
+		approvalRequestRepo,
+		ticketSequenceRepo,
+	)
+
+	testimonialService := service.NewTestimonialService(
+		testimonialRepo,
+		assetUploader,
+		approvalService,
+		adminNotificationService,
+	)
 
 	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
 
@@ -732,6 +767,7 @@ func main() {
 		securityService,
 		trustedDeviceRepo,
 		disableOTP,
+		disableLoginOTP,
 	)
 
 	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
@@ -740,7 +776,14 @@ func main() {
 	if publicBaseURL == "" {
 		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
 	}
-	formService := service.NewFormService(formRepo, eventRepo, publicBaseURL)
+	formService := service.NewFormService(
+		formRepo,
+		eventRepo,
+		registrationSequenceRepo,
+		emailSender,
+		branding,
+		publicBaseURL,
+	)
 
 	notificationService := service.NewNotificationService(
 		subscriberRepo,
@@ -757,11 +800,19 @@ func main() {
 	// -------------------------------------------------------------------------
 	// Handlers
 	// -------------------------------------------------------------------------
-	testimonialHandler := handlers.NewTestimonialHandler(testimonialService)
+	testimonialHandler := handlers.NewTestimonialHandler(testimonialService, userRepo)
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader)
-	eventHandler := handlers.NewEventHandler(eventRepo, assetUploader)
+	eventHandler := handlers.NewEventHandler(
+		eventRepo,
+		assetUploader,
+		userRepo,
+		approvalService,
+		adminNotificationService,
+	)
+	approvalRequestHandler := handlers.NewApprovalRequestHandler(approvalService, approvalRequestRepo)
+	adminNotificationHandler := handlers.NewAdminNotificationHandler(adminNotificationService)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db)
 	formHandler := handlers.NewFormHandler(formService)
