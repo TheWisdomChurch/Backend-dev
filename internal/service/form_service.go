@@ -23,6 +23,8 @@ var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
+var ErrFormExpired = errors.New("form expired")
+var ErrFormClosed = errors.New("registration closed")
 var flexibleTimeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",
@@ -74,9 +76,9 @@ func NewFormService(
 	return &formService{
 		repo:          repo,
 		eventRepo:     eventRepo,
-		sequenceRepo: sequenceRepo,
-		sender:       sender,
-		branding:     branding,
+		sequenceRepo:  sequenceRepo,
+		sender:        sender,
+		branding:      branding,
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
 	}
 }
@@ -144,6 +146,21 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	}
 	title := strings.TrimSpace(req.Title)
 
+	var normalizedSlug *string
+	if req.Slug != nil {
+		slug := slugify(*req.Slug)
+		if slug != "" {
+			exists, err := s.repo.SlugExists(slug)
+			if err != nil {
+				return nil, err
+			}
+			if exists {
+				return nil, errors.New("slug already in use")
+			}
+			normalizedSlug = &slug
+		}
+	}
+
 	settingsJSON, err := encodeSettings(req.Settings)
 	if err != nil {
 		return nil, err
@@ -153,6 +170,7 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 		Title:       title,
 		Description: req.Description,
 		EventID:     req.EventID,
+		Slug:        normalizedSlug,
 		IsPublished: false,
 		Status:      models.FormStatusDraft,
 		Settings:    settingsJSON,
@@ -195,6 +213,29 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 	}
 	if req.EventID != nil {
 		existing.EventID = req.EventID
+	}
+	if req.Slug != nil {
+		slug := slugify(*req.Slug)
+		if slug == "" {
+			if existing.Status == models.FormStatusPublished {
+				return nil, errors.New("cannot clear slug for a published form")
+			}
+			existing.Slug = nil
+		} else {
+			if existing.Status == models.FormStatusPublished && (existing.Slug == nil || *existing.Slug != slug) {
+				return nil, errors.New("cannot change slug for a published form")
+			}
+			if existing.Slug == nil || *existing.Slug != slug {
+				exists, err := s.repo.SlugExists(slug)
+				if err != nil {
+					return nil, err
+				}
+				if exists {
+					return nil, errors.New("slug already in use")
+				}
+			}
+			existing.Slug = &slug
+		}
 	}
 	if req.Settings != nil {
 		settingsJSON, err := encodeSettings(req.Settings)
@@ -328,6 +369,26 @@ func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) 
 		return nil, err
 	}
 
+	settings, _ := decodeSettings(form.Settings)
+	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
+		t, parseErr := parseFlexibleTime(*settings.ExpiresAt)
+		if parseErr != nil {
+			return nil, errors.New("form expiresAt is invalid on server")
+		}
+		if time.Now().After(t) {
+			return nil, ErrFormExpired
+		}
+	}
+	if settings.ClosesAt != nil && strings.TrimSpace(*settings.ClosesAt) != "" {
+		t, parseErr := parseFlexibleTime(*settings.ClosesAt)
+		if parseErr != nil {
+			return nil, errors.New("form closesAt is invalid on server")
+		}
+		if time.Now().After(t) {
+			return nil, ErrFormClosed
+		}
+	}
+
 	payload := &models.PublicFormPayload{Form: form}
 
 	// Optional embed event
@@ -355,7 +416,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 			return errors.New("form expiresAt is invalid on server")
 		}
 		if time.Now().After(t) {
-			return errors.New("form expired")
+			return ErrFormExpired
 		}
 	}
 
@@ -365,7 +426,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 			return errors.New("form closesAt is invalid on server")
 		}
 		if time.Now().After(t) {
-			return errors.New("registration closed")
+			return ErrFormClosed
 		}
 	}
 
@@ -383,6 +444,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	if err != nil {
 		return err
 	}
+	if len(cleanValues) == 0 {
+		return errors.New("at least one field is required")
+	}
 
 	valuesJSON, err := json.Marshal(cleanValues)
 	if err != nil {
@@ -390,7 +454,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	// Extract common fields into columns for analytics
-	name, email, phone, addr := extractCommonFields(cleanValues)
+	name, email, phone, addr := extractCommonFields(form.Fields, cleanValues)
 
 	var regCode *string
 	if s.sequenceRepo != nil {
@@ -400,13 +464,13 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	sub := &models.FormSubmission{
-		FormID:         form.ID,
-		Name:           name,
-		Email:          email,
-		ContactNumber:  phone,
-		ContactAddress: addr,
+		FormID:           form.ID,
+		Name:             name,
+		Email:            email,
+		ContactNumber:    phone,
+		ContactAddress:   addr,
 		RegistrationCode: regCode,
-		Values:         datatypes.JSON(valuesJSON),
+		Values:           datatypes.JSON(valuesJSON),
 	}
 
 	if err := s.repo.CreateSubmission(sub); err != nil {
@@ -897,6 +961,19 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 			}
 			b, _ := json.Marshal(f.Options)
 			optionsJSON = datatypes.JSON(b)
+		} else if nf.typ == string(models.FieldCheckbox) && len(f.Options) > 0 {
+			seenVal := map[string]bool{}
+			for oi, opt := range f.Options {
+				if strings.TrimSpace(opt.Label) == "" || strings.TrimSpace(opt.Value) == "" {
+					return nil, fmt.Errorf("field[%d].options[%d]: label and value required", i, oi)
+				}
+				if seenVal[opt.Value] {
+					return nil, fmt.Errorf("field[%d].options[%d]: duplicate value '%s'", i, oi, opt.Value)
+				}
+				seenVal[opt.Value] = true
+			}
+			b, _ := json.Marshal(f.Options)
+			optionsJSON = datatypes.JSON(b)
 		} else {
 			optionsJSON = datatypes.JSON([]byte("null"))
 		}
@@ -1249,10 +1326,44 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			continue
 		}
 
-		clean[f.Key] = v
-
 		switch f.Type {
 		case models.FieldCheckbox:
+			opts := decodeOptionsToDTO(f.Options)
+			if len(opts) > 0 {
+				list, ok := toStringSlice(v)
+				if !ok {
+					return nil, fmt.Errorf("field '%s' must be a list of strings", f.Key)
+				}
+
+				allowed := map[string]bool{}
+				for _, o := range opts {
+					allowed[o.Value] = true
+				}
+
+				seen := map[string]bool{}
+				cleaned := make([]string, 0, len(list))
+				for _, raw := range list {
+					s := strings.TrimSpace(raw)
+					if s == "" {
+						continue
+					}
+					if !allowed[s] {
+						return nil, fmt.Errorf("field '%s' has invalid option", f.Key)
+					}
+					if !seen[s] {
+						seen[s] = true
+						cleaned = append(cleaned, s)
+					}
+				}
+
+				if f.Required && len(cleaned) == 0 {
+					return nil, fmt.Errorf("field '%s' is required", f.Key)
+				}
+
+				clean[f.Key] = cleaned
+				continue
+			}
+
 			b, ok := v.(bool)
 			if !ok {
 				return nil, fmt.Errorf("field '%s' must be boolean", f.Key)
@@ -1260,6 +1371,7 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			if f.Required && !b {
 				return nil, fmt.Errorf("field '%s' must be accepted", f.Key)
 			}
+			clean[f.Key] = b
 
 		case models.FieldNumber:
 			if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
@@ -1273,6 +1385,7 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			if err != nil {
 				return nil, fmt.Errorf("field '%s' must be a number", f.Key)
 			}
+			clean[f.Key] = num
 
 			if rules != nil {
 				if rules.Min != nil && num < *rules.Min {
@@ -1304,6 +1417,7 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			if !allowed[sv] {
 				return nil, fmt.Errorf("field '%s' has invalid option", f.Key)
 			}
+			clean[f.Key] = sv
 
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
 				return nil, err
@@ -1340,6 +1454,7 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
 				return nil, err
 			}
+			clean[f.Key] = sv
 		}
 	}
 
@@ -1381,6 +1496,31 @@ func valueToString(v any) (string, bool) {
 	return s, ok
 }
 
+func toStringSlice(v any) ([]string, bool) {
+	switch raw := v.(type) {
+	case []string:
+		return raw, true
+	case []any:
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	case string:
+		// allow single selection serialized as string
+		if strings.TrimSpace(raw) == "" {
+			return []string{}, true
+		}
+		return []string{raw}, true
+	default:
+		return nil, false
+	}
+}
+
 func toFloat64(v any) (float64, error) {
 	switch n := v.(type) {
 	case float64:
@@ -1416,7 +1556,8 @@ func decodeValidation(j datatypes.JSON) *models.FormFieldValidation {
 }
 
 // extractCommonFields pulls common contact fields from dynamic values map for analytics.
-func extractCommonFields(values map[string]any) (*string, *string, *string, *string) {
+// It prefers known keys, then falls back to matching field types (email/tel) if present.
+func extractCommonFields(fields []models.FormField, values map[string]any) (*string, *string, *string, *string) {
 	lookup := func(keys ...string) *string {
 		for _, k := range keys {
 			if v, ok := values[k]; ok {
@@ -1431,9 +1572,32 @@ func extractCommonFields(values map[string]any) (*string, *string, *string, *str
 		return nil
 	}
 
+	byType := func(t models.FormFieldType) *string {
+		for _, f := range fields {
+			if f.Type != t {
+				continue
+			}
+			if v, ok := values[f.Key]; ok {
+				if s, ok := v.(string); ok {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						return &s
+					}
+				}
+			}
+		}
+		return nil
+	}
+
 	name := lookup("fullName", "name", "full_name")
 	email := lookup("email", "contactEmail")
+	if email == nil {
+		email = byType(models.FieldEmail)
+	}
 	phone := lookup("phone", "contactPhone", "contactNumber", "phoneNumber")
+	if phone == nil {
+		phone = byType(models.FieldTel)
+	}
 	addr := lookup("address", "contactAddress")
 
 	return name, email, phone, addr
