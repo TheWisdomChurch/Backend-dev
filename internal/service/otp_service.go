@@ -25,6 +25,7 @@ var otpTTL = 10 * time.Minute
 type OTPService interface {
 	SendOTP(req *models.SendOTPRequest) (*models.SendOTPResponse, error)
 	VerifyOTP(req *models.VerifyOTPRequest) (*models.VerifyOTPResponse, error)
+	VerifyOTPNoConsume(req *models.VerifyOTPRequest) (*models.VerifyOTPResponse, error)
 }
 
 type otpService struct {
@@ -98,7 +99,8 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 		HeroImageURL: email.TemplateAssetURL(s.branding, "otp", "hero.png"),
 	})
 
-	if err := s.sender.SendHTML(emailAddr, "Your Wisdom House verification code", body); err != nil {
+	subject := otpSubject(s.branding.AppName, purpose)
+	if err := s.sender.SendHTML(emailAddr, subject, body); err != nil {
 		return nil, err
 	}
 
@@ -109,7 +111,39 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 	}, nil
 }
 
+func otpSubject(appName, purpose string) string {
+	name := strings.TrimSpace(appName)
+	if name == "" {
+		name = "Wisdom House"
+	}
+
+	p := strings.TrimSpace(purpose)
+	if i := strings.Index(p, ":"); i >= 0 {
+		p = p[:i]
+	}
+
+	switch p {
+	case "password_reset":
+		return fmt.Sprintf("Reset your %s password", name)
+	case "login":
+		return fmt.Sprintf("Approve sign-in to %s", name)
+	default:
+		return fmt.Sprintf("Your %s verification code", name)
+	}
+}
+
 func (s *otpService) VerifyOTP(req *models.VerifyOTPRequest) (*models.VerifyOTPResponse, error) {
+	return s.verifyOTP(req, true)
+}
+
+// VerifyOTPNoConsume validates an OTP without marking it as used.
+// Useful for multi-step flows (e.g. password reset) where a second call
+// will consume the OTP during the final action.
+func (s *otpService) VerifyOTPNoConsume(req *models.VerifyOTPRequest) (*models.VerifyOTPResponse, error) {
+	return s.verifyOTP(req, false)
+}
+
+func (s *otpService) verifyOTP(req *models.VerifyOTPRequest, consume bool) (*models.VerifyOTPResponse, error) {
 	emailAddr := normalizeEmail(req.Email)
 	if emailAddr == "" {
 		return nil, errors.New("email is required")
@@ -125,9 +159,32 @@ func (s *otpService) VerifyOTP(req *models.VerifyOTPRequest) (*models.VerifyOTPR
 	otp, err := s.repo.GetActive(emailAddr, purpose)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("otp not found or expired")
+			// If purpose is a prefix (e.g. "password_reset"), fall back to latest active OTP
+			// whose purpose starts with that prefix (e.g. "password_reset:xyz").
+			isPrefix := false
+			prefix := purpose
+			if prefix != "" {
+				if strings.HasSuffix(prefix, ":") {
+					isPrefix = true
+				} else if !strings.Contains(prefix, ":") {
+					isPrefix = true
+					prefix = prefix + ":"
+				}
+			}
+			if isPrefix {
+				if alt, err2 := s.repo.GetLatestActiveByPrefix(emailAddr, prefix); err2 == nil {
+					otp = alt
+				} else if errors.Is(err2, gorm.ErrRecordNotFound) {
+					return nil, errors.New("otp not found or expired")
+				} else {
+					return nil, err2
+				}
+			} else {
+				return nil, errors.New("otp not found or expired")
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	candidate := hashOTP(otp.CodeSalt, code)
@@ -135,9 +192,11 @@ func (s *otpService) VerifyOTP(req *models.VerifyOTPRequest) (*models.VerifyOTPR
 		return nil, errors.New("invalid code")
 	}
 
-	usedAt := time.Now().UTC()
-	if err := s.repo.MarkUsed(otp.ID, usedAt); err != nil {
-		return nil, err
+	if consume {
+		usedAt := time.Now().UTC()
+		if err := s.repo.MarkUsed(otp.ID, usedAt); err != nil {
+			return nil, err
+		}
 	}
 
 	return &models.VerifyOTPResponse{Verified: true}, nil
