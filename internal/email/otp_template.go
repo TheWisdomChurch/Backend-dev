@@ -2,7 +2,6 @@
 package email
 
 import (
-	"fmt"
 	"html"
 	"strings"
 	"time"
@@ -25,14 +24,7 @@ func RenderOTPEmail(data OTPTemplateData) string {
 	code := strings.TrimSpace(data.Code)
 	safeCode := html.EscapeString(code)
 
-	purpose := strings.TrimSpace(data.Purpose)
-	purposeLine := "Use the verification code below to complete your request."
-	if purpose != "" {
-		purposeLine = fmt.Sprintf(
-			"Use the verification code below to complete %s.",
-			html.EscapeString(purpose),
-		)
-	}
+	headline, purposeLine := otpPurposeCopy(strings.TrimSpace(data.Purpose))
 
 	expiresAt := data.ExpiresAt
 	expiresText := expiresAt.Format("Mon, 02 Jan 2006 15:04 MST")
@@ -68,7 +60,7 @@ func RenderOTPEmail(data OTPTemplateData) string {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>` + html.EscapeString(b.AppName) + ` • Verification code</title>
+  <title>` + html.EscapeString(b.AppName) + ` • ` + html.EscapeString(headline) + `</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
 </head>
 <body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
@@ -89,14 +81,14 @@ func RenderOTPEmail(data OTPTemplateData) string {
           <tr>
             <td style="padding:0 24px 4px 24px;">
               <h1 style="margin:0;font-size:22px;line-height:1.4;color:#e5e7eb;">
-                Verify your email
+                ` + html.EscapeString(headline) + `
               </h1>
             </td>
           </tr>
           <tr>
             <td style="padding:4px 24px 14px 24px;">
               <p style="margin:0;font-size:14px;line-height:1.6;color:#9ca3af;">
-                ` + purposeLine + `
+                ` + html.EscapeString(purposeLine) + `
               </p>
             </td>
           </tr>
@@ -144,4 +136,22 @@ func RenderOTPEmail(data OTPTemplateData) string {
   </table>
 </body>
 </html>`
+}
+
+func otpPurposeCopy(purpose string) (headline string, line string) {
+	p := strings.TrimSpace(purpose)
+	if p == "" {
+		return "Verification code", "Use the verification code below to complete your request."
+	}
+	if i := strings.Index(p, ":"); i >= 0 {
+		p = p[:i]
+	}
+	switch p {
+	case "password_reset":
+		return "Reset your password", "Use the verification code below to reset your password."
+	case "login":
+		return "Approve sign-in", "Use the verification code below to approve your sign-in."
+	default:
+		return "Verification code", "Use the verification code below to complete your request."
+	}
 }

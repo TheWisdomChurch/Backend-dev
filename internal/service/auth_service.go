@@ -340,7 +340,11 @@ func (s *authServiceImpl) ResetPasswordWithOTP(emailStr, code, purpose, newPassw
 		return errors.New("invalid request")
 	}
 
-	if !strings.HasPrefix(strings.TrimSpace(purpose), "password_reset:") {
+	purpose = strings.TrimSpace(purpose)
+	if purpose == "" {
+		return errors.New("invalid code")
+	}
+	if !strings.HasPrefix(purpose, "password_reset") {
 		return errors.New("invalid code")
 	}
 
