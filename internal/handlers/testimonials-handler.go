@@ -7,18 +7,33 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
 type TestimonialHandler struct {
-	svc service.TestimonialService
+	svc      service.TestimonialService
+	userRepo repository.UserRepository
 }
 
-func NewTestimonialHandler(svc service.TestimonialService) *TestimonialHandler {
-	return &TestimonialHandler{svc: svc}
+func NewTestimonialHandler(svc service.TestimonialService, userRepo repository.UserRepository) *TestimonialHandler {
+	return &TestimonialHandler{svc: svc, userRepo: userRepo}
+}
+
+func (h *TestimonialHandler) currentUser(c *gin.Context) *models.User {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return nil
+	}
+	user, err := h.userRepo.FindByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
 }
 
 func (h *TestimonialHandler) CreateTestimonial(c *gin.Context) {
@@ -112,7 +127,7 @@ func (h *TestimonialHandler) DeleteTestimonial(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.DeleteTestimonial(id); err != nil {
+	if err := h.svc.DeleteTestimonial(id, h.currentUser(c)); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
 			return
@@ -131,7 +146,7 @@ func (h *TestimonialHandler) ApproveTestimonial(c *gin.Context) {
 		return
 	}
 
-	testimonial, err := h.svc.ApproveTestimonial(id)
+	testimonial, err := h.svc.ApproveTestimonial(id, h.currentUser(c))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve testimonial")
 		return
