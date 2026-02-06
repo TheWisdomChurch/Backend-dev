@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
@@ -17,12 +19,52 @@ import (
 )
 
 type EventHandler struct {
-	repo   *repository.EventRepository
-	spaces service.AssetUploader
+	repo        *repository.EventRepository
+	spaces      service.AssetUploader
+	userRepo    repository.UserRepository
+	approvalSvc service.ApprovalService
+	notifySvc   service.AdminNotificationService
 }
 
-func NewEventHandler(repo *repository.EventRepository, spaces service.AssetUploader) *EventHandler {
-	return &EventHandler{repo: repo, spaces: spaces}
+func NewEventHandler(
+	repo *repository.EventRepository,
+	spaces service.AssetUploader,
+	userRepo repository.UserRepository,
+	approvalSvc service.ApprovalService,
+	notifySvc service.AdminNotificationService,
+) *EventHandler {
+	return &EventHandler{
+		repo:        repo,
+		spaces:      spaces,
+		userRepo:    userRepo,
+		approvalSvc: approvalSvc,
+		notifySvc:   notifySvc,
+	}
+}
+
+func (h *EventHandler) currentUser(c *gin.Context) *models.User {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return nil
+	}
+	user, err := h.userRepo.FindByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
+}
+
+func normalizedRole(c *gin.Context) string {
+	roleVal, _ := c.Get("role")
+	role, _ := roleVal.(string)
+	role = strings.ToLower(strings.TrimSpace(role))
+	role = strings.ReplaceAll(role, "-", "_")
+	role = strings.ReplaceAll(role, " ", "_")
+	return role
+}
+
+func isAdminOrSuper(role string) bool {
+	return role == "admin" || role == "super_admin"
 }
 
 func (h *EventHandler) List(c *gin.Context) {
@@ -43,14 +85,19 @@ func (h *EventHandler) List(c *gin.Context) {
 
 	now := time.Now().UTC()
 	filtered := make([]models.Event, 0, len(items))
+	role := normalizedRole(c)
+	allowPending := isAdminOrSuper(role)
 	for i := range items {
 		items[i].Status = deriveStatus(items[i].Date, items[i].Time, now)
+		if !allowPending && !items[i].IsApproved {
+			continue
+		}
 		if statusFilter == "" || string(items[i].Status) == statusFilter {
 			filtered = append(filtered, items[i])
 		}
 	}
 
-	if statusFilter != "" {
+	if statusFilter != "" || !allowPending {
 		total = int64(len(filtered))
 	}
 
@@ -84,6 +131,24 @@ func (h *EventHandler) Create(c *gin.Context) {
 	}
 
 	req.Status = deriveStatus(req.Date, req.Time, time.Now().UTC())
+	role := normalizedRole(c)
+	approver := h.currentUser(c)
+	if role == "super_admin" && approver != nil {
+		req.IsApproved = true
+		req.ApprovedByID = &approver.ID
+		name := strings.TrimSpace(strings.Join([]string{approver.FirstName, approver.LastName}, " "))
+		if name != "" {
+			req.ApprovedByName = &name
+		}
+		if approver.Email != "" {
+			email := approver.Email
+			req.ApprovedByEmail = &email
+		}
+		now := time.Now().UTC()
+		req.ApprovedAt = &now
+	} else {
+		req.IsApproved = false
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -91,6 +156,55 @@ func (h *EventHandler) Create(c *gin.Context) {
 	if err := h.repo.CreateWithContext(ctx, &req); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create event")
 		return
+	}
+
+	if !req.IsApproved && h.approvalSvc != nil {
+		entityID := req.ID
+		label := strings.TrimSpace(req.Title)
+		if label == "" {
+			label = "Event"
+		}
+		approvalReq, err := h.approvalSvc.CreateRequest(service.CreateApprovalRequest{
+			Type:        models.ApprovalTypeEvent,
+			EntityID:    &entityID,
+			EntityLabel: &label,
+			RequestedByID: func() *string {
+				if approver == nil {
+					return nil
+				}
+				return &approver.ID
+			}(),
+			RequestedByName: func() *string {
+				if approver == nil {
+					return nil
+				}
+				name := strings.TrimSpace(strings.Join([]string{approver.FirstName, approver.LastName}, " "))
+				if name == "" {
+					return nil
+				}
+				return &name
+			}(),
+			RequestedByEmail: func() *string {
+				if approver == nil || approver.Email == "" {
+					return nil
+				}
+				email := approver.Email
+				return &email
+			}(),
+		})
+		if err == nil && h.notifySvc != nil {
+			title := "New event approval request"
+			message := fmt.Sprintf("A new event is awaiting approval. Ticket %s.", approvalReq.TicketCode)
+			_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+				Type:       "event_request",
+				Title:      title,
+				Message:    message,
+				TicketCode: &approvalReq.TicketCode,
+				EntityType: func() *string { t := "event"; return &t }(),
+				EntityID:   &entityID,
+				Roles:      []string{"admin", "super_admin"},
+			})
+		}
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Event created", req)
@@ -135,6 +249,60 @@ func (h *EventHandler) Update(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Event updated", existing)
+}
+
+func (h *EventHandler) Approve(c *gin.Context) {
+	id := c.Param("id")
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	existing, err := h.repo.GetByIDWithContext(ctx, id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
+		return
+	}
+
+	approver := h.currentUser(c)
+	if approver != nil {
+		existing.IsApproved = true
+		existing.ApprovedByID = &approver.ID
+		name := strings.TrimSpace(strings.Join([]string{approver.FirstName, approver.LastName}, " "))
+		if name != "" {
+			existing.ApprovedByName = &name
+		}
+		if approver.Email != "" {
+			email := approver.Email
+			existing.ApprovedByEmail = &email
+		}
+		now := time.Now().UTC()
+		existing.ApprovedAt = &now
+	} else {
+		existing.IsApproved = true
+	}
+
+	if err := h.repo.UpdateWithContext(ctx, existing); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve event")
+		return
+	}
+
+	if h.approvalSvc != nil {
+		_, _ = h.approvalSvc.CompleteRequest(models.ApprovalTypeEvent, id, models.ApprovalStatusApproved, approver)
+	}
+	if h.notifySvc != nil {
+		title := "Event approved"
+		message := "An event has been approved and published."
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "event_approved",
+			Title:      title,
+			Message:    message,
+			EntityType: func() *string { t := "event"; return &t }(),
+			EntityID:   &id,
+			Roles:      []string{"admin", "super_admin"},
+		})
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Event approved", existing)
 }
 
 func (h *EventHandler) Delete(c *gin.Context) {
