@@ -145,6 +145,23 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 	})
 }
 
+func (h *FormHandler) GetFormSubmissionStats(c *gin.Context) {
+	formID := c.Param("id")
+	start, end, err := parseTimeRange(c)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	stats, err := h.svc.StatsByForm(formID, start, end)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load submission stats")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Submission stats retrieved", stats)
+}
+
 func (h *FormHandler) GetFormStats(c *gin.Context) {
 	start, end, err := parseTimeRange(c)
 	if err != nil {

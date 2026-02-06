@@ -31,6 +31,7 @@ type FormRepository interface {
 	ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error)
 	CountSubmissionsByForm(start, end *time.Time) ([]models.FormSubmissionCount, error)
 	CountSubmissionsFiltered(formID string, start, end *time.Time) (int64, error)
+	CountSubmissionsByDay(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
 	DeleteExpired(now time.Time) (int64, error)
 }
 
@@ -240,6 +241,22 @@ func (r *formRepository) CountSubmissionsByForm(start, end *time.Time) ([]models
 		Scan(&rows).Error
 
 	return rows, err
+}
+
+func (r *formRepository) CountSubmissionsByDay(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error) {
+	var rows []models.FormSubmissionDailyCount
+	q := applySubmissionFilters(
+		r.db.DB.Model(&models.FormSubmission{}).
+			Select("date_trunc('day', created_at) as day, COUNT(*) as count"),
+		formID,
+		start,
+		end,
+	).Group("day").Order("day ASC")
+
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *formRepository) CountSubmissionsFiltered(formID string, start, end *time.Time) (int64, error) {
