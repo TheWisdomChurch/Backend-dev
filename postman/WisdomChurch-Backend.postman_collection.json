@@ -1,0 +1,1736 @@
+{
+  "info": {
+    "name": "WisdomChurch Backend API",
+    "description": "Postman collection for WisdomChurch Backend API (generated).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "email",
+      "value": "admin+postman@wisdomchurchhq.org"
+    },
+    {
+      "key": "password",
+      "value": "TestPass123!"
+    },
+    {
+      "key": "newPassword",
+      "value": "NewPass123!"
+    },
+    {
+      "key": "resetNewPassword",
+      "value": "ResetPass123!"
+    },
+    {
+      "key": "firstName",
+      "value": "Postman"
+    },
+    {
+      "key": "lastName",
+      "value": "Tester"
+    },
+    {
+      "key": "role",
+      "value": "admin"
+    },
+    {
+      "key": "otpCode",
+      "value": "123456"
+    },
+    {
+      "key": "otpPurpose",
+      "value": "generic_test"
+    },
+    {
+      "key": "resetCode",
+      "value": "123456"
+    },
+    {
+      "key": "resetPurpose",
+      "value": "password_reset:replace"
+    },
+    {
+      "key": "subscriberEmail",
+      "value": "subscriber@wisdomchurchhq.org"
+    },
+    {
+      "key": "subscriberName",
+      "value": "Subscriber"
+    },
+    {
+      "key": "authCookie",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "testimonialId",
+      "value": ""
+    },
+    {
+      "key": "reelId",
+      "value": ""
+    },
+    {
+      "key": "formId",
+      "value": ""
+    },
+    {
+      "key": "formSlug",
+      "value": ""
+    },
+    {
+      "key": "workforceId",
+      "value": ""
+    },
+    {
+      "key": "memberId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/healthz"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"{{firstName}}\",\n  \"last_name\": \"{{lastName}}\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"role\": \"{{role}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('userId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (sets authCookie)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"rememberMe\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const headers = pm.response.headers.all().filter(h => h.key && h.key.toLowerCase() === 'set-cookie');",
+                  "if (headers.length) {",
+                  "  const pairs = headers.map(h => h.value.split(';')[0]);",
+                  "  pm.collectionVariables.set('authCookie', pairs.join('; '));",
+                  "}",
+                  "const user = (json && json.data && (json.data.user || json.data)) || {};",
+                  "const userId = user.id || json.id;",
+                  "if (userId) pm.collectionVariables.set('userId', userId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/me"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"{{firstName}}\",\n  \"last_name\": \"{{lastName}}\",\n  \"email\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/change-password",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"{{newPassword}}\",\n  \"confirmPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/refresh"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Account (danger)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/account",
+            "description": "Deletes the currently authenticated account."
+          },
+          "response": []
+        },
+        {
+          "name": "Clear Account Data (danger)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/clear-data",
+            "description": "Clears data for the currently authenticated account."
+          },
+          "response": []
+        },
+        {
+          "name": "Password Reset Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/password-reset/request",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Password Reset Confirm",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/password-reset/confirm",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"code\": \"{{resetCode}}\",\n  \"purpose\": \"{{resetPurpose}}\",\n  \"newPassword\": \"{{resetNewPassword}}\",\n  \"confirmPassword\": \"{{resetNewPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login OTP Verify (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login/verify-otp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"code\": \"{{otpCode}}\",\n  \"purpose\": \"{{otpPurpose}}\",\n  \"rememberMe\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login OTP Resend (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login/resend-otp",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Auth OTP Verify (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/otp/verify",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"code\": \"{{otpCode}}\",\n  \"purpose\": \"{{otpPurpose}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Auth OTP Resend (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/otp/resend",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "OTP",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/otp/send",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"purpose\": \"{{otpPurpose}}\",\n  \"actionUrl\": \"{{baseUrl}}/action\",\n  \"actionLabel\": \"Continue\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/otp/verify",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"code\": \"{{otpCode}}\",\n  \"purpose\": \"{{otpPurpose}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Testimonials (Public)",
+      "item": [
+        {
+          "name": "List Testimonials",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/testimonials?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "List All Testimonials",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/testimonials/all"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Testimonial By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/testimonials/{testimonialId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Testimonial",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/testimonials",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"testimony\": \"This is a sample testimony.\",\n  \"isAnonymous\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('testimonialId', id);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Events (Public)",
+      "item": [
+        {
+          "name": "List Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/events?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Event By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/events/{eventId}"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Reels (Public)",
+      "item": [
+        {
+          "name": "List Reels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/reels?page=1&limit=10"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications (Public)",
+      "item": [
+        {
+          "name": "Subscribe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/notifications/subscribe",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{subscriberEmail}}\",\n  \"name\": \"{{subscriberName}}\",\n  \"source\": \"website\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unsubscribe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/notifications/unsubscribe",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{subscriberEmail}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unsubscribe By Link",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/notifications/unsubscribe?email={subscriberEmail}"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Forms (Public)",
+      "item": [
+        {
+          "name": "Get Public Form",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/forms/{formSlug}"
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Public Form",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/forms/{formSlug}/submissions",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"values\": {\n    \"fullName\": \"John Doe\",\n    \"email\": \"{{email}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Workforce (Public)",
+      "item": [
+        {
+          "name": "Apply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/workforce/apply",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"{{email}}\",\n  \"department\": \"Ushering\",\n  \"status\": \"pending\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard"
+          },
+          "response": []
+        },
+        {
+          "name": "Pending Testimonials",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/testimonials/pending"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Testimonial",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/testimonials/{testimonialId}/approve"
+          },
+          "response": []
+        },
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users"
+          },
+          "response": []
+        },
+        {
+          "name": "Get User By ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{userId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Admin\",\n  \"lastName\": \"User\",\n  \"email\": \"admin+created@wisdomchurchhq.org\",\n  \"password\": \"{{password}}\",\n  \"role\": \"admin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('userId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{userId}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Updated\",\n  \"lastName\": \"User\",\n  \"email\": \"admin+updated@wisdomchurchhq.org\",\n  \"role\": \"admin\",\n  \"is_active\": true,\n  \"admin_approved\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{userId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/users/{userId}/approve"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Analytics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/analytics"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin List Forms",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Get Form",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/{formId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Create Form",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Volunteer Registration\",\n  \"description\": \"Join the workforce.\",\n  \"fields\": [\n    {\n      \"label\": \"Full Name\",\n      \"type\": \"text\",\n      \"required\": true,\n      \"order\": 1\n    },\n    {\n      \"label\": \"Email\",\n      \"type\": \"email\",\n      \"required\": true,\n      \"order\": 2\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('formId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Update Form",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/{formId}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Volunteer Registration (Updated)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Delete Form",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/{formId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Publish Form",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/{formId}/publish"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const slug = data && data.slug;",
+                  "if (slug) pm.collectionVariables.set('formSlug', slug);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Form Submissions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/{formId}/submissions?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Form Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/forms/stats"
+          },
+          "response": []
+        },
+        {
+          "name": "List Subscribers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/notifications/subscribers"
+          },
+          "response": []
+        },
+        {
+          "name": "Send Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/notifications/send",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"update\",\n  \"subject\": \"Weekly Update\",\n  \"title\": \"Hello Church\",\n  \"message\": \"This is a test notification.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send Email Template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/email/templates/send",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"template\": \"registration\",\n  \"email\": \"{{email}}\",\n  \"recipientName\": \"{{firstName}} {{lastName}}\",\n  \"actionUrl\": \"{{baseUrl}}/welcome\",\n  \"customMessage\": \"Welcome aboard!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/uploads/images",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "uploads"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin List Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Create Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Sunday Service\",\n  \"shortDescription\": \"Weekly worship service\",\n  \"description\": \"Join us for worship and teaching.\",\n  \"date\": \"2026-02-15\",\n  \"time\": \"10:00 AM\",\n  \"location\": \"Main Auditorium\",\n  \"category\": \"Conference\",\n  \"tags\": [\n    \"service\",\n    \"weekly\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('eventId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Update Event",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events/{eventId}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Sunday Service (Updated)\",\n  \"shortDescription\": \"Weekly worship service\",\n  \"description\": \"Join us for worship and teaching.\",\n  \"date\": \"2026-02-15\",\n  \"time\": \"10:00 AM\",\n  \"location\": \"Main Auditorium\",\n  \"category\": \"Conference\",\n  \"tags\": [\n    \"service\",\n    \"weekly\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Delete Event",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events/{eventId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Upload Event Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events/{eventId}/image",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Upload Event Banner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/events/{eventId}/banner",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin List Reels",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/reels?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Create Reel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/reels",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Sunday Highlights\",\n  \"thumbnail\": \"https://example.com/thumb.jpg\",\n  \"videoUrl\": \"https://example.com/video.mp4\",\n  \"duration\": \"1:20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('reelId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Delete Reel",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/reels/{reelId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin List Workforce",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Create Workforce",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"jane.doe@example.com\",\n  \"department\": \"Choir\",\n  \"status\": \"pending\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('workforceId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Update Workforce",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/{workforceId}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"serving\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Workforce Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/stats"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Workforce Birthday Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/birthdays/stats"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Workforce Birthdays By Month",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/birthdays/month/1"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Workforce Birthdays Today",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/birthdays/today"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Workforce Send Birthdays Today",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/birthdays/send-today"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin List Members",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members?page=1&limit=10"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Create Member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"John\",\n  \"lastName\": \"Smith\",\n  \"email\": \"john.smith@example.com\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const data = (json && json.data) || json;",
+                  "const id = data && data.id;",
+                  "if (id) pm.collectionVariables.set('memberId', id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Update Member",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/{memberId}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Delete Member",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/{memberId}"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Member Birthday Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/birthdays/stats"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Member Birthdays By Month",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/birthdays/month/1"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Member Birthdays Today",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/birthdays/today"
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Member Send Birthdays Today",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/members/birthdays/send-today"
+          },
+          "response": []
+        },
+        {
+          "name": "Super Admin Approve Workforce",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "{{authCookie}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/workforce/{workforceId}/approve"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
