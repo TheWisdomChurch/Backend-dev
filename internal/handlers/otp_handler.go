@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -40,7 +41,16 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.svc.VerifyOTP(&req)
+	purpose := strings.TrimSpace(req.Purpose)
+	// For password reset, verify without consuming the OTP.
+	// The final reset step will consume it.
+	var resp *models.VerifyOTPResponse
+	var err error
+	if strings.HasPrefix(purpose, "password_reset") {
+		resp, err = h.svc.VerifyOTPNoConsume(&req)
+	} else {
+		resp, err = h.svc.VerifyOTP(&req)
+	}
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
