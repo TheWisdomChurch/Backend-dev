@@ -79,6 +79,7 @@ type CreateFormRequest struct {
 	Title       string           `json:"title" binding:"required"`
 	Description *string          `json:"description,omitempty"`
 	EventID     *string          `json:"eventId,omitempty"`
+	Slug        *string          `json:"slug,omitempty"`
 	Settings    *FormSettingsDTO `json:"settings,omitempty"`
 	Fields      []FormFieldDTO   `json:"fields" binding:"omitempty,dive"`
 }
@@ -87,6 +88,7 @@ type UpdateFormRequest struct {
 	Title       *string          `json:"title,omitempty"`
 	Description *string          `json:"description,omitempty"`
 	EventID     *string          `json:"eventId,omitempty"`
+	Slug        *string          `json:"slug,omitempty"`
 	Settings    *FormSettingsDTO `json:"settings,omitempty"`
 	Fields      *[]FormFieldDTO  `json:"fields,omitempty"` // if provided, replaces fields
 }

@@ -220,6 +220,7 @@ func (r *formRepository) ListRecentSubmissions(limit int, start, end *time.Time)
 		form_submissions.email,
 		form_submissions.contact_number,
 		form_submissions.contact_address,
+		form_submissions.registration_code,
 		form_submissions.values,
 		form_submissions.created_at`).
 		Joins("LEFT JOIN forms ON forms.id = form_submissions.form_id").
