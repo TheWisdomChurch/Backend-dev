@@ -2,6 +2,7 @@ package email
 
 import (
 	"html"
+	"net/url"
 	"strings"
 )
 
@@ -35,14 +36,7 @@ func RenderAdminWelcomeEmail(data AdminWelcomeTemplateData) string {
 	if role == "" {
 		role = "Admin"
 	}
-	portalURL := b.AdminPortalURL
-	if portalURL == "" {
-		base := b.FrontendURL
-		if base == "" {
-			base = b.PublicURL
-		}
-		portalURL = strings.TrimRight(base, "/") + "/admin"
-	}
+	portalURL := adminPortalURL(b)
 
 	logoBlock := renderLogoBlock(b)
 
@@ -60,6 +54,44 @@ func RenderAdminWelcomeEmail(data AdminWelcomeTemplateData) string {
 		"<li>Coordinate updates with the ministry team.</li>" +
 		"</ul></div>" +
 		"<a href=\"" + html.EscapeString(portalURL) + "\" style=\"display:inline-block;margin-top:8px;padding:12px 18px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;\">Open Admin Portal</a>" +
+		footerBlock(b) +
+		"</div></body></html>"
+}
+
+type AdminApprovedTemplateData struct {
+	Branding      Branding
+	RecipientName string
+	LoginURL      string
+}
+
+func RenderAdminApprovedEmail(data AdminApprovedTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	name := strings.TrimSpace(data.RecipientName)
+	if name == "" {
+		name = "there"
+	} else {
+		name = html.EscapeString(name)
+	}
+
+	loginURL := strings.TrimSpace(data.LoginURL)
+	if loginURL == "" {
+		loginURL = adminLoginURL(b)
+	}
+	loginURL = html.EscapeString(loginURL)
+
+	logoBlock := renderLogoBlock(b)
+	actionBlock := ""
+	if loginURL != "" {
+		actionBlock = "<a href=\"" + loginURL + "\" style=\"display:inline-block;margin-top:8px;padding:12px 20px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:999px;font-weight:600;\">Visit Website</a>"
+	}
+
+	return "<!DOCTYPE html>" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		logoBlock +
+		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Your admin account is approved</h2>" +
+		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Hi " + name + ", your admin account has been successfully created and approved. You can now log in with your credentials.</p>" +
+		actionBlock +
 		footerBlock(b) +
 		"</div></body></html>"
 }
@@ -179,6 +211,43 @@ func normalizeBranding(b Branding) Branding {
 		b.TemplateAssetBaseURL = strings.TrimRight(strings.TrimSpace(b.TemplateAssetBaseURL), "/")
 	}
 	return b
+}
+
+func adminPortalURL(b Branding) string {
+	portal := strings.TrimSpace(b.AdminPortalURL)
+	if portal != "" {
+		return portal
+	}
+
+	base := strings.TrimSpace(b.FrontendURL)
+	if base == "" {
+		base = strings.TrimSpace(b.PublicURL)
+	}
+	if base == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/admin"
+}
+
+func adminLoginURL(b Branding) string {
+	portal := strings.TrimSpace(adminPortalURL(b))
+	if portal == "" {
+		return ""
+	}
+	u, err := url.Parse(portal)
+	if err != nil {
+		return ""
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(strings.ToLower(path), "/login") {
+		return u.String()
+	}
+	if path == "" {
+		u.Path = "/login"
+	} else {
+		u.Path = path + "/login"
+	}
+	return u.String()
 }
 
 func renderLogoBlock(b Branding) string {
