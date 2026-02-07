@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -164,13 +165,16 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
 		Email      string `json:"email" binding:"required,email"`
-		Password   string `json:"password" binding:"required,min=6"`
+		Password   string `json:"password" binding:"required,min=8"`
 		RememberMe bool   `json:"rememberMe"`
 	}
 
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.Email = validation.NormalizeEmail(req.Email)
+	req.Password = strings.TrimSpace(req.Password)
 
 	meta := service.LoginMetadata{
 		IP:        c.ClientIP(),
@@ -242,13 +246,18 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		FirstName string `json:"first_name" binding:"required,min=2,max=50"`
 		LastName  string `json:"last_name" binding:"required,min=2,max=50"`
 		Email     string `json:"email" binding:"required,email"`
-		Password  string `json:"password" binding:"required,min=6"`
+		Password  string `json:"password" binding:"required,min=8"`
 		Role      string `json:"role" binding:"required,oneof=admin super_admin"`
 	}
 
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.Email = validation.NormalizeEmail(req.Email)
+	req.FirstName = validation.NormalizeString(req.FirstName)
+	req.LastName = validation.NormalizeString(req.LastName)
+	req.Password = strings.TrimSpace(req.Password)
 
 	userData, err := h.service.Register(req.FirstName, req.LastName, req.Email, req.Password, req.Role)
 	if err != nil {
@@ -389,14 +398,17 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	}
 
 	var req struct {
-		CurrentPassword string `json:"currentPassword" binding:"required,min=6"`
-		NewPassword     string `json:"newPassword" binding:"required,min=6"`
+		CurrentPassword string `json:"currentPassword" binding:"required,min=8"`
+		NewPassword     string `json:"newPassword" binding:"required,min=8"`
 		ConfirmPassword string `json:"confirmPassword"`
 	}
 
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.CurrentPassword = strings.TrimSpace(req.CurrentPassword)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 
 	if req.ConfirmPassword != "" && req.NewPassword != req.ConfirmPassword {
 		utils.ErrorResponse(c, http.StatusBadRequest, "New passwords do not match")
@@ -560,6 +572,8 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
+	req.Email = validation.NormalizeEmail(req.Email)
+
 	// Do NOT leak if the user exists. For ErrUserNotFound we still return 200.
 	resp, err := h.service.RequestPasswordReset(req.Email, "")
 	if err != nil {
@@ -584,13 +598,16 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		Email           string `json:"email" binding:"required,email"`
 		Code            string `json:"code" binding:"required,len=6"`
 		Purpose         string `json:"purpose" binding:"required"`
-		NewPassword     string `json:"newPassword" binding:"required,min=6"`
+		NewPassword     string `json:"newPassword" binding:"required,min=8"`
 		ConfirmPassword string `json:"confirmPassword"`
 	}
 
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.Email = validation.NormalizeEmail(req.Email)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 
 	if req.ConfirmPassword != "" && req.NewPassword != req.ConfirmPassword {
 		utils.ErrorResponse(c, http.StatusBadRequest, "New passwords do not match")
@@ -624,6 +641,8 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.Email = validation.NormalizeEmail(req.Email)
 
 	meta := service.LoginMetadata{
 		IP:        c.ClientIP(),
@@ -676,6 +695,8 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+
+	req.Email = validation.NormalizeEmail(req.Email)
 
 	meta := service.LoginMetadata{
 		IP:        c.ClientIP(),
