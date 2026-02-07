@@ -8,6 +8,7 @@ type ApprovalRequestStatus string
 const (
 	ApprovalTypeTestimonial ApprovalRequestType = "testimonial"
 	ApprovalTypeEvent       ApprovalRequestType = "event"
+	ApprovalTypeAdminUser   ApprovalRequestType = "admin_user"
 )
 
 const (
@@ -17,9 +18,9 @@ const (
 )
 
 type ApprovalRequest struct {
-	ID         string               `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	TicketCode string               `gorm:"type:varchar(50);uniqueIndex;not null" json:"ticketCode"`
-	Type       ApprovalRequestType  `gorm:"type:varchar(30);not null" json:"type"`
+	ID         string                `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	TicketCode string                `gorm:"type:varchar(50);uniqueIndex;not null" json:"ticketCode"`
+	Type       ApprovalRequestType   `gorm:"type:varchar(30);not null" json:"type"`
 	Status     ApprovalRequestStatus `gorm:"type:varchar(20);not null;default:'pending'" json:"status"`
 
 	EntityID    *string `gorm:"type:uuid" json:"entityId,omitempty"`
