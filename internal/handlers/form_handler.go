@@ -187,6 +187,10 @@ func (h *FormHandler) GetPublicForm(c *gin.Context) {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
 			return
 		}
+		if err == service.ErrFormExpired || err == service.ErrFormClosed {
+			utils.ErrorResponse(c, http.StatusGone, err.Error())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form")
 		return
 	}
@@ -209,6 +213,10 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
+			return
+		}
+		if err == service.ErrFormExpired || err == service.ErrFormClosed {
+			utils.ErrorResponse(c, http.StatusGone, err.Error())
 			return
 		}
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
