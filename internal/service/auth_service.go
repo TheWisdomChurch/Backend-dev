@@ -19,16 +19,18 @@ import (
 
 // AuthService implementation
 type authServiceImpl struct {
-	userRepo      repository.UserRepository
-	otp           OTPService
-	jwtSecret     string
-	jwtExpiration time.Duration
-	sender        EmailSender
-	branding      email.Branding
-	security      SecurityService
-	trustedDevs   repository.TrustedDeviceRepository
-	disableOTP    bool
+	userRepo        repository.UserRepository
+	otp             OTPService
+	jwtSecret       string
+	jwtExpiration   time.Duration
+	sender          EmailSender
+	branding        email.Branding
+	security        SecurityService
+	trustedDevs     repository.TrustedDeviceRepository
+	disableOTP      bool
 	disableLoginOTP bool
+	approvalSvc     ApprovalService
+	notifySvc       AdminNotificationService
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -53,18 +55,20 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool) AuthService {
+func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService) AuthService {
 	return &authServiceImpl{
-		userRepo:      userRepo,
-		otp:           otp,
-		jwtSecret:     jwtSecret,
-		jwtExpiration: jwtExpiration,
-		sender:        sender,
-		branding:      branding,
-		security:      security,
-		trustedDevs:   trustedDevs,
-		disableOTP:    disableOTP,
+		userRepo:        userRepo,
+		otp:             otp,
+		jwtSecret:       jwtSecret,
+		jwtExpiration:   jwtExpiration,
+		sender:          sender,
+		branding:        branding,
+		security:        security,
+		trustedDevs:     trustedDevs,
+		disableOTP:      disableOTP,
 		disableLoginOTP: disableLoginOTP,
+		approvalSvc:     approvalSvc,
+		notifySvc:       notifySvc,
 	}
 }
 
@@ -568,7 +572,11 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 		return nil, err
 	}
 
-	s.sendAdminWelcome(user)
+	if needsAdminApproval(user) {
+		requestAdminApproval(s.approvalSvc, s.notifySvc, user)
+	} else {
+		s.sendAdminWelcome(user)
+	}
 
 	// Remove password from response
 	user.Password = ""
@@ -585,6 +593,9 @@ func normalizeRole(role string) (string, error) {
 
 func (s *authServiceImpl) sendAdminWelcome(user *models.User) {
 	if s.sender == nil || user == nil || !isAdminRole(user.Role) {
+		return
+	}
+	if needsAdminApproval(user) {
 		return
 	}
 	fullName := strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " "))

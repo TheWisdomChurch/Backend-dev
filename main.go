@@ -770,9 +770,19 @@ func main() {
 		trustedDeviceRepo,
 		disableOTP,
 		disableLoginOTP,
+		approvalService,
+		adminNotificationService,
 	)
 
-	adminService := service.NewAdminService(adminRepo, testimonialRepo, userRepo)
+	adminService := service.NewAdminService(
+		adminRepo,
+		testimonialRepo,
+		userRepo,
+		approvalService,
+		adminNotificationService,
+		emailSender,
+		branding,
+	)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	if publicBaseURL == "" {
