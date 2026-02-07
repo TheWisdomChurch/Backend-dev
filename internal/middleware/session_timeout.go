@@ -16,38 +16,50 @@ func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
 		}
 
 		now := time.Now().UTC()
+		sameSite := sameSiteForEnv(secure)
+
+		expireAuth := func() {
+			// expire auth + activity cookies
+			http.SetCookie(c.Writer, &http.Cookie{
+				Name:     "auth_token",
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				Expires:  time.Unix(0, 0),
+				Secure:   secure,
+				HttpOnly: true,
+				SameSite: sameSite,
+			})
+			http.SetCookie(c.Writer, &http.Cookie{
+				Name:     "last_activity",
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				Expires:  time.Unix(0, 0),
+				Secure:   secure,
+				HttpOnly: true,
+				SameSite: sameSite,
+			})
+		}
+
 		lastActivityCookie, err := c.Request.Cookie("last_activity")
-		if err == nil {
-			if t, parseErr := time.Parse(time.RFC3339, lastActivityCookie.Value); parseErr == nil {
-				if now.Sub(t) > timeout {
-					// expire auth + activity cookies
-					http.SetCookie(c.Writer, &http.Cookie{
-						Name:     "auth_token",
-						Value:    "",
-						Path:     "/",
-						MaxAge:   -1,
-						Expires:  time.Unix(0, 0),
-						Secure:   secure,
-						HttpOnly: true,
-						SameSite: http.SameSiteLaxMode,
-					})
-					http.SetCookie(c.Writer, &http.Cookie{
-						Name:     "last_activity",
-						Value:    "",
-						Path:     "/",
-						MaxAge:   -1,
-						Expires:  time.Unix(0, 0),
-						Secure:   secure,
-						HttpOnly: true,
-						SameSite: http.SameSiteLaxMode,
-					})
-					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-						"status":  "error",
-						"message": "Session expired due to inactivity",
-					})
-					return
-				}
-			}
+		if err != nil || lastActivityCookie.Value == "" {
+			expireAuth()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"status":  "error",
+				"message": "Session expired due to inactivity",
+			})
+			return
+		}
+
+		lastActivity, parseErr := time.Parse(time.RFC3339, lastActivityCookie.Value)
+		if parseErr != nil || now.Sub(lastActivity) > timeout {
+			expireAuth()
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"status":  "error",
+				"message": "Session expired due to inactivity",
+			})
+			return
 		}
 
 		// refresh last activity
@@ -59,7 +71,7 @@ func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
 			Expires:  now.Add(timeout),
 			Secure:   secure,
 			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+			SameSite: sameSite,
 		})
 
 		c.Next()
