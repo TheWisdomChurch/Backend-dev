@@ -16,16 +16,16 @@ type ApprovalService interface {
 }
 
 type CreateApprovalRequest struct {
-	Type            models.ApprovalRequestType
-	EntityID        *string
-	EntityLabel     *string
-	RequestedByID   *string
-	RequestedByName *string
+	Type             models.ApprovalRequestType
+	EntityID         *string
+	EntityLabel      *string
+	RequestedByID    *string
+	RequestedByName  *string
 	RequestedByEmail *string
 }
 
 type approvalService struct {
-	repo        *repository.ApprovalRequestRepository
+	repo         *repository.ApprovalRequestRepository
 	sequenceRepo *repository.TicketSequenceRepository
 }
 
@@ -42,13 +42,13 @@ func (s *approvalService) CreateRequest(input CreateApprovalRequest) (*models.Ap
 
 	code := fmt.Sprintf("%s-%04d", prefix, seq)
 	req := &models.ApprovalRequest{
-		TicketCode:      code,
-		Type:            input.Type,
-		Status:          models.ApprovalStatusPending,
-		EntityID:        input.EntityID,
-		EntityLabel:     input.EntityLabel,
-		RequestedByID:   input.RequestedByID,
-		RequestedByName: input.RequestedByName,
+		TicketCode:       code,
+		Type:             input.Type,
+		Status:           models.ApprovalStatusPending,
+		EntityID:         input.EntityID,
+		EntityLabel:      input.EntityLabel,
+		RequestedByID:    input.RequestedByID,
+		RequestedByName:  input.RequestedByName,
 		RequestedByEmail: input.RequestedByEmail,
 	}
 
@@ -107,6 +107,8 @@ func (s *approvalService) ticketPrefix(t models.ApprovalRequestType, now time.Ti
 		label = "Testimonials"
 	case models.ApprovalTypeEvent:
 		label = "Events"
+	case models.ApprovalTypeAdminUser:
+		label = "Admins"
 	}
 	return fmt.Sprintf("%s-%s", date, label)
 }

@@ -4,7 +4,10 @@ package service
 import (
 	"errors"
 	"strings"
+
 	"golang.org/x/crypto/bcrypt"
+
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -14,6 +17,10 @@ type adminServiceImpl struct {
 	adminRepo       repository.AdminRepository
 	testimonialRepo repository.TestimonialRepository
 	userRepo        repository.UserRepository
+	approvalSvc     ApprovalService
+	notifySvc       AdminNotificationService
+	sender          EmailSender
+	branding        email.Branding
 }
 
 // DeleteUser implements [AdminService].
@@ -96,11 +103,19 @@ func NewAdminService(
 	adminRepo repository.AdminRepository,
 	testimonialRepo repository.TestimonialRepository,
 	userRepo repository.UserRepository,
+	approvalSvc ApprovalService,
+	notifySvc AdminNotificationService,
+	sender EmailSender,
+	branding email.Branding,
 ) AdminService {
 	return &adminServiceImpl{
 		adminRepo:       adminRepo,
 		testimonialRepo: testimonialRepo,
 		userRepo:        userRepo,
+		approvalSvc:     approvalSvc,
+		notifySvc:       notifySvc,
+		sender:          sender,
+		branding:        branding,
 	}
 }
 
@@ -178,6 +193,10 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role
 		return nil, err
 	}
 
+	if needsAdminApproval(user) {
+		requestAdminApproval(s.approvalSvc, s.notifySvc, user)
+	}
+
 	user.Password = ""
 	return user, nil
 }
@@ -193,10 +212,18 @@ func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
 	if user.Role != "admin" {
 		return nil, nil
 	}
+	if user.AdminApproved {
+		user.Password = ""
+		return user, nil
+	}
 	user.AdminApproved = true
 	if err := s.userRepo.Update(user); err != nil {
 		return nil, err
 	}
+	if s.approvalSvc != nil {
+		_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusApproved, nil)
+	}
+	sendAdminApprovedEmail(s.sender, s.branding, user)
 	user.Password = ""
 	return user, nil
 }
