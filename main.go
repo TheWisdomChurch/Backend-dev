@@ -513,15 +513,20 @@ func setupRouter(
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 
 	// Forms
-	admin.GET("/forms", formHandler.ListAdminForms)
-	admin.GET("/forms/:id", formHandler.GetAdminForm)
-	admin.POST("/forms", formHandler.CreateAdminForm)
-	admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
-	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
-	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
-	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
-	admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
-	admin.GET("/forms/stats", formHandler.GetFormStats)
+	// Forms
+admin.GET("/forms", formHandler.ListAdminForms)
+admin.GET("/forms/:id", formHandler.GetAdminForm)
+admin.POST("/forms", formHandler.CreateAdminForm)
+admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
+admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
+admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
+
+admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
+admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
+admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
+
+admin.GET("/forms/stats", formHandler.GetFormStats)
+
 
 	// Notifications (admin)
 	admin.GET("/notifications/subscribers", notificationHandler.ListSubscribers)
