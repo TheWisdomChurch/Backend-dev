@@ -1,10 +1,18 @@
 -- schema.down.sql
 -- Rollback consolidated schema
+-- Version: v4 (assets + email_templates)
 
 BEGIN;
 
 DROP INDEX IF EXISTS public.idx_form_submissions_form_id_created_at;
 DROP INDEX IF EXISTS public.idx_form_submissions_form_id;
+DROP INDEX IF EXISTS public.idx_email_templates_key_version_unique;
+DROP INDEX IF EXISTS public.idx_email_templates_key;
+DROP INDEX IF EXISTS public.idx_email_templates_owner;
+DROP INDEX IF EXISTS public.idx_assets_status;
+DROP INDEX IF EXISTS public.idx_assets_kind;
+DROP INDEX IF EXISTS public.idx_assets_owner;
+DROP INDEX IF EXISTS public.idx_assets_object_key_unique;
 DROP INDEX IF EXISTS public.idx_form_fields_form_id_order;
 DROP INDEX IF EXISTS public.idx_form_fields_form_id;
 DROP INDEX IF EXISTS public.idx_forms_status;
@@ -27,6 +35,8 @@ DROP INDEX IF EXISTS public.idx_forms_slug_unique;
 DROP INDEX IF EXISTS public.idx_subscribers_email_unique;
 DROP INDEX IF EXISTS public.idx_users_email_unique;
 
+DROP TABLE IF EXISTS public.email_templates CASCADE;
+DROP TABLE IF EXISTS public.assets CASCADE;
 DROP TABLE IF EXISTS public.form_submissions CASCADE;
 DROP TABLE IF EXISTS public.form_fields CASCADE;
 DROP TABLE IF EXISTS public.forms CASCADE;
