@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -14,51 +16,58 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/google/uuid"
 )
 
-// SpacesUploader uploads assets to DigitalOcean Spaces (S3-compatible) and returns public URLs.
+// SpacesUploader implements AssetUploader using S3-compatible storage (DigitalOcean Spaces).
 type SpacesUploader struct {
-	Bucket        string
-	Region        string
-	Endpoint      string
-	PublicBaseURL string
-	BasePath      string
-	PublicRead    bool
-
-	client *s3.Client
+	bucket        string
+	basePath      string
+	publicBaseURL string
+	publicRead    bool
+	client        *s3.Client
 }
 
-// NewSpacesUploader creates a new uploader for DigitalOcean Spaces.
-func NewSpacesUploader(bucket, region, endpoint, accessKey, secretKey, publicBaseURL, basePath string, publicRead bool) (*SpacesUploader, error) {
-	bucket = strings.TrimSpace(bucket)
-	region = strings.TrimSpace(region)
-	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	publicBaseURL = strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
-	basePath = strings.Trim(basePath, "/")
+// NewSpacesUploaderFromEnv builds an uploader from SPACES_* env vars.
+// Returns (nil, nil) when no Spaces configuration is present.
+func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
+	bucket := strings.TrimSpace(os.Getenv("SPACES_BUCKET"))
+	accessKey := strings.TrimSpace(os.Getenv("SPACES_ACCESS_KEY"))
+	secretKey := strings.TrimSpace(os.Getenv("SPACES_SECRET_KEY"))
+	endpoint := strings.TrimSpace(os.Getenv("SPACES_ENDPOINT"))
+	region := strings.TrimSpace(os.Getenv("SPACES_REGION"))
+	publicBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
+	basePath := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_BASE_PATH")), "/")
 
-	if bucket == "" {
-		return nil, fmt.Errorf("spaces bucket is required")
+	if bucket == "" && accessKey == "" && secretKey == "" && endpoint == "" && publicBaseURL == "" && region == "" {
+		return nil, nil
 	}
+
+	if bucket == "" || accessKey == "" || secretKey == "" {
+		return nil, errors.New("spaces config incomplete: require SPACES_BUCKET, SPACES_ACCESS_KEY, SPACES_SECRET_KEY")
+	}
+
 	if region == "" {
-		return nil, fmt.Errorf("spaces region is required")
-	}
-	if strings.TrimSpace(accessKey) == "" || strings.TrimSpace(secretKey) == "" {
-		return nil, fmt.Errorf("spaces access key and secret key are required")
+		region = "us-east-1"
 	}
 
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("https://%s.digitaloceanspaces.com", region)
+	endpoint = normalizeEndpoint(endpoint)
+	if publicBaseURL == "" {
+		publicBaseURL = derivePublicBaseURL(bucket, endpoint, region)
 	}
 	if publicBaseURL == "" {
-		publicBaseURL = fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, region)
+		return nil, errors.New("SPACES_PUBLIC_BASE_URL is required to build public URLs")
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(
-		context.Background(),
+	publicRead := parseBoolEnv("SPACES_PUBLIC_READ", true)
+
+	loadOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		config.WithEndpointResolverWithOptions(
-			aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
+	}
+	if endpoint != "" {
+		resolver := aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 				if service == s3.ServiceID {
 					return aws.Endpoint{
 						URL:               endpoint,
@@ -66,136 +75,214 @@ func NewSpacesUploader(bucket, region, endpoint, accessKey, secretKey, publicBas
 					}, nil
 				}
 				return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-			}),
-		),
-	)
+			},
+		)
+		loadOpts = append(loadOpts, config.WithEndpointResolverWithOptions(resolver))
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.Background(), loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("spaces config load failed: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.UsePathStyle = true
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if endpoint != "" {
+			o.UsePathStyle = true
+		}
 	})
 
 	return &SpacesUploader{
-		Bucket:        bucket,
-		Region:        region,
-		Endpoint:      endpoint,
-		PublicBaseURL: publicBaseURL,
-		BasePath:      basePath,
-		PublicRead:    publicRead,
+		bucket:        bucket,
+		basePath:      basePath,
+		publicBaseURL: publicBaseURL,
+		publicRead:    publicRead,
 		client:        client,
 	}, nil
 }
 
-// Upload streams the reader to Spaces and returns the public URL.
 func (s *SpacesUploader) Upload(ctx context.Context, objectKey string, contentType string, r io.Reader) (string, error) {
-	objectKey = strings.TrimLeft(objectKey, "/")
+	if s == nil || s.client == nil {
+		return "", errors.New("uploader not configured")
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return "", errors.New("object key is required")
+	}
 
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(s.Bucket),
-		Key:    aws.String(objectKey),
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
 		Body:   r,
 	}
 	if strings.TrimSpace(contentType) != "" {
 		input.ContentType = aws.String(contentType)
 	}
-	if s.PublicRead {
+	if s.publicRead {
 		input.ACL = types.ObjectCannedACLPublicRead
 	}
 
 	if _, err := s.client.PutObject(ctx, input); err != nil {
-		return "", fmt.Errorf("spaces upload failed: %w", err)
-	}
-
-	base := strings.TrimRight(s.PublicBaseURL, "/")
-	if base == "" {
-		return "", fmt.Errorf("spaces public base url is required")
-	}
-
-	return base + "/" + objectKey, nil
-}
-
-// BuildEventAssetKey produces a randomized object key under base path, separated by kind (image/banner).
-func (s *SpacesUploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {
-	token, err := randHex(16)
-	if err != nil {
 		return "", err
 	}
 
-	ext = strings.TrimLeft(ext, ".")
-	fileName := token + "." + ext
-
-	if s.BasePath == "" {
-		return path.Join("events", eventID, kind, fileName), nil
-	}
-	return path.Join(s.BasePath, "events", eventID, kind, fileName), nil
+	return strings.TrimRight(s.publicBaseURL, "/") + "/" + key, nil
 }
 
-// BuildTestimonialImageKey produces a randomized object key for testimonial images.
-func (s *SpacesUploader) BuildTestimonialImageKey(ext string) (string, error) {
-	token, err := randHex(16)
-	if err != nil {
-		return "", err
-	}
-
-	ext = strings.TrimLeft(ext, ".")
-	fileName := token + "." + ext
-
-	if s.BasePath == "" {
-		return path.Join("testimonials", fileName), nil
-	}
-	return path.Join(s.BasePath, "testimonials", fileName), nil
-}
-
-// BuildGenericAssetKey builds a randomized object key for a generic folder (e.g., admin uploads).
-// Folder is trimmed of slashes; defaults to "uploads" if empty.
-func (s *SpacesUploader) BuildGenericAssetKey(folder, ext string) (string, error) {
-	token, err := randHex(16)
-	if err != nil {
-		return "", err
-	}
-
-	folder = strings.Trim(folder, "/")
-	if folder == "" {
-		folder = "uploads"
-	}
-
-	ext = strings.TrimLeft(ext, ".")
-	fileName := token + "." + ext
-
-	if s.BasePath == "" {
-		return path.Join(folder, fileName), nil
-	}
-	return path.Join(s.BasePath, folder, fileName), nil
-}
-
-// URLForKey builds a public URL for an existing object key.
-func (s *SpacesUploader) URLForKey(objectKey string) (string, error) {
-	base := strings.TrimRight(strings.TrimSpace(s.PublicBaseURL), "/")
-	if base == "" {
-		return "", fmt.Errorf("spaces public base url is required")
+// PresignPut creates a pre-signed PUT URL for direct uploads.
+func (s *SpacesUploader) PresignPut(ctx context.Context, objectKey string, contentType string, expires time.Duration) (string, error) {
+	if s == nil || s.client == nil {
+		return "", errors.New("uploader not configured")
 	}
 	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
 	if key == "" {
-		return "", fmt.Errorf("object key is required")
+		return "", errors.New("object key is required")
 	}
-	return base + "/" + key, nil
-}
+	if expires <= 0 {
+		expires = 15 * time.Minute
+	}
 
-// ParseEndpointHost returns the host portion of the configured endpoint.
-func (s *SpacesUploader) ParseEndpointHost() string {
-	if strings.TrimSpace(s.Endpoint) == "" {
-		return ""
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
 	}
-	u, err := url.Parse(s.Endpoint)
+	if strings.TrimSpace(contentType) != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	if s.publicRead {
+		input.ACL = types.ObjectCannedACLPublicRead
+	}
+
+	presigner := s3.NewPresignClient(s.client)
+	out, err := presigner.PresignPutObject(ctx, input, s3.WithPresignExpires(expires))
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return u.Host
+	return out.URL, nil
 }
 
-// DefaultTimeout returns a reasonable upload timeout.
-func (s *SpacesUploader) DefaultTimeout() time.Duration {
-	return 60 * time.Second
+func (s *SpacesUploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return "", errors.New("eventID is required")
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return "", errors.New("kind is required")
+	}
+	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if ext == "" {
+		return "", errors.New("ext is required")
+	}
+
+	key := path.Join("events", eventID, fmt.Sprintf("%s.%s", kind, ext))
+	return s.withBasePath(key), nil
+}
+
+func (s *SpacesUploader) BuildTestimonialImageKey(ext string) (string, error) {
+	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if ext == "" {
+		return "", errors.New("ext is required")
+	}
+	key := path.Join("testimonials", uuid.NewString()+"."+ext)
+	return s.withBasePath(key), nil
+}
+
+func (s *SpacesUploader) BuildGenericAssetKey(folder, ext string) (string, error) {
+	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if ext == "" {
+		return "", errors.New("ext is required")
+	}
+	folder, err := sanitizeFolder(folder)
+	if err != nil {
+		return "", err
+	}
+	key := path.Join(folder, uuid.NewString()+"."+ext)
+	return s.withBasePath(key), nil
+}
+
+func (s *SpacesUploader) withBasePath(key string) string {
+	if s == nil {
+		return key
+	}
+	k := strings.TrimLeft(strings.TrimSpace(key), "/")
+	if s.basePath == "" {
+		return k
+	}
+	return path.Join(s.basePath, k)
+}
+
+func sanitizeFolder(folder string) (string, error) {
+	f := strings.Trim(strings.TrimSpace(folder), "/")
+	if f == "" {
+		return "uploads", nil
+	}
+	parts := strings.Split(f, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return "", errors.New("invalid folder")
+		}
+		if strings.Contains(p, "..") {
+			return "", errors.New("invalid folder")
+		}
+	}
+	return f, nil
+}
+
+func normalizeEndpoint(endpoint string) string {
+	raw := strings.TrimSpace(endpoint)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return raw
+	}
+	return "https://" + raw
+}
+
+func derivePublicBaseURL(bucket, endpoint, region string) string {
+	if bucket == "" {
+		return ""
+	}
+
+	if endpoint != "" {
+		u, err := url.Parse(endpoint)
+		if err == nil {
+			scheme := u.Scheme
+			host := u.Host
+			if host == "" {
+				host = strings.TrimSpace(u.Path)
+			}
+			if scheme == "" {
+				scheme = "https"
+			}
+			if host != "" {
+				if !strings.HasPrefix(host, bucket+".") {
+					host = bucket + "." + host
+				}
+				return scheme + "://" + host
+			}
+		}
+	}
+
+	if strings.TrimSpace(region) != "" {
+		return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, strings.TrimSpace(region))
+	}
+
+	return ""
+}
+
+func parseBoolEnv(key string, defaultValue bool) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if val == "" {
+		return defaultValue
+	}
+	switch val {
+	case "1", "true", "t", "yes", "y", "on":
+		return true
+	case "0", "false", "f", "no", "n", "off":
+		return false
+	default:
+		return defaultValue
+	}
 }
