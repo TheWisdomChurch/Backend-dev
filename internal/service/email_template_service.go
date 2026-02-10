@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,12 +17,37 @@ type EmailTemplateService interface {
 }
 
 type emailTemplateService struct {
-	sender   EmailSender
-	branding email.Branding
+	sender        EmailSender
+	branding      email.Branding
+	tplStore      *email.TemplateStore
+	remoteEnabled bool
+	remoteOnly    bool
+	remoteTimeout time.Duration
 }
 
 func NewEmailTemplateService(sender EmailSender, branding email.Branding) EmailTemplateService {
-	return &emailTemplateService{sender: sender, branding: branding}
+	var store *email.TemplateStore
+	if strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+		if ts, err := email.NewTemplateStoreFromEnv(); err == nil {
+			store = ts
+		}
+	}
+	remoteEnabled := isTrueEnv("EMAIL_TEMPLATE_REMOTE_ENABLED")
+	remoteOnly := isTrueEnv("EMAIL_TEMPLATE_REMOTE_ONLY")
+	timeout := 8 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("EMAIL_TEMPLATE_REMOTE_TIMEOUT_SECONDS")); raw != "" {
+		if sec, err := parseInt(raw); err == nil && sec > 0 {
+			timeout = time.Duration(sec) * time.Second
+		}
+	}
+	return &emailTemplateService{
+		sender:        sender,
+		branding:      branding,
+		tplStore:      store,
+		remoteEnabled: remoteEnabled || remoteOnly,
+		remoteOnly:    remoteOnly,
+		remoteTimeout: timeout,
+	}
 }
 
 func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRequest) (*models.SendTemplateEmailResponse, error) {
@@ -43,29 +70,25 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 
 	var subject string
 	var body string
+	templateKey := string(req.Template)
+	heroImageURL := email.TemplateAssetURL(s.branding, templateKey, "hero.png")
+	if strings.TrimSpace(req.HeroImageURL) != "" {
+		if resolved := email.ResolveTemplateAssetURL(s.branding, req.HeroImageURL); resolved != "" {
+			heroImageURL = resolved
+		}
+	}
+
+	var otpCode string
+	var otpExpires time.Time
 
 	switch req.Template {
 	case models.EmailTemplateRegistration:
 		subject = fmt.Sprintf("Welcome to %s", appName)
-		body = email.RenderRegistrationEmail(email.RegistrationTemplateData{
-			Branding:      s.branding,
-			RecipientName: req.RecipientName,
-			ActionURL:     req.ActionURL,
-			Message:       req.CustomMessage,
-			HeroImageURL:  email.TemplateAssetURL(s.branding, "registration", "hero.png"),
-		})
 	case models.EmailTemplateBirthday:
 		subject = fmt.Sprintf("Happy Birthday from %s", appName)
-		body = email.RenderBirthdayEmail(email.BirthdayTemplateData{
-			Branding:      s.branding,
-			RecipientName: req.RecipientName,
-			BirthdayDate:  req.BirthdayDate,
-			Message:       req.CustomMessage,
-			HeroImageURL:  email.TemplateAssetURL(s.branding, "birthday", "hero.png"),
-		})
 	case models.EmailTemplateOTP:
-		code := strings.TrimSpace(req.OTPCode)
-		if code == "" {
+		otpCode = strings.TrimSpace(req.OTPCode)
+		if otpCode == "" {
 			return nil, errors.New("otpCode is required for otp template")
 		}
 		expires := time.Now().UTC().Add(10 * time.Minute)
@@ -76,17 +99,56 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 			}
 			expires = parsed
 		}
+		otpExpires = expires
 		subject = fmt.Sprintf("%s verification code", appName)
-		body = email.RenderOTPEmail(email.OTPTemplateData{
-			Branding:     s.branding,
-			Code:         code,
-			Purpose:      strings.TrimSpace(req.TemplateReason),
-			ExpiresAt:    expires,
-			ActionURL:    strings.TrimSpace(req.ActionURL),
-			HeroImageURL: email.TemplateAssetURL(s.branding, "otp", "hero.png"),
-		})
 	default:
 		return nil, errors.New("unsupported template")
+	}
+
+	if s.remoteEnabled && s.tplStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), s.remoteTimeout)
+		defer cancel()
+		remoteBody, err := s.renderRemoteTemplate(ctx, templateKey, req, heroImageURL, otpCode, otpExpires)
+		if err == nil && strings.TrimSpace(remoteBody) != "" {
+			body = remoteBody
+		} else if s.remoteOnly {
+			if err == nil {
+				err = errors.New("remote template rendered empty body")
+			}
+			return nil, err
+		}
+	}
+
+	if strings.TrimSpace(body) == "" {
+		switch req.Template {
+		case models.EmailTemplateRegistration:
+			body = email.RenderRegistrationEmail(email.RegistrationTemplateData{
+				Branding:      s.branding,
+				RecipientName: req.RecipientName,
+				ActionURL:     req.ActionURL,
+				Message:       req.CustomMessage,
+				HeroImageURL:  heroImageURL,
+			})
+		case models.EmailTemplateBirthday:
+			body = email.RenderBirthdayEmail(email.BirthdayTemplateData{
+				Branding:      s.branding,
+				RecipientName: req.RecipientName,
+				BirthdayDate:  req.BirthdayDate,
+				Message:       req.CustomMessage,
+				HeroImageURL:  heroImageURL,
+			})
+		case models.EmailTemplateOTP:
+			body = email.RenderOTPEmail(email.OTPTemplateData{
+				Branding:     s.branding,
+				Code:         otpCode,
+				Purpose:      strings.TrimSpace(req.TemplateReason),
+				ExpiresAt:    otpExpires,
+				ActionURL:    strings.TrimSpace(req.ActionURL),
+				HeroImageURL: heroImageURL,
+			})
+		default:
+			return nil, errors.New("unsupported template")
+		}
 	}
 
 	if err := s.sender.SendHTML(to, subject, body); err != nil {
@@ -98,4 +160,82 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 		Template: string(req.Template),
 		SentAt:   time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+func (s *emailTemplateService) renderRemoteTemplate(
+	ctx context.Context,
+	templateKey string,
+	req *models.SendTemplateEmailRequest,
+	heroImageURL string,
+	otpCode string,
+	otpExpires time.Time,
+) (string, error) {
+	if s.tplStore == nil {
+		return "", errors.New("template store not configured")
+	}
+
+	branding := s.branding
+	if strings.TrimSpace(branding.AppName) == "" {
+		branding.AppName = "Wisdom House"
+	}
+
+	expiresRFC3339 := ""
+	expiresHuman := ""
+	if !otpExpires.IsZero() {
+		expiresRFC3339 = otpExpires.UTC().Format(time.RFC3339)
+		expiresHuman = otpExpires.UTC().Format("Mon, 02 Jan 2006 15:04 MST")
+	}
+
+	data := map[string]any{
+		"Branding":         branding,
+		"Template":         templateKey,
+		"AppName":          branding.AppName,
+		"LogoURL":          branding.LogoURL,
+		"PublicURL":        branding.PublicURL,
+		"FrontendURL":      branding.FrontendURL,
+		"SupportEmail":     branding.SupportEmail,
+		"PastorName":       branding.PastorName,
+		"AdminPortalURL":   branding.AdminPortalURL,
+		"RecipientName":    strings.TrimSpace(req.RecipientName),
+		"Email":            strings.TrimSpace(req.Email),
+		"ActionURL":        strings.TrimSpace(req.ActionURL),
+		"CustomMessage":    strings.TrimSpace(req.CustomMessage),
+		"TemplateReason":   strings.TrimSpace(req.TemplateReason),
+		"BirthdayDate":     strings.TrimSpace(req.BirthdayDate),
+		"HeroImageURL":     strings.TrimSpace(heroImageURL),
+		"OTPCode":          strings.TrimSpace(otpCode),
+		"OTPExpiresAt":     expiresRFC3339,
+		"OTPExpiresAtText": expiresHuman,
+		"Year":             time.Now().UTC().Year(),
+	}
+
+	_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, templateKey, data)
+	if err != nil {
+		return "", err
+	}
+	return htmlOut, nil
+}
+
+func isTrueEnv(key string) bool {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return false
+	}
+	switch strings.ToLower(val) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseInt(s string) (int, error) {
+	var n int
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("not a number")
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, nil
 }
