@@ -672,39 +672,6 @@ func main() {
 		emailSender = initEmailSender(cfg, logger)
 	}
 
-	// -------------------------------------------------------------------------
-	// Asset uploader (BunnyCDN-based, matches config.Bunny)
-	// -------------------------------------------------------------------------
-	var bunnyUploader *service.BunnyUploader
-	if cfg.Bunny.Enabled() {
-		bunnyUploader = service.NewBunnyUploader(
-			cfg.Bunny.StorageZone,
-			cfg.Bunny.StorageKey,
-			cfg.Bunny.StorageRegion,
-			cfg.Bunny.PullZone,
-			cfg.Bunny.BasePath,
-		)
-		logger.Println("✅ Bunny uploader initialized")
-	} else {
-		logger.Println("ℹ️ Bunny uploads disabled (not configured).")
-	}
-	var assetUploader service.AssetUploader
-	if bunnyUploader != nil {
-		assetUploader = bunnyUploader
-	}
-
-	// -------------------------------------------------------------------------
-	// Branding / email template assets
-	// -------------------------------------------------------------------------
-	templateAssetBaseURL := strings.TrimRight(cfg.App.EmailTemplateAssetBaseURL, "/")
-	if templateAssetBaseURL == "" && cfg.Bunny.Enabled() {
-		base := strings.TrimRight(cfg.Bunny.PullZone, "/")
-		if strings.TrimSpace(cfg.Bunny.BasePath) != "" {
-			base += "/" + strings.Trim(cfg.Bunny.BasePath, "/")
-		}
-		templateAssetBaseURL = base + "/email-templates"
-	}
-
 	branding := email.Branding{
 		AppName:              cfg.App.Name,
 		LogoURL:              cfg.App.LogoURL,

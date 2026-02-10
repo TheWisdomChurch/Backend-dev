@@ -18,6 +18,7 @@ type SendTemplateEmailRequest struct {
 	BirthdayDate   string            `json:"birthdayDate,omitempty"`
 	CustomMessage  string            `json:"customMessage,omitempty"`
 	TemplateReason string            `json:"templateReason,omitempty"`
+	HeroImageURL   string            `json:"heroImageUrl,omitempty"`
 }
 
 type SendTemplateEmailResponse struct {

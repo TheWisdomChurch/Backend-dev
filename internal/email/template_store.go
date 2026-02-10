@@ -18,14 +18,14 @@ import (
 )
 
 type TemplateStore struct {
-	BaseURL         string        // e.g. https://churchasset.fra1.digitaloceanspaces.com/email_template
-	AllowedHosts    []string      // SSRF protection
-	TTL             time.Duration // cache TTL
-	MaxTemplateKB   int64         // templates size limit in KB
-	MaxInlineImgMB  int64         // inline image limit in MB
-	client          *http.Client
-	mu              sync.Mutex
-	cache           map[string]cachedPair
+	BaseURL        string        // e.g. https://churchasset.fra1.digitaloceanspaces.com/email_template
+	AllowedHosts   []string      // SSRF protection
+	TTL            time.Duration // cache TTL
+	MaxTemplateKB  int64         // templates size limit in KB
+	MaxInlineImgMB int64         // inline image limit in MB
+	client         *http.Client
+	mu             sync.Mutex
+	cache          map[string]cachedPair
 }
 
 type cachedPair struct {
@@ -102,6 +102,11 @@ type TemplateData struct {
 }
 
 func (ts *TemplateStore) Render(ctx context.Context, templateKey string, data TemplateData) (textOut, htmlOut string, rawHTML string, err error) {
+	return ts.RenderWithData(ctx, templateKey, data)
+}
+
+// RenderWithData renders a template pair using any data structure (map or struct).
+func (ts *TemplateStore) RenderWithData(ctx context.Context, templateKey string, data any) (textOut, htmlOut string, rawHTML string, err error) {
 	txtName := templateKey + ".txt"
 	htmlName := templateKey + ".html"
 
