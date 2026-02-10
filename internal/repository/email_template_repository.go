@@ -3,7 +3,7 @@ package repository
 import (
 	"errors"
 
-	"gorm.io/gorm"
+	// "gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
