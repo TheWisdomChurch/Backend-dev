@@ -2,9 +2,11 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
+var templateKeyRe = regexp.MustCompile(`^[A-Za-z0-9/_-]+$`)
 var ErrFormExpired = errors.New("form expired")
 var ErrFormClosed = errors.New("registration closed")
 var flexibleTimeLayouts = []string{
@@ -63,6 +66,8 @@ type formService struct {
 	branding     email.Branding
 
 	publicBaseURL string
+	tplStore      *email.TemplateStore
+	templateTimeout time.Duration
 }
 
 func NewFormService(
@@ -73,6 +78,20 @@ func NewFormService(
 	branding email.Branding,
 	publicBaseURL string,
 ) FormService {
+	var tplStore *email.TemplateStore
+	if strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+		if ts, err := email.NewTemplateStoreFromEnv(); err == nil {
+			tplStore = ts
+		}
+	}
+
+	templateTimeout := 8 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("EMAIL_TEMPLATE_REMOTE_TIMEOUT_SECONDS")); raw != "" {
+		if sec, err := strconv.Atoi(raw); err == nil && sec > 0 {
+			templateTimeout = time.Duration(sec) * time.Second
+		}
+	}
+
 	return &formService{
 		repo:          repo,
 		eventRepo:     eventRepo,
@@ -80,6 +99,8 @@ func NewFormService(
 		sender:        sender,
 		branding:      branding,
 		publicBaseURL: strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
+		tplStore:      tplStore,
+		templateTimeout: templateTimeout,
 	}
 }
 
@@ -480,6 +501,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	if regCode != nil && email != nil && s.sender != nil {
 		s.sendRegistrationCodeEmail(form, *email, name, *regCode)
 	}
+	if email != nil {
+		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode)
+	}
 
 	return nil
 }
@@ -621,6 +645,20 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	var err error
 	if s.SuccessMessage, err = normalizeText("successMessage", s.SuccessMessage, 400); err != nil {
 		return nil, err
+	}
+	if s.ResponseEmailSubject, err = normalizeText("responseEmailSubject", s.ResponseEmailSubject, 160); err != nil {
+		return nil, err
+	}
+	if s.ResponseEmailTemplateKey != nil {
+		key := strings.Trim(strings.TrimSpace(*s.ResponseEmailTemplateKey), "/")
+		if key == "" {
+			s.ResponseEmailTemplateKey = nil
+		} else {
+			if strings.Contains(key, "..") || !templateKeyRe.MatchString(key) {
+				return nil, fmt.Errorf("responseEmailTemplateKey contains invalid characters")
+			}
+			s.ResponseEmailTemplateKey = &key
+		}
 	}
 	if s.IntroTitle, err = normalizeText("introTitle", s.IntroTitle, 200); err != nil {
 		return nil, err
@@ -1671,4 +1709,139 @@ func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr str
 		Message:       message,
 	})
 	_ = s.sender.SendHTML(emailAddr, subject, body)
+}
+
+func (s *formService) sendResponseEmail(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, name *string, emailAddr string, regCode *string) {
+	if s.sender == nil {
+		return
+	}
+
+	addr := strings.TrimSpace(emailAddr)
+	if addr == "" {
+		return
+	}
+
+	if settings != nil && settings.ResponseEmailEnabled != nil && !*settings.ResponseEmailEnabled {
+		return
+	}
+
+	recipient := ""
+	if name != nil {
+		recipient = strings.TrimSpace(*name)
+	}
+
+	event := &models.Event{}
+	if form != nil && form.EventID != nil && s.eventRepo != nil {
+		if ev, err := s.eventRepo.GetByID(*form.EventID); err == nil && ev != nil {
+			event = ev
+		}
+	}
+
+	formTitle := ""
+	if form != nil {
+		formTitle = strings.TrimSpace(form.Title)
+	}
+	if formTitle == "" {
+		formTitle = strings.TrimSpace(event.Title)
+	}
+
+	subject := "Registration received"
+	if formTitle != "" {
+		subject = fmt.Sprintf("Registration received: %s", formTitle)
+	}
+	if settings != nil && settings.ResponseEmailSubject != nil {
+		if s := strings.TrimSpace(*settings.ResponseEmailSubject); s != "" {
+			subject = s
+		}
+	}
+
+	templateKey := ""
+	if settings != nil && settings.ResponseEmailTemplateKey != nil {
+		templateKey = strings.TrimSpace(*settings.ResponseEmailTemplateKey)
+	}
+	if templateKey == "" && form != nil && form.Slug != nil {
+		slug := strings.TrimSpace(*form.Slug)
+		if slug != "" {
+			templateKey = "forms/" + slug
+		}
+	}
+
+	formURL := ""
+	if form != nil && form.Slug != nil {
+		if u := s.buildPublicURL(*form.Slug); u != nil {
+			formURL = *u
+		}
+	}
+
+	code := ""
+	if regCode != nil {
+		code = strings.TrimSpace(*regCode)
+	}
+
+	hero := ""
+	if settings != nil && settings.Design != nil && settings.Design.CoverImageURL != nil {
+		hero = strings.TrimSpace(*settings.Design.CoverImageURL)
+	}
+	if hero == "" && event.BannerImage != nil {
+		hero = strings.TrimSpace(*event.BannerImage)
+	}
+	if hero == "" && event.Image != nil {
+		hero = strings.TrimSpace(*event.Image)
+	}
+
+	var body string
+	if templateKey != "" && s.tplStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), s.templateTimeout)
+		defer cancel()
+
+		now := time.Now().UTC()
+		data := map[string]any{
+			"Branding":         s.branding,
+			"Form":             form,
+			"Event":            event,
+			"Values":           values,
+			"RecipientName":    recipient,
+			"Email":            addr,
+			"RegistrationCode": code,
+			"FormURL":          formURL,
+			"PublicURL":        formURL,
+			"FormTitle":        formTitle,
+			"EventTitle":       strings.TrimSpace(event.Title),
+			"EventDate":        strings.TrimSpace(event.Date),
+			"EventTime":        strings.TrimSpace(event.Time),
+			"EventLocation":    strings.TrimSpace(event.Location),
+			"HeroImageURL":     hero,
+			"SubmittedAt":      now.Format(time.RFC3339),
+			"SubmittedAtText":  now.Format("Mon, 02 Jan 2006 15:04 MST"),
+			"Year":             now.Year(),
+		}
+
+		_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, templateKey, data)
+		if err == nil && strings.TrimSpace(htmlOut) != "" {
+			body = htmlOut
+		}
+	}
+
+	if strings.TrimSpace(body) == "" {
+		message := ""
+		if settings != nil && settings.SuccessMessage != nil {
+			message = strings.TrimSpace(*settings.SuccessMessage)
+		}
+
+		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
+			Branding:         s.branding,
+			RecipientName:    recipient,
+			FormTitle:        formTitle,
+			EventTitle:       strings.TrimSpace(event.Title),
+			EventDate:        strings.TrimSpace(event.Date),
+			EventTime:        strings.TrimSpace(event.Time),
+			EventLocation:    strings.TrimSpace(event.Location),
+			RegistrationCode: code,
+			Message:          message,
+			FormURL:          formURL,
+			HeroImageURL:     hero,
+		})
+	}
+
+	_ = s.sender.SendHTML(addr, subject, body)
 }
