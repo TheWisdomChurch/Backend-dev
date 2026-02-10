@@ -6,8 +6,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
+	"net/http"
 	"net/mail"
+	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -16,12 +20,6 @@ import (
 	gomail "github.com/wneessen/go-mail"
 )
 
-// Sender is the central SMTP sender used by all services.
-// It supports:
-//
-//   • Local relay (Postfix) without SMTP auth
-//   • Direct SMTP providers (Brevo, Gmail, etc.) with auth
-//   • Simple per-recipient rate limiting via Redis
 type Sender struct {
 	host       string
 	port       int
@@ -31,12 +29,13 @@ type Sender struct {
 	requireTLS bool
 	timeout    time.Duration
 	redis      *redis.Client
+
+	// optional: template store + http client for image inlining
+	tplStore *TemplateStore
+	http     *http.Client
 }
 
-// NewSender builds a Sender.
-// Arguments come from config, but are allowed to be empty: we then fall back to env.
 func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (*Sender, error) {
-	// Normalize / fall back to env
 	h := strings.TrimSpace(host)
 	if h == "" {
 		h = strings.TrimSpace(os.Getenv("SMTP_HOST"))
@@ -123,6 +122,14 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 		}
 	}
 
+	// Template store (optional; only used when calling SendTemplateReceiptWithPDF)
+	var ts *TemplateStore
+	if strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+		if store, err := NewTemplateStoreFromEnv(); err == nil {
+			ts = store
+		}
+	}
+
 	return &Sender{
 		host:       h,
 		port:       portInt,
@@ -132,6 +139,10 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 		requireTLS: requireTLS,
 		timeout:    timeout,
 		redis:      redisClient,
+		tplStore:   ts,
+		http: &http.Client{
+			Timeout: 12 * time.Second,
+		},
 	}, nil
 }
 
@@ -140,16 +151,8 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 	return s.sendInternal(to, subject, body, nil)
 }
 
-// SendHTMLWithAttachment sends an HTML email with a single attachment
-// (e.g. PDF). contentType can be "" to default to application/pdf.
-func (s *Sender) SendHTMLWithAttachment(
-	to string,
-	subject string,
-	body string,
-	attachmentName string,
-	contentType string,
-	payload []byte,
-) error {
+// SendHTMLWithAttachment sends an HTML email with a single attachment (e.g. PDF).
+func (s *Sender) SendHTMLWithAttachment(to, subject, body, attachmentName, contentType string, payload []byte) error {
 	if len(payload) == 0 {
 		return fmt.Errorf("attachment payload is empty")
 	}
@@ -170,13 +173,107 @@ func (s *Sender) SendHTMLWithAttachment(
 	})
 }
 
-// sendInternal encapsulates the actual SMTP send logic.
-func (s *Sender) sendInternal(
+// SendMultipartWithAttachment sends TEXT + HTML (alternative) + embeds (CID) + one attachment (PDF).
+func (s *Sender) SendMultipartWithAttachment(
 	to string,
 	subject string,
-	body string,
-	mutate func(msg *gomail.Msg) error,
+	textBody string,
+	htmlBody string,
+	attachmentName string,
+	contentType string,
+	payload []byte,
+	inlineImages []inlineImage, // optional (CID embeds)
 ) error {
+	if len(payload) == 0 {
+		return fmt.Errorf("attachment payload is empty")
+	}
+	if attachmentName == "" {
+		attachmentName = "attachment.pdf"
+	}
+	if contentType == "" {
+		contentType = "application/pdf"
+	}
+
+	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
+		// Main body (text)
+		msg.SetBodyString(gomail.TypeTextPlain, textBody)
+		// Alternative body (html)
+		msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+
+		// Inline images (CID) -> use EmbedReader + WithFileContentID
+		for _, im := range inlineImages {
+			if len(im.Bytes) == 0 {
+				continue
+			}
+			ct := im.ContentType
+			if strings.TrimSpace(ct) == "" {
+				ct = "application/octet-stream"
+			}
+
+			// EmbedReader will mark it as inline embed and Content-ID enables cid:xxx references
+			if err := msg.EmbedReader(
+				im.Filename,
+				bytes.NewReader(im.Bytes),
+				gomail.WithFileName(im.Filename),
+				gomail.WithFileContentType(gomail.ContentType(ct)),
+				gomail.WithFileContentID(im.CID),
+			); err != nil {
+				return fmt.Errorf("embed inline image failed: %w", err)
+			}
+		}
+
+		// PDF attachment
+		return msg.AttachReader(
+			attachmentName,
+			bytes.NewReader(payload),
+			gomail.WithFileName(attachmentName),
+			gomail.WithFileContentType(gomail.ContentType(contentType)),
+		)
+	})
+}
+
+// SendTemplateReceiptWithPDF fetches templates from Spaces, enforces size limits (in TemplateStore),
+// optionally embeds images <= MaxInlineImgMB, and attaches the encrypted PDF.
+func (s *Sender) SendTemplateReceiptWithPDF(
+	ctx context.Context,
+	toEmail string,
+	subject string,
+	templateKey string, // e.g. "receipt" -> receipt.html + receipt.txt
+	data TemplateData,
+	attachmentName string,
+	encryptedPDF []byte,
+) error {
+	if s.tplStore == nil {
+		return fmt.Errorf("template store not configured: check SPACES_PUBLIC_BASE_URL and SPACES_EMAIL_TEMPLATE_PATH")
+	}
+
+	textBody, htmlBody, rawHTML, err := s.tplStore.Render(ctx, templateKey, data)
+	if err != nil {
+		return err
+	}
+
+	inlineImgs, rewrittenHTML := s.tryInlineImages(ctx, htmlBody, rawHTML, s.tplStore.MaxInlineImgMB)
+
+	finalHTML := htmlBody
+	if rewrittenHTML != "" {
+		finalHTML = rewrittenHTML
+	}
+
+	return s.SendMultipartWithAttachment(
+		toEmail,
+		subject,
+		textBody,
+		finalHTML,
+		attachmentName,
+		"application/pdf",
+		encryptedPDF,
+		inlineImgs,
+	)
+}
+
+// sendInternal encapsulates the actual SMTP send logic.
+// IMPORTANT: if body is empty, mutate must set bodies (multipart).
+func (s *Sender) sendInternal(to, subject, body string, mutate func(msg *gomail.Msg) error) error {
 	if s.host == "" || s.port == 0 {
 		return fmt.Errorf("smtp configuration is incomplete")
 	}
@@ -186,7 +283,7 @@ func (s *Sender) sendInternal(
 		return fmt.Errorf("recipient address is empty")
 	}
 
-	// Simple per-recipient rate limiting: 10 mails / minute
+	// Rate limiting: 10 mails/min/recipient
 	if s.redis != nil {
 		ctx := context.Background()
 		key := fmt.Sprintf("email_rate:%s", strings.ToLower(to))
@@ -229,12 +326,9 @@ func (s *Sender) sendInternal(
 		gomail.WithTimeout(s.timeout),
 		gomail.WithTLSPolicy(tlsPolicy),
 	}
-
 	if tlsConfig != nil {
 		options = append(options, gomail.WithTLSConfig(tlsConfig))
 	}
-
-	// Implicit SSL for 465 if ever used
 	if s.port == 465 {
 		options = append(options, gomail.WithSSL())
 	}
@@ -244,7 +338,6 @@ func (s *Sender) sendInternal(
 		options = append(options,
 			gomail.WithUsername(s.user),
 			gomail.WithPassword(s.pass),
-			// Plain is fine as long as TLS is required for remote providers
 			gomail.WithSMTPAuth(gomail.SMTPAuthPlain),
 		)
 	}
@@ -267,16 +360,154 @@ func (s *Sender) sendInternal(
 	}
 
 	msg.Subject(subject)
-	msg.SetBodyString(gomail.TypeTextHTML, body)
+
+	// Legacy HTML support: if body provided, set it. Otherwise mutate must set body/alt.
+	if strings.TrimSpace(body) != "" {
+		msg.SetBodyString(gomail.TypeTextHTML, body)
+	}
 
 	if mutate != nil {
 		if err := mutate(msg); err != nil {
 			return fmt.Errorf("failed to apply message mutation: %w", err)
 		}
+	} else if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("no email body provided")
 	}
 
 	if err := client.DialAndSend(msg); err != nil {
 		return fmt.Errorf("smtp send failed: %w", err)
 	}
 	return nil
+}
+
+/*
+=========================================================
+Inline images (CID) with size limits
+=========================================================
+*/
+
+type inlineImage struct {
+	URL         string
+	CID         string
+	Filename    string
+	ContentType string
+	Bytes       []byte
+}
+
+// tryInlineImages:
+// - scans HTML for <img src="...">
+// - fetches image if https and <= maxMB
+// - rewrites src="..." to src="cid:CID"
+// - skips any image that exceeds limit or fails fetch (keeps remote URL)
+func (s *Sender) tryInlineImages(ctx context.Context, renderedHTML string, _rawHTML string, maxMB int64) ([]inlineImage, string) {
+	maxBytes := maxMB * 1024 * 1024
+	srcs := ExtractImgSrcs(renderedHTML)
+	if len(srcs) == 0 {
+		return nil, ""
+	}
+
+	inline := make([]inlineImage, 0, len(srcs))
+	outHTML := renderedHTML
+
+	for i, src := range srcs {
+		u, err := url.Parse(src)
+		if err != nil || u.Scheme == "" {
+			continue
+		}
+		if u.Scheme != "https" {
+			continue
+		}
+
+		// HEAD to pre-check size (if available)
+		if ok, contentLen, _ := s.headImage(ctx, src); ok && contentLen > 0 && contentLen > maxBytes {
+			continue // do not inline > maxBytes
+		}
+
+		b, ct, ok := s.getImageLimited(ctx, src, maxBytes)
+		if !ok {
+			continue
+		}
+
+		cid := fmt.Sprintf("img-%d-%d@inline", time.Now().UnixNano(), i)
+		filename := filenameFromURL(u)
+		if filename == "" {
+			filename = fmt.Sprintf("image-%d", i)
+		}
+
+		inline = append(inline, inlineImage{
+			URL:         src,
+			CID:         cid,
+			Filename:    filename,
+			ContentType: ct,
+			Bytes:       b,
+		})
+
+		outHTML = strings.ReplaceAll(outHTML, `src="`+src+`"`, `src="cid:`+cid+`"`)
+		outHTML = strings.ReplaceAll(outHTML, `src='`+src+`'`, `src='cid:`+cid+`'`)
+	}
+
+	if len(inline) == 0 {
+		return nil, ""
+	}
+	return inline, outHTML
+}
+
+func (s *Sender) headImage(ctx context.Context, imgURL string) (ok bool, contentLen int64, contentType string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, imgURL, nil)
+	if err != nil {
+		return false, 0, ""
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return false, 0, ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return false, 0, ""
+	}
+	return true, resp.ContentLength, resp.Header.Get("Content-Type")
+}
+
+func (s *Sender) getImageLimited(ctx context.Context, imgURL string, maxBytes int64) ([]byte, string, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imgURL, nil)
+	if err != nil {
+		return nil, "", false
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, "", false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, "", false
+	}
+
+	if resp.ContentLength > maxBytes && resp.ContentLength != -1 {
+		return nil, "", false
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, "", false
+	}
+	if int64(len(b)) > maxBytes {
+		return nil, "", false
+	}
+	return b, ct, true
+}
+
+func filenameFromURL(u *url.URL) string {
+	p := strings.TrimSpace(u.Path)
+	if p == "" {
+		return ""
+	}
+	base := path.Base(p)
+	return strings.TrimSpace(base)
 }
