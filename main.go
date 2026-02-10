@@ -618,6 +618,17 @@ func main() {
 
 	ensureCORSDefaults(cfg)
 
+	// -------------------------------------------------------------------------
+	// Asset uploader (DigitalOcean Spaces / S3)
+	// -------------------------------------------------------------------------
+	var assetUploader service.AssetUploader
+	if uploader, err := service.NewSpacesUploaderFromEnv(); err != nil {
+		logger.Printf("⚠️ Storage uploader not initialized: %v", err)
+	} else if uploader != nil {
+		assetUploader = uploader
+		logger.Println("✅ Storage uploader initialized (Spaces)")
+	}
+
 	// Database
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
 	if err != nil {
