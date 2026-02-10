@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jung-kurt/gofpdf"
 )
@@ -21,9 +22,11 @@ var dejavuSans []byte
 //go:embed fonts/DejaVuSans-Bold.ttf
 var dejavuSansBold []byte
 
-// Logo (PNG recommended)
+// Logo
+// BEST PRACTICE: use PNG (assets/logo.png).
+// If you keep webp, gofpdf won't render it; this code will skip it safely.
 //go:embed assets/logo.webp
-var logoPNG []byte
+var logoBytes []byte
 
 // Submission is a minimal shape for PDF export.
 type Submission struct {
@@ -52,9 +55,12 @@ func BuildSubmissionsPDF(formTitle string, submissions []Submission) ([]byte, er
 	pdf.SetMargins(marginL, marginTop, marginR)
 	pdf.SetAutoPageBreak(true, marginBottom)
 
-	// Unicode fonts
+	// Unicode fonts (REGISTRATION FIX)
+	// Important: register regular and bold as separate "families" so B works reliably.
 	pdf.AddUTF8FontFromBytes("DejaVu", "", dejavuSans)
-	// Register logo in-memory (so no file system dependency)
+	pdf.AddUTF8FontFromBytes("DejaVu", "B", dejavuSansBold)
+
+	// Register logo in-memory (no file system dependency)
 	logoName, err := registerLogo(pdf)
 	if err != nil {
 		return nil, err
@@ -75,7 +81,7 @@ func BuildSubmissionsPDF(formTitle string, submissions []Submission) ([]byte, er
 	pdf.AliasNbPages("")
 	pdf.AddPage()
 
-	// Title block (first page only – optional; keep it clean)
+	// Title block
 	pdf.SetFont("DejaVu", "B", 14)
 	pdf.CellFormat(0, 8, "Form Submissions Export", "", 1, "L", false, 0, "")
 	pdf.SetFont("DejaVu", "", 10.5)
@@ -124,17 +130,57 @@ func BuildSubmissionsPDF(formTitle string, submissions []Submission) ([]byte, er
 ========================= */
 
 func registerLogo(pdf *gofpdf.Fpdf) (string, error) {
-	if len(logoPNG) == 0 {
-		return "", nil // allow running without logo if embed missing
+	if len(logoBytes) == 0 {
+		return "", nil
 	}
+
+	// Detect image type from signature
+	imgType := detectImageType(logoBytes)
+	if imgType == "" {
+		return "", nil
+	}
+
+	// NOTE: gofpdf supports PNG/JPG/GIF. It does NOT support WEBP.
+	// If you embed .webp, we skip it safely (PDF still generates).
+	if imgType == "WEBP" {
+		return "", nil
+	}
+
 	name := "brand_logo"
-	opt := gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: true}
-	pdf.RegisterImageOptionsReader(name, opt, bytes.NewReader(logoPNG))
+	opt := gofpdf.ImageOptions{ImageType: imgType, ReadDpi: true}
+	pdf.RegisterImageOptionsReader(name, opt, bytes.NewReader(logoBytes))
 	return name, nil
 }
 
+func detectImageType(b []byte) string {
+	if len(b) < 12 {
+		return ""
+	}
+
+	// PNG signature
+	if bytes.HasPrefix(b, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "PNG"
+	}
+
+	// JPEG signature
+	if b[0] == 0xFF && b[1] == 0xD8 {
+		return "JPG"
+	}
+
+	// GIF signature
+	if bytes.HasPrefix(b, []byte("GIF87a")) || bytes.HasPrefix(b, []byte("GIF89a")) {
+		return "GIF"
+	}
+
+	// WEBP signature: "RIFF....WEBP"
+	if bytes.HasPrefix(b, []byte("RIFF")) && bytes.HasPrefix(b[8:], []byte("WEBP")) {
+		return "WEBP"
+	}
+
+	return ""
+}
+
 func drawHeader(pdf *gofpdf.Fpdf, logoName string, formTitle string, exportedAt time.Time) {
-	// Header band layout (absolute positioning)
 	const (
 		headerTop = 10.0
 		leftX     = 12.0
@@ -143,7 +189,6 @@ func drawHeader(pdf *gofpdf.Fpdf, logoName string, formTitle string, exportedAt 
 
 	// Logo
 	if logoName != "" {
-		// Fit logo into a fixed box
 		logoW, logoH := 18.0, 18.0
 		pdf.ImageOptions(logoName, leftX, headerTop, logoW, logoH, false, gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: true}, 0, "")
 	}
@@ -173,7 +218,7 @@ func drawFooter(pdf *gofpdf.Fpdf) {
 	leftX := 12.0
 	rightX := 198.0
 
-	pdf.SetY(-14) // fixed from bottom
+	pdf.SetY(-14)
 	pdf.SetDrawColor(230, 230, 230)
 	pdf.Line(leftX, pdf.GetY(), rightX, pdf.GetY())
 	pdf.SetDrawColor(0, 0, 0)
@@ -186,14 +231,13 @@ func drawFooter(pdf *gofpdf.Fpdf) {
 	pdf.CellFormat(0, 5, fmt.Sprintf("Page %d/{nb}", pdf.PageNo()), "", 0, "R", false, 0, "")
 }
 
-// Optional “content frame” so everything feels contained.
 func drawContentFrame(pdf *gofpdf.Fpdf) {
-	// Frame must match the content area = inside margins + above footer
 	pageW, pageH := pdf.GetPageSize()
+	_ = pageH
 
 	left, top, right, bottom := pdf.GetMargins()
 	x := left
-	y := top - 6 // slightly above first content baseline
+	y := top - 6
 	w := pageW - left - right
 	h := pageH - top - bottom + 4
 
@@ -237,6 +281,9 @@ func buildRows(s Submission, name, email string, dynamicKeys []string) []kvRow {
 	}
 
 	for _, k := range dynamicKeys {
+		if s.Values == nil {
+			continue
+		}
 		v, ok := s.Values[k]
 		if !ok {
 			continue
@@ -332,15 +379,15 @@ func collectValueKeys(subs []Submission) []string {
 	}
 
 	priority := map[string]int{
-		"full_name":  0,
-		"name":       1,
-		"email":      2,
-		"phone":      3,
-		"field_4":    3,
-		"address":    4,
-		"field_3":    10,
-		"field_5":    11,
-		"field_6":    12,
+		"full_name": 0,
+		"name":      1,
+		"email":     2,
+		"phone":     3,
+		"field_4":   3,
+		"address":   4,
+		"field_3":   10,
+		"field_5":   11,
+		"field_6":   12,
 	}
 
 	sort.Slice(keys, func(i, j int) bool {
@@ -402,7 +449,7 @@ func normalizeNameEmail(name, email string, values map[string]any) (string, stri
 	email = safeOneLine(email)
 
 	if email == "" {
-		email = safeOneLine(valueFromKeys(values, "email", "full_name"))
+		email = safeOneLine(valueFromKeys(values, "email"))
 	}
 	if name == "" {
 		name = safeOneLine(valueFromKeys(values, "full_name", "name"))
@@ -439,8 +486,8 @@ func prettifyKey(k string) string {
 	if k == "" {
 		return "Response"
 	}
-	lk := strings.ToLower(k)
 
+	lk := strings.ToLower(k)
 	switch lk {
 	case "full_name":
 		return "Full name"
@@ -462,9 +509,19 @@ func prettifyKey(k string) string {
 
 	parts := strings.FieldsFunc(k, func(r rune) bool { return r == '_' || r == '-' })
 	for i := range parts {
-		parts[i] = strings.Title(strings.ToLower(parts[i]))
+		parts[i] = titleWord(parts[i])
 	}
 	return strings.Join(parts, " ")
+}
+
+func titleWord(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	r := []rune(strings.ToLower(s))
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
 }
 
 func normalizeValueString(key string, v any) string {
@@ -476,7 +533,8 @@ func normalizeValueString(key string, v any) string {
 	}
 	if f, ok := v.(float64); ok {
 		// Phone-like fields should never be exponent format
-		if strings.Contains(strings.ToLower(key), "phone") || strings.Contains(strings.ToLower(key), "field_4") {
+		lk := strings.ToLower(key)
+		if strings.Contains(lk, "phone") || strings.Contains(lk, "field_4") {
 			if f == math.Trunc(f) {
 				return strconv.FormatInt(int64(f), 10)
 			}
@@ -503,7 +561,8 @@ func normalizePhone(raw string) string {
 	}
 
 	// Handle "8.060974191e+09"
-	if strings.Contains(strings.ToLower(s), "e+") || strings.Contains(strings.ToLower(s), "e-") {
+	ls := strings.ToLower(s)
+	if strings.Contains(ls, "e+") || strings.Contains(ls, "e-") {
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
 			if f == math.Trunc(f) {
 				s = strconv.FormatInt(int64(f), 10)

@@ -175,22 +175,6 @@ func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender
 		}
 	}
 
-	// Next: AWS SES
-	if hasAnyEnv("AWS_REGION", "SES_FROM_EMAIL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY") {
-		s, err := email.NewSESSender(cfg.Redis.URL, "", "")
-		if err != nil {
-			logger.Printf("⚠️ SES email sender not initialized: %v", err)
-		} else if primary == nil {
-			primary = s
-			primaryName = "SES"
-			logger.Println("✅ Email sender initialized (AWS SES)")
-		} else if fallback == nil {
-			fallback = s
-			fallbackName = "SES"
-			logger.Println("✅ Email fallback configured (AWS SES)")
-		}
-	}
-
 	if primary == nil {
 		logger.Println("⚠️ Email sender not configured (no SMTP/Brevo/SES). Outbound email disabled.")
 		return noopEmailSender{}
