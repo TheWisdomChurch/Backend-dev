@@ -397,6 +397,7 @@ func setupRouter(
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
 	uploadHandler *handlers.UploadHandler,
+	assetHandler *handlers.AssetHandler,
 	eventHandler *handlers.EventHandler,
 	adminNotificationHandler *handlers.AdminNotificationHandler,
 	approvalRequestHandler *handlers.ApprovalRequestHandler,
@@ -408,6 +409,7 @@ func setupRouter(
 	workforceHandler *handlers.WorkforceHandler,
 	memberHandler *handlers.MemberHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
+	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -498,19 +500,18 @@ func setupRouter(
 
 	// Forms
 	// Forms
-admin.GET("/forms", formHandler.ListAdminForms)
-admin.GET("/forms/:id", formHandler.GetAdminForm)
-admin.POST("/forms", formHandler.CreateAdminForm)
-admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
-admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
-admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
+	admin.GET("/forms", formHandler.ListAdminForms)
+	admin.GET("/forms/:id", formHandler.GetAdminForm)
+	admin.POST("/forms", formHandler.CreateAdminForm)
+	admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
+	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
+	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
 
-admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
-admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
-admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
+	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
+	admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
+	admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
 
-admin.GET("/forms/stats", formHandler.GetFormStats)
-
+	admin.GET("/forms/stats", formHandler.GetFormStats)
 
 	// Notifications (admin)
 	admin.GET("/notifications/subscribers", notificationHandler.ListSubscribers)
@@ -525,9 +526,18 @@ admin.GET("/forms/stats", formHandler.GetFormStats)
 
 	// Email templates
 	admin.POST("/email/templates/send", emailTemplateHandler.SendTemplate)
+	admin.GET("/email/templates", emailTemplateRegistryHandler.List)
+	admin.POST("/email/templates", emailTemplateRegistryHandler.Create)
+	admin.GET("/email/templates/:id", emailTemplateRegistryHandler.Get)
+	admin.PUT("/email/templates/:id", emailTemplateRegistryHandler.Update)
+	admin.POST("/email/templates/:id/activate", emailTemplateRegistryHandler.Activate)
 
 	// Uploads
 	admin.POST("/uploads/images", uploadHandler.UploadImage)
+	admin.POST("/uploads/presign", assetHandler.Presign)
+	admin.POST("/uploads/:id/complete", assetHandler.Complete)
+	admin.GET("/uploads/:id", assetHandler.Get)
+	admin.GET("/uploads", assetHandler.List)
 
 	// Events
 	admin.GET("/events", eventHandler.List)
@@ -660,6 +670,8 @@ func main() {
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
 	formRepo := repository.NewFormRepository(db)
+	assetRepo := repository.NewAssetRepository(db)
+	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	approvalRequestRepo := repository.NewApprovalRequestRepository(db)
@@ -681,6 +693,17 @@ func main() {
 		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
 		emailSender = initEmailSender(cfg, logger)
+	}
+
+	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
+	if templateAssetBaseURL == "" {
+		base := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
+		path := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_EMAIL_TEMPLATE_PATH")), "/")
+		if base != "" && path != "" {
+			templateAssetBaseURL = base + "/" + path
+		} else if base != "" {
+			templateAssetBaseURL = base
+		}
 	}
 
 	branding := email.Branding{
@@ -751,6 +774,9 @@ func main() {
 		branding,
 	)
 
+	assetService := service.NewAssetService(assetRepo, assetUploader)
+	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
+
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	if publicBaseURL == "" {
 		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
@@ -759,6 +785,7 @@ func main() {
 		formRepo,
 		eventRepo,
 		registrationSequenceRepo,
+		emailTemplateRepo,
 		emailSender,
 		branding,
 		publicBaseURL,
@@ -783,6 +810,7 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService)
 	adminHandler := handlers.NewAdminHandler(adminService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader)
+	assetHandler := handlers.NewAssetHandler(assetService)
 	eventHandler := handlers.NewEventHandler(
 		eventRepo,
 		assetUploader,
@@ -800,6 +828,7 @@ func main() {
 	workforceHandler := handlers.NewWorkforceHandler(workforceService)
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
+	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
 
 	// -------------------------------------------------------------------------
 	// Background jobs
@@ -838,6 +867,7 @@ func main() {
 		authHandler,
 		adminHandler,
 		uploadHandler,
+		assetHandler,
 		eventHandler,
 		adminNotificationHandler,
 		approvalRequestHandler,
@@ -849,6 +879,7 @@ func main() {
 		workforceHandler,
 		memberHandler,
 		emailTemplateHandler,
+		emailTemplateRegistryHandler,
 	)
 
 	server := &http.Server{
