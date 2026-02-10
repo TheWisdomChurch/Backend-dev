@@ -2,10 +2,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"os"
 	"regexp"
 	"strconv"
@@ -62,11 +64,12 @@ type formService struct {
 	eventRepo *repository.EventRepository
 
 	sequenceRepo *repository.RegistrationSequenceRepository
+	templateRepo repository.EmailTemplateRepository
 	sender       EmailSender
 	branding     email.Branding
 
-	publicBaseURL string
-	tplStore      *email.TemplateStore
+	publicBaseURL   string
+	tplStore        *email.TemplateStore
 	templateTimeout time.Duration
 }
 
@@ -74,6 +77,7 @@ func NewFormService(
 	repo repository.FormRepository,
 	eventRepo *repository.EventRepository,
 	sequenceRepo *repository.RegistrationSequenceRepository,
+	templateRepo repository.EmailTemplateRepository,
 	sender EmailSender,
 	branding email.Branding,
 	publicBaseURL string,
@@ -93,13 +97,14 @@ func NewFormService(
 	}
 
 	return &formService{
-		repo:          repo,
-		eventRepo:     eventRepo,
-		sequenceRepo:  sequenceRepo,
-		sender:        sender,
-		branding:      branding,
-		publicBaseURL: strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
-		tplStore:      tplStore,
+		repo:            repo,
+		eventRepo:       eventRepo,
+		sequenceRepo:    sequenceRepo,
+		templateRepo:    templateRepo,
+		sender:          sender,
+		branding:        branding,
+		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
+		tplStore:        tplStore,
 		templateTimeout: templateTimeout,
 	}
 }
@@ -648,6 +653,16 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	}
 	if s.ResponseEmailSubject, err = normalizeText("responseEmailSubject", s.ResponseEmailSubject, 160); err != nil {
 		return nil, err
+	}
+	if s.ResponseEmailTemplateID != nil {
+		id := strings.TrimSpace(*s.ResponseEmailTemplateID)
+		if id == "" {
+			s.ResponseEmailTemplateID = nil
+		} else if len(id) > 120 {
+			return nil, fmt.Errorf("responseEmailTemplateId too long")
+		} else {
+			s.ResponseEmailTemplateID = &id
+		}
 	}
 	if s.ResponseEmailTemplateKey != nil {
 		key := strings.Trim(strings.TrimSpace(*s.ResponseEmailTemplateKey), "/")
@@ -1789,34 +1804,63 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		hero = strings.TrimSpace(*event.Image)
 	}
 
+	now := time.Now().UTC()
+	templateData := map[string]any{
+		"Branding":         s.branding,
+		"Form":             form,
+		"Event":            event,
+		"Values":           values,
+		"RecipientName":    recipient,
+		"Email":            addr,
+		"RegistrationCode": code,
+		"FormURL":          formURL,
+		"PublicURL":        formURL,
+		"FormTitle":        formTitle,
+		"EventTitle":       strings.TrimSpace(event.Title),
+		"EventDate":        strings.TrimSpace(event.Date),
+		"EventTime":        strings.TrimSpace(event.Time),
+		"EventLocation":    strings.TrimSpace(event.Location),
+		"HeroImageURL":     hero,
+		"SubmittedAt":      now.Format(time.RFC3339),
+		"SubmittedAtText":  now.Format("Mon, 02 Jan 2006 15:04 MST"),
+		"Year":             now.Year(),
+	}
+
 	var body string
-	if templateKey != "" && s.tplStore != nil {
+	if s.templateRepo != nil {
+		var tpl *models.EmailTemplate
+		if tpl == nil && settings != nil && settings.ResponseEmailTemplateID != nil {
+			if t, err := s.templateRepo.GetByID(strings.TrimSpace(*settings.ResponseEmailTemplateID)); err == nil && t != nil {
+				if t.Status != models.EmailTemplateArchived {
+					tpl = t
+				}
+			}
+		}
+		if templateKey != "" {
+			if t, err := s.templateRepo.GetActiveByKey(templateKey); err == nil && t != nil {
+				tpl = t
+			}
+		}
+		if tpl == nil && form != nil {
+			if t, err := s.templateRepo.GetActiveByOwner("form", form.ID); err == nil && t != nil {
+				tpl = t
+			}
+		}
+		if tpl != nil {
+			if rendered, err := renderDBTemplate(tpl, templateData); err == nil && strings.TrimSpace(rendered) != "" {
+				body = rendered
+				if tpl.Subject != nil && strings.TrimSpace(*tpl.Subject) != "" {
+					subject = strings.TrimSpace(*tpl.Subject)
+				}
+			}
+		}
+	}
+
+	if strings.TrimSpace(body) == "" && templateKey != "" && s.tplStore != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), s.templateTimeout)
 		defer cancel()
 
-		now := time.Now().UTC()
-		data := map[string]any{
-			"Branding":         s.branding,
-			"Form":             form,
-			"Event":            event,
-			"Values":           values,
-			"RecipientName":    recipient,
-			"Email":            addr,
-			"RegistrationCode": code,
-			"FormURL":          formURL,
-			"PublicURL":        formURL,
-			"FormTitle":        formTitle,
-			"EventTitle":       strings.TrimSpace(event.Title),
-			"EventDate":        strings.TrimSpace(event.Date),
-			"EventTime":        strings.TrimSpace(event.Time),
-			"EventLocation":    strings.TrimSpace(event.Location),
-			"HeroImageURL":     hero,
-			"SubmittedAt":      now.Format(time.RFC3339),
-			"SubmittedAtText":  now.Format("Mon, 02 Jan 2006 15:04 MST"),
-			"Year":             now.Year(),
-		}
-
-		_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, templateKey, data)
+		_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, templateKey, templateData)
 		if err == nil && strings.TrimSpace(htmlOut) != "" {
 			body = htmlOut
 		}
@@ -1844,4 +1888,23 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	}
 
 	_ = s.sender.SendHTML(addr, subject, body)
+}
+
+func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
+	if tpl == nil {
+		return "", errors.New("template is nil")
+	}
+	raw := strings.TrimSpace(tpl.HTMLBody)
+	if raw == "" {
+		return "", errors.New("template html is empty")
+	}
+	t, err := template.New("db").Option("missingkey=error").Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

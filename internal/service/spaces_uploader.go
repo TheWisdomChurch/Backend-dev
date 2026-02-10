@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -125,6 +126,38 @@ func (s *SpacesUploader) Upload(ctx context.Context, objectKey string, contentTy
 	}
 
 	return strings.TrimRight(s.publicBaseURL, "/") + "/" + key, nil
+}
+
+// PresignPut creates a pre-signed PUT URL for direct uploads.
+func (s *SpacesUploader) PresignPut(ctx context.Context, objectKey string, contentType string, expires time.Duration) (string, error) {
+	if s == nil || s.client == nil {
+		return "", errors.New("uploader not configured")
+	}
+	key := strings.TrimLeft(strings.TrimSpace(objectKey), "/")
+	if key == "" {
+		return "", errors.New("object key is required")
+	}
+	if expires <= 0 {
+		expires = 15 * time.Minute
+	}
+
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}
+	if strings.TrimSpace(contentType) != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	if s.publicRead {
+		input.ACL = types.ObjectCannedACLPublicRead
+	}
+
+	presigner := s3.NewPresignClient(s.client)
+	out, err := presigner.PresignPutObject(ctx, input, s3.WithPresignExpires(expires))
+	if err != nil {
+		return "", err
+	}
+	return out.URL, nil
 }
 
 func (s *SpacesUploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {

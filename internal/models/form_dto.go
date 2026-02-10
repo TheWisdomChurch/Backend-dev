@@ -52,17 +52,18 @@ type FormDesignSettingsDTO struct {
 }
 
 type FormSettingsDTO struct {
-	Capacity       *int                   `json:"capacity,omitempty"`
-	ClosesAt       *string                `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
-	ExpiresAt      *string                `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
-	SuccessMessage *string                `json:"successMessage,omitempty"`                        // optional
+	Capacity       *int    `json:"capacity,omitempty"`
+	ClosesAt       *string `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
+	ExpiresAt      *string `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
+	SuccessMessage *string `json:"successMessage,omitempty"`                        // optional
 
 	// Response email (auto-reply after submission)
 	ResponseEmailEnabled     *bool   `json:"responseEmailEnabled,omitempty"`
+	ResponseEmailTemplateID  *string `json:"responseEmailTemplateId,omitempty"`
 	ResponseEmailTemplateKey *string `json:"responseEmailTemplateKey,omitempty"`
 	ResponseEmailSubject     *string `json:"responseEmailSubject,omitempty"`
 
-	Design         *FormDesignSettingsDTO `json:"design,omitempty"`
+	Design *FormDesignSettingsDTO `json:"design,omitempty"`
 
 	// Extended builder settings (kept at root for backward compat with frontend)
 	IntroTitle            *string   `json:"introTitle,omitempty"`
