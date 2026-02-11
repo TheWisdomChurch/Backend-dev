@@ -63,6 +63,10 @@ type FormSettingsDTO struct {
 	ResponseEmailTemplateKey *string `json:"responseEmailTemplateKey,omitempty"`
 	ResponseEmailSubject     *string `json:"responseEmailSubject,omitempty"`
 
+	// Submission routing (optional): send submissions into workforce/members tables.
+	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|member
+	SubmissionDepartment *string `json:"submissionDepartment,omitempty"` // default department for workforce
+
 	Design *FormDesignSettingsDTO `json:"design,omitempty"`
 
 	// Extended builder settings (kept at root for backward compat with frontend)

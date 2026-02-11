@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -65,6 +66,8 @@ type formService struct {
 
 	sequenceRepo *repository.RegistrationSequenceRepository
 	templateRepo repository.EmailTemplateRepository
+	workforceSvc WorkforceService
+	memberSvc    MemberService
 	sender       EmailSender
 	branding     email.Branding
 
@@ -78,6 +81,8 @@ func NewFormService(
 	eventRepo *repository.EventRepository,
 	sequenceRepo *repository.RegistrationSequenceRepository,
 	templateRepo repository.EmailTemplateRepository,
+	workforceSvc WorkforceService,
+	memberSvc MemberService,
 	sender EmailSender,
 	branding email.Branding,
 	publicBaseURL string,
@@ -101,6 +106,8 @@ func NewFormService(
 		eventRepo:       eventRepo,
 		sequenceRepo:    sequenceRepo,
 		templateRepo:    templateRepo,
+		workforceSvc:    workforceSvc,
+		memberSvc:       memberSvc,
 		sender:          sender,
 		branding:        branding,
 		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
@@ -509,6 +516,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	if email != nil {
 		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode)
 	}
+	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
+		log.Printf("⚠️ submission target sync failed: %v", err)
+	}
 
 	return nil
 }
@@ -674,6 +684,20 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			}
 			s.ResponseEmailTemplateKey = &key
 		}
+	}
+	if s.SubmissionTarget != nil {
+		target := strings.ToLower(strings.TrimSpace(*s.SubmissionTarget))
+		switch target {
+		case "", "none":
+			s.SubmissionTarget = nil
+		case "workforce", "member":
+			s.SubmissionTarget = &target
+		default:
+			return nil, fmt.Errorf("submissionTarget must be workforce or member")
+		}
+	}
+	if s.SubmissionDepartment, err = normalizeText("submissionDepartment", s.SubmissionDepartment, 120); err != nil {
+		return nil, err
 	}
 	if s.IntroTitle, err = normalizeText("introTitle", s.IntroTitle, 200); err != nil {
 		return nil, err
@@ -1907,4 +1931,156 @@ func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {
+	if settings == nil || settings.SubmissionTarget == nil {
+		return nil
+	}
+	target := strings.ToLower(strings.TrimSpace(*settings.SubmissionTarget))
+	switch target {
+	case "workforce":
+		if s.workforceSvc == nil {
+			return errors.New("workforce service not configured")
+		}
+		req, err := buildWorkforceRequest(values, settings)
+		if err != nil {
+			return err
+		}
+		_, err = s.workforceSvc.Create(req)
+		return err
+	case "member":
+		if s.memberSvc == nil {
+			return errors.New("member service not configured")
+		}
+		req, err := buildMemberRequest(values)
+		if err != nil {
+			return err
+		}
+		_, err = s.memberSvc.Create(req)
+		return err
+	default:
+		return nil
+	}
+}
+
+func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsDTO) (*models.CreateWorkforceRequest, error) {
+	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
+	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
+	if first == "" || last == "" {
+		full := valueAsString(values, "fullName", "full_name", "name")
+		if full != "" {
+			f, l := splitName(full)
+			if first == "" {
+				first = f
+			}
+			if last == "" {
+				last = l
+			}
+		}
+	}
+
+	dept := valueAsString(values, "department", "dept", "ministry", "unit")
+	if dept == "" && settings != nil && settings.SubmissionDepartment != nil {
+		dept = strings.TrimSpace(*settings.SubmissionDepartment)
+	}
+
+	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" || strings.TrimSpace(dept) == "" {
+		return nil, errors.New("missing required workforce fields")
+	}
+
+	emailAddr := valueAsString(values, "email", "contactEmail")
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
+	notes := valueAsString(values, "notes", "note", "comment", "message")
+	birthday := valueAsString(values, "birthday", "birthDate", "dob")
+
+	req := &models.CreateWorkforceRequest{
+		FirstName:  strings.TrimSpace(first),
+		LastName:   strings.TrimSpace(last),
+		Email:      strings.TrimSpace(emailAddr),
+		Phone:      strings.TrimSpace(phone),
+		Department: strings.TrimSpace(dept),
+	}
+	if notes != "" {
+		n := strings.TrimSpace(notes)
+		req.Notes = &n
+	}
+	if birthday != "" {
+		b := strings.TrimSpace(birthday)
+		req.Birthday = &b
+	}
+	return req, nil
+}
+
+func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, error) {
+	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
+	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
+	if first == "" || last == "" {
+		full := valueAsString(values, "fullName", "full_name", "name")
+		if full != "" {
+			f, l := splitName(full)
+			if first == "" {
+				first = f
+			}
+			if last == "" {
+				last = l
+			}
+		}
+	}
+
+	emailAddr := valueAsString(values, "email", "contactEmail")
+	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" || strings.TrimSpace(emailAddr) == "" {
+		return nil, errors.New("missing required member fields")
+	}
+
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
+	birthday := valueAsString(values, "birthday", "birthDate", "dob")
+
+	req := &models.CreateMemberRequest{
+		FirstName: strings.TrimSpace(first),
+		LastName:  strings.TrimSpace(last),
+		Email:     strings.TrimSpace(emailAddr),
+	}
+	if phone != "" {
+		p := strings.TrimSpace(phone)
+		req.Phone = &p
+	}
+	if birthday != "" {
+		b := strings.TrimSpace(birthday)
+		req.Birthday = &b
+	}
+	return req, nil
+}
+
+func valueAsString(values map[string]any, keys ...string) string {
+	if values == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := values[k]; ok {
+			switch t := v.(type) {
+			case string:
+				if strings.TrimSpace(t) != "" {
+					return t
+				}
+			default:
+				s := strings.TrimSpace(fmt.Sprint(t))
+				if s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func splitName(full string) (string, string) {
+	parts := strings.Fields(full)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], strings.Join(parts[1:], " ")
 }
