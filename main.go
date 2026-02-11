@@ -571,6 +571,7 @@ func setupRouter(
 	admin.GET("/members/birthdays/month/:month", memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", memberHandler.BirthdaysToday)
 	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
+	admin.POST("/members/notify", memberHandler.SendAnnouncement)
 
 	// Super-admin
 	superAdmin := admin.Group("")
@@ -777,6 +778,9 @@ func main() {
 	assetService := service.NewAssetService(assetRepo, assetUploader)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
+	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	memberService := service.NewMemberService(memberRepo, eventRepo, emailSender, branding)
+
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	if publicBaseURL == "" {
 		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
@@ -786,6 +790,8 @@ func main() {
 		eventRepo,
 		registrationSequenceRepo,
 		emailTemplateRepo,
+		workforceService,
+		memberService,
 		emailSender,
 		branding,
 		publicBaseURL,
@@ -799,8 +805,6 @@ func main() {
 		branding,
 	)
 
-	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
-	memberService := service.NewMemberService(memberRepo, emailSender, branding)
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
 	// -------------------------------------------------------------------------

@@ -16,6 +16,7 @@ type MemberService interface {
 	Create(req *models.CreateMemberRequest) (*models.Member, error)
 	Update(id string, req *models.UpdateMemberRequest) (*models.Member, error)
 	Delete(id string) error
+	SendAnnouncement(req *models.SendMemberEmailRequest) (*models.BulkEmailResult, error)
 
 	BirthdayStats() (*models.BirthdayStatsResponse, error)
 	BirthdaysByMonth(month int) ([]models.Member, error)
@@ -24,13 +25,14 @@ type MemberService interface {
 }
 
 type memberService struct {
-	repo     repository.MemberRepository
-	sender   EmailSender
-	branding email.Branding
+	repo      repository.MemberRepository
+	eventRepo *repository.EventRepository
+	sender    EmailSender
+	branding  email.Branding
 }
 
-func NewMemberService(repo repository.MemberRepository, sender EmailSender, branding email.Branding) MemberService {
-	return &memberService{repo: repo, sender: sender, branding: branding}
+func NewMemberService(repo repository.MemberRepository, eventRepo *repository.EventRepository, sender EmailSender, branding email.Branding) MemberService {
+	return &memberService{repo: repo, eventRepo: eventRepo, sender: sender, branding: branding}
 }
 
 func (s *memberService) List(page, limit int, active *bool) ([]models.Member, int64, error) {
@@ -113,6 +115,66 @@ func (s *memberService) Update(id string, req *models.UpdateMemberRequest) (*mod
 
 func (s *memberService) Delete(id string) error {
 	return s.repo.Delete(id)
+}
+
+func (s *memberService) SendAnnouncement(req *models.SendMemberEmailRequest) (*models.BulkEmailResult, error) {
+	if s.sender == nil {
+		return nil, errors.New("email sender is not configured")
+	}
+	if req == nil {
+		return nil, errors.New("request is required")
+	}
+	subject := strings.TrimSpace(req.Subject)
+	message := strings.TrimSpace(req.Message)
+	if subject == "" || message == "" {
+		return nil, errors.New("subject and message are required")
+	}
+
+	activeOnly := true
+	if req.OnlyActive != nil {
+		activeOnly = *req.OnlyActive
+	}
+
+	members, err := s.repo.ListAll(&activeOnly)
+	if err != nil {
+		return nil, err
+	}
+
+	var event *models.Event
+	if req.EventID != nil && s.eventRepo != nil {
+		if ev, err := s.eventRepo.GetByID(strings.TrimSpace(*req.EventID)); err == nil {
+			event = ev
+		}
+	}
+
+	result := &models.BulkEmailResult{Targeted: len(members)}
+	for i := range members {
+		addr := strings.TrimSpace(members[i].Email)
+		if addr == "" {
+			result.Skipped++
+			continue
+		}
+		fullName := strings.TrimSpace(strings.Join([]string{members[i].FirstName, members[i].LastName}, " "))
+		var namePtr *string
+		if fullName != "" {
+			namePtr = &fullName
+		}
+
+		body := email.RenderNotificationEmail(email.NotificationTemplateData{
+			Title:         subject,
+			Message:       message,
+			Event:         event,
+			RecipientName: namePtr,
+		})
+
+		if err := s.sender.SendHTML(addr, subject, body); err != nil {
+			result.Skipped++
+			continue
+		}
+		result.Sent++
+	}
+
+	return result, nil
 }
 
 func (s *memberService) BirthdayStats() (*models.BirthdayStatsResponse, error) {

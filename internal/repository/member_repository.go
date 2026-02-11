@@ -7,6 +7,7 @@ import (
 
 type MemberRepository interface {
 	List(offset, limit int, active *bool) ([]models.Member, int64, error)
+	ListAll(active *bool) ([]models.Member, error)
 	GetByID(id string) (*models.Member, error)
 	Create(member *models.Member) error
 	Update(id string, updates map[string]interface{}) (*models.Member, error)
@@ -43,6 +44,16 @@ func (r *memberRepository) List(offset, limit int, active *bool) ([]models.Membe
 		Offset(offset).
 		Find(&items).Error
 	return items, total, err
+}
+
+func (r *memberRepository) ListAll(active *bool) ([]models.Member, error) {
+	var items []models.Member
+	q := r.db.DB.Model(&models.Member{})
+	if active != nil {
+		q = q.Where("is_active = ?", *active)
+	}
+	err := q.Order("updated_at DESC").Find(&items).Error
+	return items, err
 }
 
 func (r *memberRepository) GetByID(id string) (*models.Member, error) {
