@@ -472,6 +472,7 @@ func setupRouter(
 
 	// Notifications (newsletter-style)
 	api.POST("/notifications/subscribe", notificationHandler.Subscribe)
+	api.GET("/notifications/subscribe", notificationHandler.SubscribeByLink)
 	api.POST("/notifications/unsubscribe", notificationHandler.Unsubscribe)
 	api.GET("/notifications/unsubscribe", notificationHandler.UnsubscribeByLink)
 

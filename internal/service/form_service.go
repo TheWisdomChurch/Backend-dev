@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -1812,6 +1813,14 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		}
 	}
 
+	subscribeURL := ""
+	if strings.TrimSpace(s.branding.PublicURL) != "" {
+		subscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/notifications/subscribe?email=" + url.QueryEscape(addr)
+		if recipient != "" {
+			subscribeURL += "&name=" + url.QueryEscape(recipient)
+		}
+	}
+
 	code := ""
 	if regCode != nil {
 		code = strings.TrimSpace(*regCode)
@@ -1839,6 +1848,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		"RegistrationCode": code,
 		"FormURL":          formURL,
 		"PublicURL":        formURL,
+		"SubscribeURL":     subscribeURL,
 		"FormTitle":        formTitle,
 		"EventTitle":       strings.TrimSpace(event.Title),
 		"EventDate":        strings.TrimSpace(event.Date),

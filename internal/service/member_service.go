@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -233,6 +234,10 @@ func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdayS
 	heroURL := email.TemplateAssetURL(s.branding, "birthday", "hero.png")
 
 	result := &models.BirthdaySendResult{Targeted: len(members)}
+	var tplStore *email.TemplateStore
+	if store, err := email.NewTemplateStoreFromEnv(); err == nil {
+		tplStore = store
+	}
 
 	for i := range members {
 		addr := strings.TrimSpace(members[i].Email)
@@ -241,12 +246,24 @@ func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdayS
 			continue
 		}
 		fullName := strings.TrimSpace(strings.Join([]string{members[i].FirstName, members[i].LastName}, " "))
-		body := email.RenderBirthdayEmail(email.BirthdayTemplateData{
+		data := email.BirthdayTemplateData{
 			Branding:      s.branding,
 			RecipientName: fullName,
 			BirthdayDate:  dateLabel,
 			HeroImageURL:  heroURL,
-		})
+		}
+		body := ""
+		if tplStore != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			_, htmlOut, _, err := tplStore.RenderWithData(ctx, "birthday", data)
+			cancel()
+			if err == nil && strings.TrimSpace(htmlOut) != "" {
+				body = htmlOut
+			}
+		}
+		if strings.TrimSpace(body) == "" {
+			body = email.RenderBirthdayEmail(data)
+		}
 
 		if err := s.sender.SendHTML(addr, subject, body); err != nil {
 			result.Skipped++
