@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,11 +16,12 @@ import (
 )
 
 type WorkforceHandler struct {
-	svc service.WorkforceService
+	svc       service.WorkforceService
+	notifySvc service.AdminNotificationService
 }
 
-func NewWorkforceHandler(svc service.WorkforceService) *WorkforceHandler {
-	return &WorkforceHandler{svc: svc}
+func NewWorkforceHandler(svc service.WorkforceService, notifySvc service.AdminNotificationService) *WorkforceHandler {
+	return &WorkforceHandler{svc: svc, notifySvc: notifySvc}
 }
 
 func (h *WorkforceHandler) List(c *gin.Context) {
@@ -69,6 +71,22 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if h.notifySvc != nil {
+		fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+		title := "New workforce application"
+		message := fmt.Sprintf("%s applied for the workforce (%s).", fullName, member.Department)
+		entityType := "workforce"
+		entityID := member.ID
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "workforce_application",
+			Title:      title,
+			Message:    message,
+			EntityType: &entityType,
+			EntityID:   &entityID,
+			Roles:      []string{"admin", "super_admin"},
+		})
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Application submitted", member)

@@ -86,7 +86,11 @@ func (s *assetService) PresignUpload(req *models.PresignAssetRequest, createdBy 
 		return nil, err
 	}
 
-	publicURL := buildSpacesPublicURL(objectKey)
+	publicBase := resolveSpacesPublicBaseURL(s.uploader)
+	if publicBase == "" {
+		return nil, errors.New("public url base not configured")
+	}
+	publicURL := strings.TrimRight(publicBase, "/") + "/" + strings.TrimLeft(objectKey, "/")
 	if publicURL == "" {
 		return nil, errors.New("public url base not configured")
 	}
@@ -172,6 +176,8 @@ func extFromContentType(ct string) (string, error) {
 		return "png", nil
 	case "image/jpeg":
 		return "jpg", nil
+	case "image/jpg":
+		return "jpg", nil
 	case "image/webp":
 		return "webp", nil
 	case "image/gif":
@@ -183,12 +189,20 @@ func extFromContentType(ct string) (string, error) {
 	}
 }
 
-func buildSpacesPublicURL(objectKey string) string {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
-	if base == "" {
-		return ""
+func resolveSpacesPublicBaseURL(uploader AssetUploader) string {
+	if uploader != nil {
+		if spaces, ok := uploader.(*SpacesUploader); ok {
+			if base := strings.TrimRight(strings.TrimSpace(spaces.publicBaseURL), "/"); base != "" {
+				return base
+			}
+		}
+		if provider, ok := uploader.(interface{ PublicBaseURL() string }); ok {
+			if base := strings.TrimRight(strings.TrimSpace(provider.PublicBaseURL()), "/"); base != "" {
+				return base
+			}
+		}
 	}
-	return base + "/" + strings.TrimLeft(objectKey, "/")
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
 }
 
 func nilIfEmpty(v string) *string {
