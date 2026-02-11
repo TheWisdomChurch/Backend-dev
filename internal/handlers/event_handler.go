@@ -401,6 +401,8 @@ func allowedImageExt(contentType string) (string, bool) {
 		return "png", true
 	case "image/jpeg":
 		return "jpg", true
+	case "image/jpg":
+		return "jpg", true
 	case "image/webp":
 		return "webp", true
 	default:

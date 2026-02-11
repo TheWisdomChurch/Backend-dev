@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -74,6 +75,37 @@ func (h *NotificationHandler) UnsubscribeByLink(c *gin.Context) {
 		`<html><body style="font-family:Arial,sans-serif;padding:24px;">
 			<h3>You have been unsubscribed.</h3>
 			<p>You will no longer receive updates from us.</p>
+		</body></html>`))
+}
+
+func (h *NotificationHandler) SubscribeByLink(c *gin.Context) {
+	emailAddr := c.Query("email")
+	if emailAddr == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Email is required")
+		return
+	}
+
+	name := strings.TrimSpace(c.Query("name"))
+	source := strings.TrimSpace(c.Query("source"))
+	req := &models.SubscribeRequest{
+		Email: emailAddr,
+	}
+	if name != "" {
+		req.Name = &name
+	}
+	if source != "" {
+		req.Source = &source
+	}
+
+	if _, err := h.svc.Subscribe(req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+		`<html><body style="font-family:Arial,sans-serif;padding:24px;">
+			<h3>Subscription confirmed.</h3>
+			<p>You will now receive updates from us.</p>
 		</body></html>`))
 }
 

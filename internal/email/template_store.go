@@ -35,9 +35,14 @@ type cachedPair struct {
 	rawHTML   string
 }
 
+var errTemplateNotFound = errors.New("template not found")
+
 func NewTemplateStoreFromEnv() (*TemplateStore, error) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
 	path := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_EMAIL_TEMPLATE_PATH")), "/")
+	if base == "" {
+		base = deriveSpacesPublicBaseURL()
+	}
 	if base == "" {
 		return nil, fmt.Errorf("SPACES_PUBLIC_BASE_URL is required for template fetch")
 	}
@@ -91,6 +96,54 @@ func NewTemplateStoreFromEnv() (*TemplateStore, error) {
 	}, nil
 }
 
+func deriveSpacesPublicBaseURL() string {
+	bucket := strings.TrimSpace(os.Getenv("SPACES_BUCKET"))
+	endpoint := strings.TrimSpace(os.Getenv("SPACES_ENDPOINT"))
+	region := strings.TrimSpace(os.Getenv("SPACES_REGION"))
+	if bucket == "" {
+		return ""
+	}
+
+	endpoint = normalizeEndpoint(endpoint)
+	if endpoint != "" {
+		u, err := url.Parse(endpoint)
+		if err == nil {
+			scheme := u.Scheme
+			host := u.Host
+			if host == "" {
+				host = strings.TrimSpace(u.Path)
+			}
+			if scheme == "" {
+				scheme = "https"
+			}
+			if host != "" {
+				if !strings.HasPrefix(host, bucket+".") {
+					host = bucket + "." + host
+				}
+				return scheme + "://" + host
+			}
+		}
+	}
+
+	if region != "" {
+		return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, region)
+	}
+
+	return ""
+}
+
+func normalizeEndpoint(endpoint string) string {
+	raw := strings.TrimSpace(endpoint)
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return raw
+	}
+	return "https://" + raw
+}
+
 type TemplateData struct {
 	BrandName    string
 	Name         string
@@ -139,13 +192,17 @@ func (ts *TemplateStore) loadPair(ctx context.Context, txtName, htmlName string)
 	}
 	ts.mu.Unlock()
 
-	txtRaw, err := ts.fetchLimited(ctx, txtName, ts.MaxTemplateKB*1024)
-	if err != nil {
-		return nil, nil, "", err
-	}
 	htmlRaw, err := ts.fetchLimited(ctx, htmlName, ts.MaxTemplateKB*1024)
 	if err != nil {
 		return nil, nil, "", err
+	}
+	txtRaw, err := ts.fetchLimited(ctx, txtName, ts.MaxTemplateKB*1024)
+	if err != nil {
+		if errors.Is(err, errTemplateNotFound) {
+			txtRaw = []byte(stripHTML(string(htmlRaw)))
+		} else {
+			return nil, nil, "", err
+		}
 	}
 
 	textTpl, err := texttmpl.New(txtName).Option("missingkey=error").Parse(string(txtRaw))
@@ -195,6 +252,9 @@ func (ts *TemplateStore) fetchLimited(ctx context.Context, name string, maxBytes
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, errTemplateNotFound
+		}
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, fmt.Errorf("template fetch %s failed: status=%d body=%q", name, resp.StatusCode, string(b))
 	}
@@ -213,6 +273,16 @@ func (ts *TemplateStore) fetchLimited(ctx context.Context, name string, maxBytes
 	}
 
 	return b, nil
+}
+
+func stripHTML(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?s)<[^>]*>`)
+	text := re.ReplaceAllString(raw, "")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	return strings.TrimSpace(text)
 }
 
 // ExtractImgSrcs finds image URLs in HTML (simple, email-safe approach).
