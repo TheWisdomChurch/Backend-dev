@@ -1,6 +1,6 @@
 -- schema.down.sql
 -- Rollback consolidated schema
--- Version: v4 (assets + email_templates)
+-- Version: v5 (leadership members)
 
 BEGIN;
 
@@ -18,6 +18,9 @@ DROP INDEX IF EXISTS public.idx_form_fields_form_id;
 DROP INDEX IF EXISTS public.idx_forms_status;
 DROP INDEX IF EXISTS public.idx_forms_event_id;
 DROP INDEX IF EXISTS public.idx_members_birthday_month_day;
+DROP INDEX IF EXISTS public.idx_leadership_email;
+DROP INDEX IF EXISTS public.idx_leadership_status;
+DROP INDEX IF EXISTS public.idx_leadership_role_status;
 DROP INDEX IF EXISTS public.idx_workforce_bday_month_day;
 DROP INDEX IF EXISTS public.idx_notification_deliveries_subscriber_id;
 DROP INDEX IF EXISTS public.idx_notification_deliveries_notification_id;
@@ -41,6 +44,7 @@ DROP TABLE IF EXISTS public.form_submissions CASCADE;
 DROP TABLE IF EXISTS public.form_fields CASCADE;
 DROP TABLE IF EXISTS public.forms CASCADE;
 DROP TABLE IF EXISTS public.members CASCADE;
+DROP TABLE IF EXISTS public.leadership_members CASCADE;
 DROP TABLE IF EXISTS public.workforce_members CASCADE;
 DROP TABLE IF EXISTS public.notification_deliveries CASCADE;
 DROP TABLE IF EXISTS public.notifications CASCADE;

@@ -1,6 +1,6 @@
 -- schema.up.sql
 -- Consolidated, idempotent schema (industry-standard constraints, indexes, and FKs)
--- Version: v4 (assets + email_templates)
+-- Version: v5 (leadership members)
 
 BEGIN;
 
@@ -208,6 +208,25 @@ CREATE TABLE IF NOT EXISTS public.members (
   birthday_day smallint CHECK (birthday_day BETWEEN 1 AND 31),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.leadership_members (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  first_name character varying(100) NOT NULL,
+  last_name character varying(100) NOT NULL,
+  email character varying(255),
+  phone character varying(50),
+  role character varying(30) NOT NULL,
+  status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+  bio text,
+  image_url text,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  CONSTRAINT leadership_members_pkey PRIMARY KEY (id),
+  CONSTRAINT leadership_members_role_check
+    CHECK (role IN ('associate_pastor', 'deacon', 'deaconess', 'reverend')),
+  CONSTRAINT leadership_members_status_check
+    CHECK (status IN ('pending', 'approved'))
 );
 
 -- =========================
@@ -523,6 +542,15 @@ CREATE INDEX IF NOT EXISTS idx_workforce_bday_month_day
 
 CREATE INDEX IF NOT EXISTS idx_members_birthday_month_day
   ON public.members (birthday_month, birthday_day);
+
+CREATE INDEX IF NOT EXISTS idx_leadership_role_status
+  ON public.leadership_members (role, status);
+
+CREATE INDEX IF NOT EXISTS idx_leadership_status
+  ON public.leadership_members (status);
+
+CREATE INDEX IF NOT EXISTS idx_leadership_email
+  ON public.leadership_members (email);
 
 CREATE INDEX IF NOT EXISTS idx_forms_event_id
   ON public.forms (event_id);

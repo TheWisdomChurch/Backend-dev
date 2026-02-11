@@ -47,3 +47,16 @@ type UpdateMemberRequest struct {
 	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
 	Birthday      *string `json:"birthday,omitempty"`
 }
+
+type SendMemberEmailRequest struct {
+	Subject    string  `json:"subject" binding:"required"`
+	Message    string  `json:"message" binding:"required"`
+	EventID    *string `json:"eventId,omitempty"`
+	OnlyActive *bool   `json:"onlyActive,omitempty"`
+}
+
+type BulkEmailResult struct {
+	Targeted int `json:"targeted"`
+	Sent     int `json:"sent"`
+	Skipped  int `json:"skipped"`
+}

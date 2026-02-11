@@ -139,3 +139,18 @@ func (h *MemberHandler) SendBirthdaysToday(c *gin.Context) {
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
 }
+
+func (h *MemberHandler) SendAnnouncement(c *gin.Context) {
+	var req models.SendMemberEmailRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	resp, err := h.svc.SendAnnouncement(&req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Member announcement sent", resp)
+}
