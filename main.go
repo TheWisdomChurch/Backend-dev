@@ -407,6 +407,7 @@ func setupRouter(
 	notificationHandler *handlers.NotificationHandler,
 	otpHandler *handlers.OTPHandler,
 	workforceHandler *handlers.WorkforceHandler,
+	leadershipHandler *handlers.LeadershipHandler,
 	memberHandler *handlers.MemberHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
@@ -482,6 +483,10 @@ func setupRouter(
 
 	// Workforce public apply
 	api.POST("/workforce/apply", workforceHandler.Apply)
+
+	// Leadership public
+	api.GET("/leadership", leadershipHandler.ListPublic)
+	api.POST("/leadership/apply", leadershipHandler.Apply)
 
 	// ADMIN
 	admin := api.Group("/admin")
@@ -574,10 +579,17 @@ func setupRouter(
 	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
 	admin.POST("/members/notify", memberHandler.SendAnnouncement)
 
+	// Leadership admin
+	admin.GET("/leadership", leadershipHandler.List)
+	admin.POST("/leadership", leadershipHandler.Create)
+	admin.PUT("/leadership/:id", leadershipHandler.Update)
+	admin.DELETE("/leadership/:id", leadershipHandler.Delete)
+
 	// Super-admin
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
+	superAdmin.POST("/leadership/:id/approve", leadershipHandler.Approve)
 	superAdmin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", eventHandler.Approve)
@@ -682,6 +694,7 @@ func main() {
 	registrationSequenceRepo := repository.NewRegistrationSequenceRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	workforceRepo := repository.NewWorkforceRepository(db)
+	leadershipRepo := repository.NewLeadershipRepository(db)
 	memberRepo := repository.NewMemberRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
@@ -780,6 +793,7 @@ func main() {
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService)
 	memberService := service.NewMemberService(memberRepo, eventRepo, emailSender, branding)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
@@ -830,7 +844,8 @@ func main() {
 	formHandler := handlers.NewFormHandler(formService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
-	workforceHandler := handlers.NewWorkforceHandler(workforceService)
+	workforceHandler := handlers.NewWorkforceHandler(workforceService, adminNotificationService)
+	leadershipHandler := handlers.NewLeadershipHandler(leadershipService)
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
@@ -882,6 +897,7 @@ func main() {
 		notificationHandler,
 		otpHandler,
 		workforceHandler,
+		leadershipHandler,
 		memberHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
