@@ -184,6 +184,16 @@ func extFromContentType(ct string) (string, error) {
 		return "gif", nil
 	case "application/pdf":
 		return "pdf", nil
+	case "video/mp4":
+		return "mp4", nil
+	case "video/webm":
+		return "webm", nil
+	case "video/quicktime":
+		return "mov", nil
+	case "video/x-msvideo":
+		return "avi", nil
+	case "video/x-matroska":
+		return "mkv", nil
 	default:
 		return "", fmt.Errorf("unsupported content type: %s", ct)
 	}
