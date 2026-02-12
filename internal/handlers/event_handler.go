@@ -133,7 +133,7 @@ func (h *EventHandler) Create(c *gin.Context) {
 	req.Status = deriveStatus(req.Date, req.Time, time.Now().UTC())
 	role := normalizedRole(c)
 	approver := h.currentUser(c)
-	if role == "super_admin" && approver != nil {
+	if isAdminOrSuper(role) && approver != nil {
 		req.IsApproved = true
 		req.ApprovedByID = &approver.ID
 		name := strings.TrimSpace(strings.Join([]string{approver.FirstName, approver.LastName}, " "))
