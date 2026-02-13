@@ -150,6 +150,107 @@ type FormResponseTemplateData struct {
 	HeroImageURL     string
 }
 
+type LeadershipStatusTemplateData struct {
+	Branding      Branding
+	RecipientName string
+	Role          string
+	Message       string
+	HeroImageURL  string
+}
+
+type AnniversaryTemplateData struct {
+	Branding        Branding
+	RecipientName   string
+	AnniversaryDate string
+	Message         string
+	HeroImageURL    string
+}
+
+func RenderLeadershipApprovedEmail(data LeadershipStatusTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	name := strings.TrimSpace(data.RecipientName)
+	if name == "" {
+		name = "there"
+	} else {
+		name = html.EscapeString(name)
+	}
+	role := strings.TrimSpace(data.Role)
+	if role == "" {
+		role = "leadership"
+	}
+	message := strings.TrimSpace(data.Message)
+	if message == "" {
+		message = "Your leadership application has been approved."
+	}
+
+	return "<!DOCTYPE html>" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		renderLogoBlock(b) +
+		renderHeroImageBlock(data.HeroImageURL, "Leadership approved") +
+		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Hello " + name + ",</h2>" +
+		"<p style=\"margin:0 0 12px;font-size:15px;color:#334155;\">" + html.EscapeString(message) + "</p>" +
+		"<p style=\"margin:0 0 12px;font-size:15px;color:#334155;\">Role: <strong>" + html.EscapeString(role) + "</strong></p>" +
+		footerBlock(b) +
+		"</div></body></html>"
+}
+
+func RenderLeadershipDeclinedEmail(data LeadershipStatusTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	name := strings.TrimSpace(data.RecipientName)
+	if name == "" {
+		name = "there"
+	} else {
+		name = html.EscapeString(name)
+	}
+	message := strings.TrimSpace(data.Message)
+	if message == "" {
+		message = "Your leadership application has been declined for now."
+	}
+
+	return "<!DOCTYPE html>" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		renderLogoBlock(b) +
+		renderHeroImageBlock(data.HeroImageURL, "Leadership update") +
+		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Hello " + name + ",</h2>" +
+		"<p style=\"margin:0 0 12px;font-size:15px;color:#334155;\">" + html.EscapeString(message) + "</p>" +
+		footerBlock(b) +
+		"</div></body></html>"
+}
+
+func RenderAnniversaryEmail(data AnniversaryTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	name := strings.TrimSpace(data.RecipientName)
+	if name == "" {
+		name = "friend"
+	} else {
+		name = html.EscapeString(name)
+	}
+	date := strings.TrimSpace(data.AnniversaryDate)
+	dateLine := ""
+	if date != "" {
+		dateLine = "<p style=\"margin:0 0 16px;font-size:14px;color:#64748b;\">Celebrating on " + html.EscapeString(date) + "</p>"
+	}
+	message := strings.TrimSpace(data.Message)
+	if message == "" {
+		message = "Warm wishes on your wedding anniversary."
+	}
+
+	return "<!DOCTYPE html>" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f8fafc;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		renderLogoBlock(b) +
+		renderHeroImageBlock(data.HeroImageURL, "Wedding anniversary") +
+		"<h2 style=\"margin:0 0 12px;font-size:24px;color:#0b2447;\">Happy Wedding Anniversary, " + name + "!</h2>" +
+		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">" + html.EscapeString(message) + "</p>" +
+		dateLine +
+		"<p style=\"margin:0;font-size:14px;color:#475569;\">With love,</p>" +
+		"<p style=\"margin:4px 0 0;font-size:14px;font-weight:600;color:#1f2933;\">" + html.EscapeString(b.AppName) + " Team</p>" +
+		footerBlock(b) +
+		"</div></body></html>"
+}
+
 // RenderFormResponseEmail renders a simple registration confirmation for form submissions.
 func RenderFormResponseEmail(data FormResponseTemplateData) string {
 	b := normalizeBranding(data.Branding)

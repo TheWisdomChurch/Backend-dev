@@ -297,10 +297,11 @@ func startBirthdayScheduler(
 	lock *redisLock,
 	workforceSvc service.WorkforceService,
 	memberSvc service.MemberService,
+	leadershipSvc service.LeadershipService,
 	tz string,
 	sendAt string,
 ) {
-	if workforceSvc == nil && memberSvc == nil {
+	if workforceSvc == nil && memberSvc == nil && leadershipSvc == nil {
 		return
 	}
 
@@ -372,6 +373,17 @@ func startBirthdayScheduler(
 				}
 			} else if logger != nil {
 				logger.Printf("🎉 Member birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+		}
+
+		if leadershipSvc != nil {
+			result, err := leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Leadership anniversary send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("💍 Leadership anniversaries: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
 			}
 		}
 	}
@@ -487,6 +499,7 @@ func setupRouter(
 	// Leadership public
 	api.GET("/leadership", leadershipHandler.ListPublic)
 	api.POST("/leadership/apply", leadershipHandler.Apply)
+	api.POST("/leadership/upload-image", leadershipHandler.UploadImage)
 
 	// ADMIN
 	admin := api.Group("/admin")
@@ -584,12 +597,17 @@ func setupRouter(
 	admin.POST("/leadership", leadershipHandler.Create)
 	admin.PUT("/leadership/:id", leadershipHandler.Update)
 	admin.DELETE("/leadership/:id", leadershipHandler.Delete)
+	admin.GET("/leadership/anniversaries/stats", leadershipHandler.AnniversaryStats)
+	admin.GET("/leadership/anniversaries/month/:month", leadershipHandler.AnniversariesByMonth)
+	admin.GET("/leadership/anniversaries/today", leadershipHandler.AnniversariesToday)
+	admin.POST("/leadership/anniversaries/send-today", leadershipHandler.SendAnniversariesToday)
 
 	// Super-admin
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
 	superAdmin.POST("/leadership/:id/approve", leadershipHandler.Approve)
+	superAdmin.POST("/leadership/:id/decline", leadershipHandler.Decline)
 	superAdmin.PATCH("/testimonials/:id/approve", testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", eventHandler.Approve)
@@ -793,7 +811,7 @@ func main() {
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
-	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService)
+	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService, emailSender, branding)
 	memberService := service.NewMemberService(memberRepo, eventRepo, emailSender, branding)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
@@ -845,7 +863,7 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
 	workforceHandler := handlers.NewWorkforceHandler(workforceService, adminNotificationService)
-	leadershipHandler := handlers.NewLeadershipHandler(leadershipService)
+	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader)
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
@@ -863,7 +881,7 @@ func main() {
 		lock := newRedisLock(cfg.Redis.URL)
 		tz := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TZ"))
 		sendAt := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TIME"))
-		go startBirthdayScheduler(cleanupCtx, logger, lock, workforceService, memberService, tz, sendAt)
+		go startBirthdayScheduler(cleanupCtx, logger, lock, workforceService, memberService, leadershipService, tz, sendAt)
 	}
 	if isTrueEnv("BIRTHDAY_SCHEDULER_ONLY") {
 		if !schedulerEnabled {
