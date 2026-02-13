@@ -8,6 +8,9 @@ import (
 type LeadershipRepository interface {
 	List(offset, limit int, role, status string) ([]models.LeadershipMember, int64, error)
 	ListApproved(role string) ([]models.LeadershipMember, error)
+	ListByAnniversaryMonth(month int, status string) ([]models.LeadershipMember, error)
+	ListByAnniversaryMonthDay(month, day int, status string) ([]models.LeadershipMember, error)
+	AnniversaryCountsByMonth(status string) (map[int]int64, int64, error)
 	GetByID(id string) (*models.LeadershipMember, error)
 	Create(member *models.LeadershipMember) error
 	Update(id string, updates map[string]interface{}) (*models.LeadershipMember, error)
@@ -55,6 +58,53 @@ func (r *leadershipRepository) ListApproved(role string) ([]models.LeadershipMem
 	err := q.Order("role ASC, last_name ASC, first_name ASC").
 		Find(&items).Error
 	return items, err
+}
+
+func (r *leadershipRepository) ListByAnniversaryMonth(month int, status string) ([]models.LeadershipMember, error) {
+	var items []models.LeadershipMember
+	q := r.db.DB.Where("anniversary_month = ?", month)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	err := q.Order("anniversary_day ASC, last_name ASC, first_name ASC").Find(&items).Error
+	return items, err
+}
+
+func (r *leadershipRepository) ListByAnniversaryMonthDay(month, day int, status string) ([]models.LeadershipMember, error) {
+	var items []models.LeadershipMember
+	q := r.db.DB.Where("anniversary_month = ? AND anniversary_day = ?", month, day)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	err := q.Order("last_name ASC, first_name ASC").Find(&items).Error
+	return items, err
+}
+
+func (r *leadershipRepository) AnniversaryCountsByMonth(status string) (map[int]int64, int64, error) {
+	type row struct {
+		Month int
+		Count int64
+	}
+
+	counts := make(map[int]int64, 12)
+	var rows []row
+	var total int64
+
+	q := r.db.DB.Model(&models.LeadershipMember{}).
+		Select("anniversary_month as month, COUNT(*) as count").
+		Where("anniversary_month IS NOT NULL")
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+
+	if err := q.Group("anniversary_month").Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	for _, r := range rows {
+		counts[r.Month] = r.Count
+		total += r.Count
+	}
+	return counts, total, nil
 }
 
 func (r *leadershipRepository) GetByID(id string) (*models.LeadershipMember, error) {
