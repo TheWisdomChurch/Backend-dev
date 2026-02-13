@@ -1,6 +1,6 @@
 -- schema.up.sql
 -- Consolidated, idempotent schema (industry-standard constraints, indexes, and FKs)
--- Version: v5 (leadership members)
+-- Version: v6 (leadership anniversaries + senior pastor role)
 
 BEGIN;
 
@@ -220,13 +220,17 @@ CREATE TABLE IF NOT EXISTS public.leadership_members (
   status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
   bio text,
   image_url text,
+  birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
+  birthday_day smallint CHECK (birthday_day BETWEEN 1 AND 31),
+  anniversary_month smallint CHECK (anniversary_month BETWEEN 1 AND 12),
+  anniversary_day smallint CHECK (anniversary_day BETWEEN 1 AND 31),
   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
   updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
   CONSTRAINT leadership_members_pkey PRIMARY KEY (id),
   CONSTRAINT leadership_members_role_check
-    CHECK (role IN ('associate_pastor', 'deacon', 'deaconess', 'reverend')),
+    CHECK (role IN ('senior_pastor', 'associate_pastor', 'deacon', 'deaconess', 'reverend')),
   CONSTRAINT leadership_members_status_check
-    CHECK (status IN ('pending', 'approved'))
+    CHECK (status IN ('pending', 'approved', 'declined'))
 );
 
 -- =========================
@@ -352,6 +356,12 @@ ALTER TABLE public.members
   ADD COLUMN IF NOT EXISTS birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
   ADD COLUMN IF NOT EXISTS birthday_day smallint CHECK (birthday_day BETWEEN 1 AND 31);
 
+ALTER TABLE public.leadership_members
+  ADD COLUMN IF NOT EXISTS birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
+  ADD COLUMN IF NOT EXISTS birthday_day smallint CHECK (birthday_day BETWEEN 1 AND 31),
+  ADD COLUMN IF NOT EXISTS anniversary_month smallint CHECK (anniversary_month BETWEEN 1 AND 12),
+  ADD COLUMN IF NOT EXISTS anniversary_day smallint CHECK (anniversary_day BETWEEN 1 AND 31);
+
 -- =========================
 -- TYPE ALIGNMENT / DATA NORMALIZATION
 -- =========================
@@ -423,6 +433,35 @@ ALTER TABLE public.forms
 ALTER TABLE public.forms
   ADD CONSTRAINT forms_status_check
   CHECK (status IN ('draft', 'published', 'invalid'));
+
+UPDATE public.leadership_members
+SET role = CASE
+    WHEN role = 'senior_pastor' THEN role
+    WHEN role IN ('associate_pastor', 'deacon', 'deaconess', 'reverend') THEN role
+    ELSE 'associate_pastor'
+  END
+WHERE role IS NULL OR role NOT IN ('senior_pastor', 'associate_pastor', 'deacon', 'deaconess', 'reverend');
+
+UPDATE public.leadership_members
+SET status = CASE
+    WHEN status IN ('pending', 'approved', 'declined') THEN status
+    ELSE 'pending'
+  END
+WHERE status IS NULL OR status NOT IN ('pending', 'approved', 'declined');
+
+ALTER TABLE public.leadership_members
+  DROP CONSTRAINT IF EXISTS leadership_members_role_check;
+
+ALTER TABLE public.leadership_members
+  ADD CONSTRAINT leadership_members_role_check
+  CHECK (role IN ('senior_pastor', 'associate_pastor', 'deacon', 'deaconess', 'reverend'));
+
+ALTER TABLE public.leadership_members
+  DROP CONSTRAINT IF EXISTS leadership_members_status_check;
+
+ALTER TABLE public.leadership_members
+  ADD CONSTRAINT leadership_members_status_check
+  CHECK (status IN ('pending', 'approved', 'declined'));
 
 -- =========================
 -- FOREIGN KEYS (IDEMPOTENT)
@@ -551,6 +590,9 @@ CREATE INDEX IF NOT EXISTS idx_leadership_status
 
 CREATE INDEX IF NOT EXISTS idx_leadership_email
   ON public.leadership_members (email);
+
+CREATE INDEX IF NOT EXISTS idx_leadership_anniversary_month_day
+  ON public.leadership_members (anniversary_month, anniversary_day);
 
 CREATE INDEX IF NOT EXISTS idx_forms_event_id
   ON public.forms (event_id);
