@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -12,11 +16,15 @@ import (
 )
 
 type LeadershipHandler struct {
-	svc service.LeadershipService
+	svc      service.LeadershipService
+	uploader service.AssetUploader
 }
 
-func NewLeadershipHandler(svc service.LeadershipService) *LeadershipHandler {
-	return &LeadershipHandler{svc: svc}
+func NewLeadershipHandler(svc service.LeadershipService, uploader service.AssetUploader) *LeadershipHandler {
+	return &LeadershipHandler{
+		svc:      svc,
+		uploader: uploader,
+	}
 }
 
 // Public: list approved leadership members
@@ -43,6 +51,60 @@ func (h *LeadershipHandler) Apply(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusCreated, "Application submitted", member)
+}
+
+// Public: upload leadership profile image (max 5MB)
+func (h *LeadershipHandler) UploadImage(c *gin.Context) {
+	if h.uploader == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Storage uploader not configured")
+		return
+	}
+
+	fh, err := c.FormFile("file")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	const maxBytes = 5 << 20
+	if fh.Size > maxBytes {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file too large (max 5MB)")
+		return
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to open file")
+		return
+	}
+	defer src.Close()
+
+	contentType := fh.Header.Get("Content-Type")
+	ext, ok := allowedImageExt(contentType)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusBadRequest, "only png, jpg, webp allowed")
+		return
+	}
+
+	objectKey, err := h.uploader.BuildGenericAssetKey("leadership/profiles", ext)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+
+	url, err := h.uploader.Upload(ctx, objectKey, contentType, src)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Upload successful", gin.H{
+		"url": url,
+		"key": objectKey,
+	})
 }
 
 // Admin: list leadership applications/members
@@ -115,6 +177,19 @@ func (h *LeadershipHandler) Approve(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Leadership request approved", member)
 }
 
+// Super-admin: decline leadership member
+func (h *LeadershipHandler) Decline(c *gin.Context) {
+	id := c.Param("id")
+
+	member, err := h.svc.Decline(id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Leadership request declined", member)
+}
+
 // Admin: delete leadership member
 func (h *LeadershipHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
@@ -123,4 +198,52 @@ func (h *LeadershipHandler) Delete(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Leadership member deleted", nil)
+}
+
+func (h *LeadershipHandler) AnniversaryStats(c *gin.Context) {
+	stats, err := h.svc.AnniversaryStats()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load anniversary stats")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Anniversary stats retrieved", stats)
+}
+
+func (h *LeadershipHandler) AnniversariesByMonth(c *gin.Context) {
+	raw := strings.TrimSpace(c.Param("month"))
+	month, err := strconv.Atoi(raw)
+	if err != nil || month < 1 || month > 12 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+		return
+	}
+	items, err := h.svc.AnniversariesByMonth(month)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Anniversaries retrieved", gin.H{
+		"month": month,
+		"data":  items,
+	})
+}
+
+func (h *LeadershipHandler) AnniversariesToday(c *gin.Context) {
+	items, err := h.svc.AnniversariesToday(time.Now())
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load today's anniversaries")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Today's anniversaries retrieved", gin.H{
+		"data": items,
+	})
+}
+
+func (h *LeadershipHandler) SendAnniversariesToday(c *gin.Context) {
+	now := time.Now()
+	result, err := h.svc.SendAnniversaryGreetings(int(now.Month()), now.Day())
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Anniversary emails queued/sent", result)
 }
