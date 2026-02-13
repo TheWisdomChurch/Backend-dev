@@ -272,7 +272,12 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		}
 	}
 	if req.Settings != nil {
-		settingsJSON, err := encodeSettings(req.Settings)
+		currentSettings, _ := decodeSettings(existing.Settings)
+		mergedSettings, err := mergeFormSettings(currentSettings, req.Settings)
+		if err != nil {
+			return nil, err
+		}
+		settingsJSON, err := encodeSettings(mergedSettings)
 		if err != nil {
 			return nil, err
 		}
@@ -943,6 +948,50 @@ func decodeSettings(j datatypes.JSON) (*models.FormSettingsDTO, error) {
 	return &s, nil
 }
 
+func mergeFormSettings(base *models.FormSettingsDTO, incoming *models.FormSettingsDTO) (*models.FormSettingsDTO, error) {
+	if base == nil {
+		base = &models.FormSettingsDTO{}
+	}
+	if incoming == nil {
+		return base, nil
+	}
+
+	baseMap := map[string]any{}
+	if raw, err := json.Marshal(base); err == nil {
+		_ = json.Unmarshal(raw, &baseMap)
+	}
+
+	incMap := map[string]any{}
+	if raw, err := json.Marshal(incoming); err == nil {
+		_ = json.Unmarshal(raw, &incMap)
+	}
+
+	mergeStringAnyMaps(baseMap, incMap)
+
+	raw, err := json.Marshal(baseMap)
+	if err != nil {
+		return nil, err
+	}
+	var merged models.FormSettingsDTO
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return nil, err
+	}
+	return &merged, nil
+}
+
+func mergeStringAnyMaps(dst map[string]any, src map[string]any) {
+	for k, v := range src {
+		if vMap, ok := v.(map[string]any); ok {
+			if dstMap, ok := dst[k].(map[string]any); ok {
+				mergeStringAnyMaps(dstMap, vMap)
+				dst[k] = dstMap
+				continue
+			}
+		}
+		dst[k] = v
+	}
+}
+
 func decodeOptionsToDTO(j datatypes.JSON) []models.FormFieldOptionDTO {
 	if len(j) == 0 || string(j) == "null" {
 		return nil
@@ -1569,6 +1618,14 @@ func countWords(s string) int {
 	return len(strings.Fields(s))
 }
 
+func firstToken(s string) string {
+	parts := strings.Fields(strings.TrimSpace(s))
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
 func valueToString(v any) (string, bool) {
 	s, ok := v.(string)
 	return s, ok
@@ -1667,11 +1724,123 @@ func extractCommonFields(fields []models.FormField, values map[string]any) (*str
 		return nil
 	}
 
-	name := lookup("fullName", "name", "full_name")
-	email := lookup("email", "contactEmail")
-	if email == nil {
-		email = byType(models.FieldEmail)
+	lookupByLabel := func(needles ...string) *string {
+		for _, f := range fields {
+			label := strings.ToLower(strings.TrimSpace(f.Label))
+			if label == "" {
+				continue
+			}
+			matched := false
+			for _, needle := range needles {
+				n := strings.ToLower(strings.TrimSpace(needle))
+				if n == "" {
+					continue
+				}
+				if strings.Contains(label, n) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if raw, ok := values[f.Key]; ok {
+				if s, ok := raw.(string); ok {
+					v := strings.TrimSpace(s)
+					if v != "" {
+						return &v
+					}
+				}
+			}
+		}
+		return nil
 	}
+
+	normalizeName := func(primary *string) *string {
+		if primary != nil {
+			v := strings.TrimSpace(*primary)
+			if v != "" && !emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		first := lookup("firstName", "first_name", "firstname", "first")
+		last := lookup("lastName", "last_name", "lastname", "last")
+		if first == nil {
+			first = lookupByLabel("first name", "firstname")
+		}
+		if last == nil {
+			last = lookupByLabel("last name", "lastname", "surname")
+		}
+
+		switch {
+		case first != nil && last != nil:
+			combined := strings.TrimSpace(*first + " " + *last)
+			if combined != "" {
+				return &combined
+			}
+		case first != nil:
+			v := strings.TrimSpace(*first)
+			if v != "" {
+				return &v
+			}
+		case last != nil:
+			v := strings.TrimSpace(*last)
+			if v != "" {
+				return &v
+			}
+		}
+
+		// Legacy fallback: some older forms used "email" key for first-name text input.
+		legacy := lookup("email")
+		if legacy != nil {
+			v := strings.TrimSpace(*legacy)
+			if v != "" && !emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		return nil
+	}
+
+	normalizeEmail := func(candidate *string) *string {
+		if candidate != nil {
+			v := strings.TrimSpace(*candidate)
+			if emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		if typed := byType(models.FieldEmail); typed != nil {
+			v := strings.TrimSpace(*typed)
+			if emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		if labelled := lookupByLabel("email", "e-mail"); labelled != nil {
+			v := strings.TrimSpace(*labelled)
+			if emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		for _, raw := range values {
+			s, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			v := strings.TrimSpace(s)
+			if emailRe.MatchString(v) {
+				return &v
+			}
+		}
+
+		return nil
+	}
+
+	name := normalizeName(lookup("fullName", "name", "full_name"))
+	email := normalizeEmail(lookup("email", "contactEmail"))
 	phone := lookup("phone", "contactPhone", "contactNumber", "phoneNumber")
 	if phone == nil {
 		phone = byType(models.FieldTel)
@@ -1748,7 +1917,9 @@ func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr str
 		Code:          code,
 		Message:       message,
 	})
-	_ = s.sender.SendHTML(emailAddr, subject, body)
+	if err := s.sender.SendHTML(emailAddr, subject, body); err != nil {
+		log.Printf("⚠️ failed to send registration code email to %s: %v", emailAddr, err)
+	}
 }
 
 func (s *formService) sendResponseEmail(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, name *string, emailAddr string, regCode *string) {
@@ -1768,6 +1939,10 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	recipient := ""
 	if name != nil {
 		recipient = strings.TrimSpace(*name)
+	}
+	formID := ""
+	if form != nil {
+		formID = form.ID
 	}
 
 	event := &models.Event{}
@@ -1797,7 +1972,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 
 	templateKey := ""
 	if settings != nil && settings.ResponseEmailTemplateKey != nil {
-		templateKey = strings.TrimSpace(*settings.ResponseEmailTemplateKey)
+		templateKey = strings.Trim(strings.TrimSpace(*settings.ResponseEmailTemplateKey), "/")
 	}
 	if templateKey == "" && form != nil && form.Slug != nil {
 		slug := strings.TrimSpace(*form.Slug)
@@ -1844,6 +2019,9 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		"Event":            event,
 		"Values":           values,
 		"RecipientName":    recipient,
+		"FullName":         recipient,
+		"Name":             recipient,
+		"FirstName":        firstToken(recipient),
 		"Email":            addr,
 		"RegistrationCode": code,
 		"FormURL":          formURL,
@@ -1921,7 +2099,9 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		})
 	}
 
-	_ = s.sender.SendHTML(addr, subject, body)
+	if err := s.sender.SendHTML(addr, subject, body); err != nil {
+		log.Printf("⚠️ failed to send form response email to %s (templateKey=%s, formID=%s): %v", addr, templateKey, formID, err)
+	}
 }
 
 func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
