@@ -1,6 +1,6 @@
 -- schema.down.sql
 -- Rollback consolidated schema
--- Version: v5 (leadership members)
+-- Version: v6 (leadership anniversaries + senior pastor role)
 
 BEGIN;
 
@@ -18,6 +18,7 @@ DROP INDEX IF EXISTS public.idx_form_fields_form_id;
 DROP INDEX IF EXISTS public.idx_forms_status;
 DROP INDEX IF EXISTS public.idx_forms_event_id;
 DROP INDEX IF EXISTS public.idx_members_birthday_month_day;
+DROP INDEX IF EXISTS public.idx_leadership_anniversary_month_day;
 DROP INDEX IF EXISTS public.idx_leadership_email;
 DROP INDEX IF EXISTS public.idx_leadership_status;
 DROP INDEX IF EXISTS public.idx_leadership_role_status;
