@@ -15,6 +15,8 @@ import (
 type WorkforceService interface {
 	List(page, limit int, department, status string) ([]models.WorkforceMember, int64, error)
 	Create(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
+	CreateApplication(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
+	RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
 	Stats() (*models.WorkforceStatsResponse, error)
@@ -48,6 +50,30 @@ func (s *workforceService) List(page, limit int, department, status string) ([]m
 }
 
 func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
+	status := req.Status
+	if status == "" {
+		status = models.WorkforceStatusPending
+	}
+	if status == models.WorkforceStatusNew {
+		status = models.WorkforceStatusPending
+	}
+	switch status {
+	case models.WorkforceStatusPending, models.WorkforceStatusServing, models.WorkforceStatusNotServing:
+	default:
+		return nil, errors.New("status must be pending, serving, or not_serving")
+	}
+	return s.createWithStatus(req, status)
+}
+
+func (s *workforceService) CreateApplication(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
+	return s.createWithStatus(req, models.WorkforceStatusPending)
+}
+
+func (s *workforceService) RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
+	return s.createWithStatus(req, models.WorkforceStatusServing)
+}
+
+func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, status models.WorkforceStatus) (*models.WorkforceMember, error) {
 	if strings.TrimSpace(req.FirstName) == "" || strings.TrimSpace(req.LastName) == "" {
 		return nil, errors.New("firstName and lastName are required")
 	}
@@ -59,11 +85,6 @@ func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.W
 	if err != nil {
 		return nil, err
 	}
-
-	if req.Status != "" && req.Status != models.WorkforceStatusPending && req.Status != models.WorkforceStatusNew {
-		return nil, errors.New("new workforce requests must start as pending")
-	}
-	status := models.WorkforceStatusPending
 
 	member := &models.WorkforceMember{
 		FirstName:     strings.TrimSpace(req.FirstName),

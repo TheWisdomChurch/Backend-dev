@@ -696,10 +696,10 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		switch target {
 		case "", "none":
 			s.SubmissionTarget = nil
-		case "workforce", "member":
+		case "workforce", "workforce_new", "workforce_serving", "member":
 			s.SubmissionTarget = &target
 		default:
-			return nil, fmt.Errorf("submissionTarget must be workforce or member")
+			return nil, fmt.Errorf("submissionTarget must be workforce, workforce_new, workforce_serving, or member")
 		}
 	}
 	if s.SubmissionDepartment, err = normalizeText("submissionDepartment", s.SubmissionDepartment, 120); err != nil {
@@ -2130,14 +2130,26 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 	target := strings.ToLower(strings.TrimSpace(*settings.SubmissionTarget))
 	switch target {
 	case "workforce":
+		fallthrough
+	case "workforce_new":
 		if s.workforceSvc == nil {
 			return errors.New("workforce service not configured")
 		}
-		req, err := buildWorkforceRequest(values, settings)
+		req, err := buildWorkforceRequest(values, settings, false)
 		if err != nil {
 			return err
 		}
-		_, err = s.workforceSvc.Create(req)
+		_, err = s.workforceSvc.CreateApplication(req)
+		return err
+	case "workforce_serving":
+		if s.workforceSvc == nil {
+			return errors.New("workforce service not configured")
+		}
+		req, err := buildWorkforceRequest(values, settings, true)
+		if err != nil {
+			return err
+		}
+		_, err = s.workforceSvc.RegisterExisting(req)
 		return err
 	case "member":
 		if s.memberSvc == nil {
@@ -2154,7 +2166,7 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 	}
 }
 
-func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsDTO) (*models.CreateWorkforceRequest, error) {
+func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsDTO, existing bool) (*models.CreateWorkforceRequest, error) {
 	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
 	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
 	if first == "" || last == "" {
@@ -2190,6 +2202,9 @@ func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsD
 		Email:      strings.TrimSpace(emailAddr),
 		Phone:      strings.TrimSpace(phone),
 		Department: strings.TrimSpace(dept),
+	}
+	if existing {
+		req.Status = models.WorkforceStatusServing
 	}
 	if notes != "" {
 		n := strings.TrimSpace(notes)
