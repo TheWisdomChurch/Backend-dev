@@ -67,7 +67,7 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 		return
 	}
 
-	member, err := h.svc.Create(&req)
+	member, err := h.svc.CreateApplication(&req)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
@@ -90,6 +90,37 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusCreated, "Application submitted", member)
+}
+
+func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
+	var req models.CreateWorkforceRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	member, err := h.svc.RegisterExisting(&req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if h.notifySvc != nil {
+		fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+		title := "Existing worker profile update"
+		message := fmt.Sprintf("%s submitted workforce profile details (%s).", fullName, member.Department)
+		entityType := "workforce"
+		entityID := member.ID
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "workforce_profile_update",
+			Title:      title,
+			Message:    message,
+			EntityType: &entityType,
+			EntityID:   &entityID,
+			Roles:      []string{"admin", "super_admin"},
+		})
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Workforce profile submitted", member)
 }
 
 func (h *WorkforceHandler) Update(c *gin.Context) {
