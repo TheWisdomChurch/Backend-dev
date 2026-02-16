@@ -54,7 +54,7 @@ type CreateLeadershipRequest struct {
 	Bio       *string          `json:"bio,omitempty"`
 	ImageURL  *string          `json:"imageUrl,omitempty"`
 
-	// Accept DD/MM or DD/MM/YYYY input.
+	// Birthday uses DD/MM. Anniversary uses DD/MM/YYYY.
 	Birthday    *string `json:"birthday,omitempty"`
 	Anniversary *string `json:"anniversary,omitempty"`
 
