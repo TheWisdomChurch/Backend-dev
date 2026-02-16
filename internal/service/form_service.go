@@ -705,6 +705,17 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.SubmissionDepartment, err = normalizeText("submissionDepartment", s.SubmissionDepartment, 120); err != nil {
 		return nil, err
 	}
+	if s.FormType != nil {
+		formType := strings.ToLower(strings.TrimSpace(*s.FormType))
+		switch formType {
+		case "":
+			s.FormType = nil
+		case "registration", "event", "membership", "workforce", "leadership", "application", "contact", "general":
+			s.FormType = &formType
+		default:
+			return nil, fmt.Errorf("formType must be one of: registration, event, membership, workforce, leadership, application, contact, general")
+		}
+	}
 	if s.IntroTitle, err = normalizeText("introTitle", s.IntroTitle, 200); err != nil {
 		return nil, err
 	}
