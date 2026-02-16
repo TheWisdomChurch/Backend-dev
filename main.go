@@ -495,11 +495,13 @@ func setupRouter(
 
 	// Workforce public apply
 	api.POST("/workforce/apply", workforceHandler.Apply)
+	api.POST("/workforce/serving/register", workforceHandler.ApplyServing)
 
 	// Leadership public
 	api.GET("/leadership", leadershipHandler.ListPublic)
 	api.POST("/leadership/apply", leadershipHandler.Apply)
 	api.POST("/leadership/upload-image", leadershipHandler.UploadImage)
+	api.POST("/leadership/upload", leadershipHandler.UploadImage)
 
 	// ADMIN
 	admin := api.Group("/admin")

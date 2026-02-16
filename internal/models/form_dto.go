@@ -64,7 +64,7 @@ type FormSettingsDTO struct {
 	ResponseEmailSubject     *string `json:"responseEmailSubject,omitempty"`
 
 	// Submission routing (optional): send submissions into workforce/members tables.
-	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|member
+	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|workforce_new|workforce_serving|member
 	SubmissionDepartment *string `json:"submissionDepartment,omitempty"` // default department for workforce
 
 	Design *FormDesignSettingsDTO `json:"design,omitempty"`
