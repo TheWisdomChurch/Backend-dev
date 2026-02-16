@@ -57,6 +57,9 @@ type FormSettingsDTO struct {
 	ExpiresAt      *string `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
 	SuccessMessage *string `json:"successMessage,omitempty"`                        // optional
 
+	// Form type controls public header label (registration, membership, workforce, etc).
+	FormType *string `json:"formType,omitempty"`
+
 	// Response email (auto-reply after submission)
 	ResponseEmailEnabled     *bool   `json:"responseEmailEnabled,omitempty"`
 	ResponseEmailTemplateID  *string `json:"responseEmailTemplateId,omitempty"`
