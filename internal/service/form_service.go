@@ -516,7 +516,12 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return err
 	}
 
-	if regCode != nil && email != nil && s.sender != nil {
+	responseEmailEnabled := true
+	if settings != nil && settings.ResponseEmailEnabled != nil {
+		responseEmailEnabled = *settings.ResponseEmailEnabled
+	}
+
+	if regCode != nil && email != nil && s.sender != nil && !responseEmailEnabled {
 		s.sendRegistrationCodeEmail(form, *email, name, *regCode)
 	}
 	if email != nil {
@@ -680,15 +685,46 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			s.ResponseEmailTemplateID = &id
 		}
 	}
+	if s.ResponseEmailTemplateURL != nil {
+		raw := strings.TrimSpace(*s.ResponseEmailTemplateURL)
+		if raw == "" {
+			s.ResponseEmailTemplateURL = nil
+		} else {
+			parsed, parseErr := url.Parse(raw)
+			if parseErr != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+				return nil, fmt.Errorf("responseEmailTemplateUrl must be a valid absolute URL")
+			}
+			if parsed.Scheme != "https" && parsed.Scheme != "http" {
+				return nil, fmt.Errorf("responseEmailTemplateUrl must start with http or https")
+			}
+			s.ResponseEmailTemplateURL = &raw
+		}
+	}
 	if s.ResponseEmailTemplateKey != nil {
 		key := strings.Trim(strings.TrimSpace(*s.ResponseEmailTemplateKey), "/")
 		if key == "" {
 			s.ResponseEmailTemplateKey = nil
 		} else {
-			if strings.Contains(key, "..") || !templateKeyRe.MatchString(key) {
-				return nil, fmt.Errorf("responseEmailTemplateKey contains invalid characters")
+			if strings.HasPrefix(strings.ToLower(key), "http://") || strings.HasPrefix(strings.ToLower(key), "https://") {
+				// Allow legacy clients that stored a full template image URL in templateKey.
+				parsed, parseErr := url.Parse(key)
+				if parseErr != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+					return nil, fmt.Errorf("responseEmailTemplateKey URL is invalid")
+				}
+				if parsed.Scheme != "https" && parsed.Scheme != "http" {
+					return nil, fmt.Errorf("responseEmailTemplateKey URL must start with http or https")
+				}
+				if s.ResponseEmailTemplateURL == nil {
+					u := key
+					s.ResponseEmailTemplateURL = &u
+				}
+				s.ResponseEmailTemplateKey = nil
+			} else {
+				if strings.Contains(key, "..") || !templateKeyRe.MatchString(key) {
+					return nil, fmt.Errorf("responseEmailTemplateKey contains invalid characters")
+				}
+				s.ResponseEmailTemplateKey = &key
 			}
-			s.ResponseEmailTemplateKey = &key
 		}
 	}
 	if s.SubmissionTarget != nil {
@@ -1985,6 +2021,15 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	if settings != nil && settings.ResponseEmailTemplateKey != nil {
 		templateKey = strings.Trim(strings.TrimSpace(*settings.ResponseEmailTemplateKey), "/")
 	}
+	templateImageURL := ""
+	if settings != nil && settings.ResponseEmailTemplateURL != nil {
+		templateImageURL = strings.TrimSpace(*settings.ResponseEmailTemplateURL)
+	}
+	// Backward compatibility: some saved forms may have a full URL in templateKey.
+	if templateImageURL == "" && (strings.HasPrefix(strings.ToLower(templateKey), "http://") || strings.HasPrefix(strings.ToLower(templateKey), "https://")) {
+		templateImageURL = strings.TrimSpace(templateKey)
+		templateKey = ""
+	}
 	if templateKey == "" && form != nil && form.Slug != nil {
 		slug := strings.TrimSpace(*form.Slug)
 		if slug != "" {
@@ -2013,8 +2058,13 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	}
 
 	hero := ""
+	if templateImageURL != "" {
+		hero = templateImageURL
+	}
 	if settings != nil && settings.Design != nil && settings.Design.CoverImageURL != nil {
-		hero = strings.TrimSpace(*settings.Design.CoverImageURL)
+		if hero == "" {
+			hero = strings.TrimSpace(*settings.Design.CoverImageURL)
+		}
 	}
 	if hero == "" && event.BannerImage != nil {
 		hero = strings.TrimSpace(*event.BannerImage)
@@ -2044,12 +2094,28 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		"EventTime":        strings.TrimSpace(event.Time),
 		"EventLocation":    strings.TrimSpace(event.Location),
 		"HeroImageURL":     hero,
+		"TemplateImageURL": templateImageURL,
 		"SubmittedAt":      now.Format(time.RFC3339),
 		"SubmittedAtText":  now.Format("Mon, 02 Jan 2006 15:04 MST"),
 		"Year":             now.Year(),
 	}
 
 	var body string
+	if templateImageURL != "" {
+		message := ""
+		if settings != nil && settings.SuccessMessage != nil {
+			message = strings.TrimSpace(*settings.SuccessMessage)
+		}
+		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
+			Branding:         s.branding,
+			RecipientName:    recipient,
+			FormTitle:        formTitle,
+			RegistrationCode: code,
+			Message:          message,
+			HeroImageURL:     templateImageURL,
+		})
+	}
+
 	if s.templateRepo != nil {
 		var tpl *models.EmailTemplate
 		if tpl == nil && settings != nil && settings.ResponseEmailTemplateID != nil {
@@ -2069,12 +2135,14 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 				tpl = t
 			}
 		}
-		if tpl != nil {
+		if tpl != nil && strings.TrimSpace(body) == "" {
 			if rendered, err := renderDBTemplate(tpl, templateData); err == nil && strings.TrimSpace(rendered) != "" {
 				body = rendered
 				if tpl.Subject != nil && strings.TrimSpace(*tpl.Subject) != "" {
 					subject = strings.TrimSpace(*tpl.Subject)
 				}
+			} else if err != nil {
+				log.Printf("⚠️ response email DB template render failed (templateID=%s, formID=%s): %v", tpl.ID, formID, err)
 			}
 		}
 	}
@@ -2086,6 +2154,8 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, templateKey, templateData)
 		if err == nil && strings.TrimSpace(htmlOut) != "" {
 			body = htmlOut
+		} else if err != nil {
+			log.Printf("⚠️ response email remote template render failed (templateKey=%s, formID=%s): %v", templateKey, formID, err)
 		}
 	}
 
@@ -2099,13 +2169,8 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			Branding:         s.branding,
 			RecipientName:    recipient,
 			FormTitle:        formTitle,
-			EventTitle:       strings.TrimSpace(event.Title),
-			EventDate:        strings.TrimSpace(event.Date),
-			EventTime:        strings.TrimSpace(event.Time),
-			EventLocation:    strings.TrimSpace(event.Location),
 			RegistrationCode: code,
 			Message:          message,
-			FormURL:          formURL,
 			HeroImageURL:     hero,
 		})
 	}
