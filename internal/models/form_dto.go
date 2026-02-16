@@ -64,6 +64,7 @@ type FormSettingsDTO struct {
 	ResponseEmailEnabled     *bool   `json:"responseEmailEnabled,omitempty"`
 	ResponseEmailTemplateID  *string `json:"responseEmailTemplateId,omitempty"`
 	ResponseEmailTemplateKey *string `json:"responseEmailTemplateKey,omitempty"`
+	ResponseEmailTemplateURL *string `json:"responseEmailTemplateUrl,omitempty"`
 	ResponseEmailSubject     *string `json:"responseEmailSubject,omitempty"`
 
 	// Submission routing (optional): send submissions into workforce/members tables.
