@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -224,6 +226,75 @@ func (h *FormHandler) SubmitPublicForm(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Registration submitted", nil)
+}
+
+func (h *FormHandler) ConfirmCalendarOptIn(c *gin.Context) {
+	slug := c.Param("slug")
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "token is required")
+		return
+	}
+
+	payload, err := h.svc.ConfirmCalendarOptIn(slug, token)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "calendar link not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	title := template.HTMLEscapeString(payload.EventTitle)
+	dateValue := template.HTMLEscapeString(payload.EventDate)
+	timeValue := template.HTMLEscapeString(payload.EventTime)
+	locationValue := template.HTMLEscapeString(payload.EventLocation)
+
+	googleLink := ""
+	if strings.TrimSpace(payload.GoogleURL) != "" {
+		googleLink = "<a href=\"" + template.HTMLEscapeString(payload.GoogleURL) + "\" style=\"display:inline-block;margin-right:10px;padding:10px 16px;background:#0f172a;color:#fff;text-decoration:none;border-radius:10px;font-weight:700;\">Open Google Calendar</a>"
+	}
+	icsLink := ""
+	if strings.TrimSpace(payload.ICSURL) != "" {
+		icsLink = "<a href=\"" + template.HTMLEscapeString(payload.ICSURL) + "\" style=\"display:inline-block;padding:10px 16px;background:#e2e8f0;color:#0f172a;text-decoration:none;border-radius:10px;font-weight:700;\">Download .ics</a>"
+	}
+
+	html := "<!DOCTYPE html><html><body style=\"font-family:Arial,sans-serif;padding:24px;background:#f8fafc;color:#0f172a;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:24px;\">" +
+		"<h2 style=\"margin-top:0;\">Calendar reminder enabled</h2>" +
+		"<p style=\"margin:0 0 12px;\">You will receive a gentle reminder email one day before this event.</p>" +
+		"<p style=\"margin:0 0 6px;\"><strong>Event:</strong> " + title + "</p>" +
+		"<p style=\"margin:0 0 6px;\"><strong>Date:</strong> " + dateValue + "</p>" +
+		"<p style=\"margin:0 0 6px;\"><strong>Time:</strong> " + timeValue + "</p>" +
+		"<p style=\"margin:0 0 16px;\"><strong>Location:</strong> " + locationValue + "</p>" +
+		googleLink + icsLink +
+		"</div></body></html>"
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+}
+
+func (h *FormHandler) DownloadCalendarICS(c *gin.Context) {
+	slug := c.Param("slug")
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "token is required")
+		return
+	}
+
+	filename, content, err := h.svc.BuildCalendarICS(slug, token)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "calendar link not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.Header("Content-Type", "text/calendar; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	c.Data(http.StatusOK, "text/calendar; charset=utf-8", content)
 }
 
 func parseTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
