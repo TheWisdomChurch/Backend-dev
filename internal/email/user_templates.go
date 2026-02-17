@@ -288,11 +288,26 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		message = html.EscapeString(message)
 	}
 
+	topLinks := ""
+	if strings.TrimSpace(data.SubscribeURL) != "" || strings.TrimSpace(data.UnsubscribeURL) != "" {
+		topLinks = "<p style=\"margin:0 0 14px;font-size:13px;color:#111827;\">"
+		if strings.TrimSpace(data.SubscribeURL) != "" {
+			topLinks += "<a href=\"" + html.EscapeString(strings.TrimSpace(data.SubscribeURL)) + "\" style=\"color:#111827;font-weight:700;text-decoration:underline;\">subscribe</a>"
+		}
+		if strings.TrimSpace(data.SubscribeURL) != "" && strings.TrimSpace(data.UnsubscribeURL) != "" {
+			topLinks += " &nbsp;|&nbsp; "
+		}
+		if strings.TrimSpace(data.UnsubscribeURL) != "" {
+			topLinks += "<a href=\"" + html.EscapeString(strings.TrimSpace(data.UnsubscribeURL)) + "\" style=\"color:#111827;font-weight:700;text-decoration:underline;\">unsubscribe</a>"
+		}
+		topLinks += "</p>"
+	}
+
 	codeBlock := ""
 	if code := strings.TrimSpace(data.RegistrationCode); code != "" {
-		codeBlock = "<div style=\"margin:16px 0 20px;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;display:inline-block;\">" +
-			"<div style=\"font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#1d4ed8;font-weight:700;\">Registration Number</div>" +
-			"<div style=\"font-size:20px;letter-spacing:1.6px;font-weight:800;color:#0b2447;margin-top:4px;\">" + html.EscapeString(code) + "</div>" +
+		codeBlock = "<div style=\"margin:16px 0 20px;padding:14px 16px;background:#fff9db;border:1px solid #facc15;border-radius:12px;display:inline-block;\">" +
+			"<div style=\"font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#111827;font-weight:700;\">Registration Number</div>" +
+			"<div style=\"font-size:20px;letter-spacing:1.6px;font-weight:800;color:#111827;margin-top:4px;\">" + html.EscapeString(code) + "</div>" +
 			"</div>"
 	}
 
@@ -302,42 +317,31 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		if confirmLink == "" {
 			confirmLink = strings.TrimSpace(data.GoogleCalendarURL)
 		}
-		calendarBlock += "<div style=\"margin:20px 0 10px;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;\">"
-		calendarBlock += "<p style=\"margin:0 0 10px;font-size:14px;color:#334155;\">Would you like calendar reminders before the event?</p>"
+		calendarBlock += "<div style=\"margin:20px 0 10px;padding:16px;background:#fffdf5;border:1px solid #fde68a;border-radius:12px;\">"
+		calendarBlock += "<p style=\"margin:0 0 10px;font-size:14px;color:#111827;\">Would you like calendar reminders before the event?</p>"
 		if confirmLink != "" {
-			calendarBlock += "<a href=\"" + html.EscapeString(confirmLink) + "\" style=\"display:inline-block;padding:11px 16px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:700;font-size:14px;\">Add Event To Calendar</a>"
+			calendarBlock += "<a href=\"" + html.EscapeString(confirmLink) + "\" style=\"color:#111827;font-weight:800;text-decoration:underline;\">Add event to calendar</a>"
 		}
 		if strings.TrimSpace(data.CalendarICSURL) != "" {
-			calendarBlock += "<p style=\"margin:10px 0 0;font-size:12px;color:#64748b;\">Apple/Outlook: <a href=\"" + html.EscapeString(strings.TrimSpace(data.CalendarICSURL)) + "\" style=\"color:#1d4ed8;\">Download .ics</a></p>"
+			calendarBlock += "<p style=\"margin:10px 0 0;font-size:12px;color:#111827;\">Apple/Outlook: <a href=\"" + html.EscapeString(strings.TrimSpace(data.CalendarICSURL)) + "\" style=\"color:#111827;font-weight:700;text-decoration:underline;\">Download .ics</a></p>"
 		}
 		calendarBlock += "</div>"
-	}
-
-	subscriptionBlock := ""
-	if strings.TrimSpace(data.SubscribeURL) != "" || strings.TrimSpace(data.UnsubscribeURL) != "" {
-		subscriptionBlock = "<div style=\"margin:16px 0 0;padding-top:14px;border-top:1px solid #e5e7eb;\">"
-		if strings.TrimSpace(data.SubscribeURL) != "" {
-			subscriptionBlock += "<a href=\"" + html.EscapeString(strings.TrimSpace(data.SubscribeURL)) + "\" style=\"display:inline-block;margin-right:10px;padding:8px 12px;background:#16a34a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:700;\">Subscribe</a>"
-		}
-		if strings.TrimSpace(data.UnsubscribeURL) != "" {
-			subscriptionBlock += "<a href=\"" + html.EscapeString(strings.TrimSpace(data.UnsubscribeURL)) + "\" style=\"display:inline-block;padding:8px 12px;background:#e2e8f0;color:#0f172a;text-decoration:none;border-radius:8px;font-size:13px;font-weight:700;\">Unsubscribe</a>"
-		}
-		subscriptionBlock += "</div>"
 	}
 
 	logoBlock := renderLogoBlock(b)
 	heroBlock := renderHeroImageBlock(data.HeroImageURL, b.AppName+" registration")
 
 	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#111827;background:#ffffff;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #fde68a;\">" +
+		"<div style=\"height:6px;background:#facc15;border-radius:999px;margin:0 0 18px 0;\"></div>" +
+		topLinks +
 		logoBlock +
 		heroBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Hi " + name + ",</h2>" +
-		"<p style=\"margin:0 0 14px;font-size:15px;color:#334155;\">" + message + "</p>" +
+		"<h2 style=\"margin:0 0 12px;font-size:22px;color:#111827;\">Hi " + name + ",</h2>" +
+		"<p style=\"margin:0 0 14px;font-size:15px;color:#111827;\">" + message + "</p>" +
 		codeBlock +
 		calendarBlock +
-		subscriptionBlock +
 		footerBlock(b) +
 		"</div></body></html>"
 }
