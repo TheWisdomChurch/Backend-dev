@@ -94,6 +94,9 @@ func (r *formRepository) Update(form *models.Form) error {
 
 func (r *formRepository) Delete(id string) error {
 	return r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormCalendarReminder{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormField{}).Error; err != nil {
 			return err
 		}
