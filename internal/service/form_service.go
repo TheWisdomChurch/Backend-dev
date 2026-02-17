@@ -4,6 +4,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +57,10 @@ type FormService interface {
 	Stats(start, end *time.Time) (*models.FormStatsResponse, error)
 	StatsByForm(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
 	CleanupExpiredForms(now time.Time) (int64, error)
+
+	ConfirmCalendarOptIn(slug, token string) (*models.FormCalendarPayload, error)
+	BuildCalendarICS(slug, token string) (string, []byte, error)
+	SendEventReminderEmails(now time.Time, lookAhead time.Duration) (int, int, error)
 }
 
 type formService struct {
@@ -66,6 +72,7 @@ type formService struct {
 	eventRepo *repository.EventRepository
 
 	sequenceRepo *repository.RegistrationSequenceRepository
+	reminderRepo repository.FormCalendarReminderRepository
 	templateRepo repository.EmailTemplateRepository
 	workforceSvc WorkforceService
 	memberSvc    MemberService
@@ -81,6 +88,7 @@ func NewFormService(
 	repo repository.FormRepository,
 	eventRepo *repository.EventRepository,
 	sequenceRepo *repository.RegistrationSequenceRepository,
+	reminderRepo repository.FormCalendarReminderRepository,
 	templateRepo repository.EmailTemplateRepository,
 	workforceSvc WorkforceService,
 	memberSvc MemberService,
@@ -106,6 +114,7 @@ func NewFormService(
 		repo:            repo,
 		eventRepo:       eventRepo,
 		sequenceRepo:    sequenceRepo,
+		reminderRepo:    reminderRepo,
 		templateRepo:    templateRepo,
 		workforceSvc:    workforceSvc,
 		memberSvc:       memberSvc,
@@ -525,7 +534,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		s.sendRegistrationCodeEmail(form, *email, name, *regCode)
 	}
 	if email != nil {
-		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode)
+		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	}
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
 		log.Printf("⚠️ submission target sync failed: %v", err)
@@ -616,6 +625,33 @@ func normalizeFlexibleTime(value string) (string, error) {
 	return t.UTC().Format(time.RFC3339), nil
 }
 
+func normalizeAbsoluteTemplateURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	candidate := trimmed
+	if strings.HasPrefix(candidate, "//") {
+		candidate = "https:" + candidate
+	}
+	if !strings.Contains(candidate, "://") {
+		candidate = "https://" + candidate
+	}
+
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed == nil {
+		return "", fmt.Errorf("invalid URL")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", fmt.Errorf("unsupported URL scheme")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("missing URL host")
+	}
+	return parsed.String(), nil
+}
+
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
 		return datatypes.JSON([]byte("null")), nil
@@ -690,14 +726,13 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		if raw == "" {
 			s.ResponseEmailTemplateURL = nil
 		} else {
-			parsed, parseErr := url.Parse(raw)
-			if parseErr != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
-				return nil, fmt.Errorf("responseEmailTemplateUrl must be a valid absolute URL")
+			normalized, parseErr := normalizeAbsoluteTemplateURL(raw)
+			if parseErr != nil {
+				// Permanent resilience: ignore malformed URL instead of failing form creation.
+				s.ResponseEmailTemplateURL = nil
+			} else {
+				s.ResponseEmailTemplateURL = &normalized
 			}
-			if parsed.Scheme != "https" && parsed.Scheme != "http" {
-				return nil, fmt.Errorf("responseEmailTemplateUrl must start with http or https")
-			}
-			s.ResponseEmailTemplateURL = &raw
 		}
 	}
 	if s.ResponseEmailTemplateKey != nil {
@@ -707,15 +742,9 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		} else {
 			if strings.HasPrefix(strings.ToLower(key), "http://") || strings.HasPrefix(strings.ToLower(key), "https://") {
 				// Allow legacy clients that stored a full template image URL in templateKey.
-				parsed, parseErr := url.Parse(key)
-				if parseErr != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
-					return nil, fmt.Errorf("responseEmailTemplateKey URL is invalid")
-				}
-				if parsed.Scheme != "https" && parsed.Scheme != "http" {
-					return nil, fmt.Errorf("responseEmailTemplateKey URL must start with http or https")
-				}
-				if s.ResponseEmailTemplateURL == nil {
-					u := key
+				normalized, parseErr := normalizeAbsoluteTemplateURL(key)
+				if parseErr == nil && s.ResponseEmailTemplateURL == nil {
+					u := normalized
 					s.ResponseEmailTemplateURL = &u
 				}
 				s.ResponseEmailTemplateKey = nil
@@ -1913,12 +1942,13 @@ func (s *formService) buildRegistrationCode(form *models.Form) (string, error) {
 	if initials == "" {
 		initials = "GEN"
 	}
-	prefix := fmt.Sprintf("REG-%s", initials)
+	year := time.Now().UTC().Format("06")
+	prefix := fmt.Sprintf("WHC-%s-%s", initials, year)
 	seq, err := s.sequenceRepo.Next(prefix)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s-%04d", prefix, seq), nil
+	return fmt.Sprintf("%s-%06d", prefix, seq), nil
 }
 
 func buildInitials(value string) string {
@@ -1969,7 +1999,7 @@ func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr str
 	}
 }
 
-func (s *formService) sendResponseEmail(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, name *string, emailAddr string, regCode *string) {
+func (s *formService) sendResponseEmail(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, name *string, emailAddr string, regCode *string, submissionID string) {
 	if s.sender == nil {
 		return
 	}
@@ -2045,16 +2075,32 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	}
 
 	subscribeURL := ""
+	unsubscribeURL := ""
 	if strings.TrimSpace(s.branding.PublicURL) != "" {
 		subscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/notifications/subscribe?email=" + url.QueryEscape(addr)
 		if recipient != "" {
 			subscribeURL += "&name=" + url.QueryEscape(recipient)
 		}
+		unsubscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/notifications/unsubscribe?email=" + url.QueryEscape(addr)
 	}
 
 	code := ""
 	if regCode != nil {
 		code = strings.TrimSpace(*regCode)
+	}
+
+	calendarOptInURL := ""
+	googleCalendarURL := ""
+	calendarICSURL := ""
+	if form != nil && form.Slug != nil {
+		calendarOptInURL, googleCalendarURL, calendarICSURL = s.createCalendarReminder(
+			form,
+			event,
+			addr,
+			recipient,
+			code,
+			submissionID,
+		)
 	}
 
 	hero := ""
@@ -2075,29 +2121,33 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 
 	now := time.Now().UTC()
 	templateData := map[string]any{
-		"Branding":         s.branding,
-		"Form":             form,
-		"Event":            event,
-		"Values":           values,
-		"RecipientName":    recipient,
-		"FullName":         recipient,
-		"Name":             recipient,
-		"FirstName":        firstToken(recipient),
-		"Email":            addr,
-		"RegistrationCode": code,
-		"FormURL":          formURL,
-		"PublicURL":        formURL,
-		"SubscribeURL":     subscribeURL,
-		"FormTitle":        formTitle,
-		"EventTitle":       strings.TrimSpace(event.Title),
-		"EventDate":        strings.TrimSpace(event.Date),
-		"EventTime":        strings.TrimSpace(event.Time),
-		"EventLocation":    strings.TrimSpace(event.Location),
-		"HeroImageURL":     hero,
-		"TemplateImageURL": templateImageURL,
-		"SubmittedAt":      now.Format(time.RFC3339),
-		"SubmittedAtText":  now.Format("Mon, 02 Jan 2006 15:04 MST"),
-		"Year":             now.Year(),
+		"Branding":          s.branding,
+		"Form":              form,
+		"Event":             event,
+		"Values":            values,
+		"RecipientName":     recipient,
+		"FullName":          recipient,
+		"Name":              recipient,
+		"FirstName":         firstToken(recipient),
+		"Email":             addr,
+		"RegistrationCode":  code,
+		"FormURL":           formURL,
+		"PublicURL":         formURL,
+		"SubscribeURL":      subscribeURL,
+		"UnsubscribeURL":    unsubscribeURL,
+		"CalendarOptInURL":  calendarOptInURL,
+		"GoogleCalendarURL": googleCalendarURL,
+		"CalendarICSURL":    calendarICSURL,
+		"FormTitle":         formTitle,
+		"EventTitle":        strings.TrimSpace(event.Title),
+		"EventDate":         strings.TrimSpace(event.Date),
+		"EventTime":         strings.TrimSpace(event.Time),
+		"EventLocation":     strings.TrimSpace(event.Location),
+		"HeroImageURL":      hero,
+		"TemplateImageURL":  templateImageURL,
+		"SubmittedAt":       now.Format(time.RFC3339),
+		"SubmittedAtText":   now.Format("Mon, 02 Jan 2006 15:04 MST"),
+		"Year":              now.Year(),
 	}
 
 	var body string
@@ -2107,12 +2157,17 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			message = strings.TrimSpace(*settings.SuccessMessage)
 		}
 		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
-			Branding:         s.branding,
-			RecipientName:    recipient,
-			FormTitle:        formTitle,
-			RegistrationCode: code,
-			Message:          message,
-			HeroImageURL:     templateImageURL,
+			Branding:          s.branding,
+			RecipientName:     recipient,
+			FormTitle:         formTitle,
+			RegistrationCode:  code,
+			Message:           message,
+			HeroImageURL:      templateImageURL,
+			CalendarOptInURL:  calendarOptInURL,
+			GoogleCalendarURL: googleCalendarURL,
+			CalendarICSURL:    calendarICSURL,
+			SubscribeURL:      subscribeURL,
+			UnsubscribeURL:    unsubscribeURL,
 		})
 	}
 
@@ -2166,18 +2221,424 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		}
 
 		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
-			Branding:         s.branding,
-			RecipientName:    recipient,
-			FormTitle:        formTitle,
-			RegistrationCode: code,
-			Message:          message,
-			HeroImageURL:     hero,
+			Branding:          s.branding,
+			RecipientName:     recipient,
+			FormTitle:         formTitle,
+			RegistrationCode:  code,
+			Message:           message,
+			HeroImageURL:      hero,
+			CalendarOptInURL:  calendarOptInURL,
+			GoogleCalendarURL: googleCalendarURL,
+			CalendarICSURL:    calendarICSURL,
+			SubscribeURL:      subscribeURL,
+			UnsubscribeURL:    unsubscribeURL,
 		})
 	}
 
 	if err := s.sender.SendHTML(addr, subject, body); err != nil {
 		log.Printf("⚠️ failed to send form response email to %s (templateKey=%s, formID=%s): %v", addr, templateKey, formID, err)
 	}
+}
+
+func (s *formService) createCalendarReminder(form *models.Form, event *models.Event, emailAddr, recipientName, registrationCode, submissionID string) (string, string, string) {
+	if s.reminderRepo == nil || form == nil || event == nil {
+		return "", "", ""
+	}
+	if strings.TrimSpace(emailAddr) == "" || strings.TrimSpace(submissionID) == "" {
+		return "", "", ""
+	}
+	if form.Slug == nil {
+		return "", "", ""
+	}
+	slug := strings.TrimSpace(*form.Slug)
+	if slug == "" {
+		return "", "", ""
+	}
+
+	eventDate := strings.TrimSpace(event.Date)
+	if eventDate == "" {
+		return "", "", ""
+	}
+
+	startAt, endAt, err := parseEventSchedule(eventDate, event.Time)
+	if err != nil {
+		return "", "", ""
+	}
+
+	token, err := generateSecureToken(24)
+	if err != nil {
+		log.Printf("⚠️ calendar token generation failed (formID=%s, submissionID=%s): %v", form.ID, submissionID, err)
+		return "", "", ""
+	}
+
+	eventTitle := strings.TrimSpace(event.Title)
+	if eventTitle == "" {
+		eventTitle = strings.TrimSpace(form.Title)
+	}
+	if eventTitle == "" {
+		eventTitle = "Church Event"
+	}
+
+	location := strings.TrimSpace(event.Location)
+	var recipientPtr *string
+	if recipientName != "" {
+		name := recipientName
+		recipientPtr = &name
+	}
+	var codePtr *string
+	if registrationCode != "" {
+		code := registrationCode
+		codePtr = &code
+	}
+	var locationPtr *string
+	if location != "" {
+		loc := location
+		locationPtr = &loc
+	}
+	endAtCopy := endAt
+
+	item := &models.FormCalendarReminder{
+		FormID:           form.ID,
+		SubmissionID:     submissionID,
+		Slug:             slug,
+		Email:            emailAddr,
+		RecipientName:    recipientPtr,
+		RegistrationCode: codePtr,
+		EventTitle:       eventTitle,
+		EventLocation:    locationPtr,
+		EventDate:        eventDate,
+		EventTime:        strings.TrimSpace(event.Time),
+		EventStartsAt:    startAt.UTC(),
+		EventEndsAt:      &endAtCopy,
+		CalendarToken:    token,
+	}
+
+	if err := s.reminderRepo.Create(item); err != nil {
+		log.Printf("⚠️ failed to persist calendar reminder (formID=%s, submissionID=%s): %v", form.ID, submissionID, err)
+		return "", "", ""
+	}
+
+	optInURL := s.buildCalendarOptInURL(slug, token)
+	icsURL := s.buildCalendarICSURL(slug, token)
+	details := buildCalendarDetails(item.EventTitle, registrationCode, s.branding.AppName)
+	googleURL := buildGoogleCalendarURL(item.EventTitle, location, details, item.EventStartsAt, endAt)
+
+	return optInURL, googleURL, icsURL
+}
+
+func parseEventSchedule(dateValue string, timeValue string) (time.Time, time.Time, error) {
+	date, err := time.Parse("2006-01-02", strings.TrimSpace(dateValue))
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	hour, minute := 9, 0
+	clock := strings.TrimSpace(timeValue)
+	if clock != "" {
+		h, m, parseErr := parseEventClock(clock)
+		if parseErr == nil {
+			hour, minute = h, m
+		}
+	}
+
+	start := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, time.UTC)
+	end := start.Add(2 * time.Hour)
+	return start, end, nil
+}
+
+func parseEventClock(value string) (int, int, error) {
+	clean := strings.TrimSpace(value)
+	if clean == "" {
+		return 9, 0, nil
+	}
+	compact := strings.ToUpper(strings.ReplaceAll(clean, " ", ""))
+	layouts := []string{"15:04", "15:04:05", "3PM", "3:04PM", "3:04:05PM"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, compact); err == nil {
+			return t.Hour(), t.Minute(), nil
+		}
+	}
+	return 0, 0, errors.New("invalid event time")
+}
+
+func generateSecureToken(size int) (string, error) {
+	if size <= 0 {
+		size = 24
+	}
+	b := make([]byte, size)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func (s *formService) buildCalendarOptInURL(slug, token string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s/api/v1/forms/%s/calendar/confirm?token=%s",
+		base,
+		url.PathEscape(strings.TrimSpace(slug)),
+		url.QueryEscape(strings.TrimSpace(token)),
+	)
+}
+
+func (s *formService) buildCalendarICSURL(slug, token string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s/api/v1/forms/%s/calendar.ics?token=%s",
+		base,
+		url.PathEscape(strings.TrimSpace(slug)),
+		url.QueryEscape(strings.TrimSpace(token)),
+	)
+}
+
+func buildGoogleCalendarURL(title, location, details string, startsAt, endsAt time.Time) string {
+	if startsAt.IsZero() {
+		return ""
+	}
+	if endsAt.IsZero() || !endsAt.After(startsAt) {
+		endsAt = startsAt.Add(2 * time.Hour)
+	}
+
+	q := url.Values{}
+	q.Set("action", "TEMPLATE")
+	q.Set("text", strings.TrimSpace(title))
+	q.Set("dates", startsAt.UTC().Format("20060102T150405Z")+"/"+endsAt.UTC().Format("20060102T150405Z"))
+	if strings.TrimSpace(details) != "" {
+		q.Set("details", strings.TrimSpace(details))
+	}
+	if strings.TrimSpace(location) != "" {
+		q.Set("location", strings.TrimSpace(location))
+	}
+
+	return "https://calendar.google.com/calendar/render?" + q.Encode()
+}
+
+func buildCalendarDetails(eventTitle, registrationCode, appName string) string {
+	title := strings.TrimSpace(eventTitle)
+	if title == "" {
+		title = "Church Event"
+	}
+	brand := strings.TrimSpace(appName)
+	if brand == "" {
+		brand = "Wisdom House"
+	}
+
+	if strings.TrimSpace(registrationCode) == "" {
+		return fmt.Sprintf("%s - %s", brand, title)
+	}
+	return fmt.Sprintf("%s - %s (Registration: %s)", brand, title, strings.TrimSpace(registrationCode))
+}
+
+func (s *formService) ConfirmCalendarOptIn(slug, token string) (*models.FormCalendarPayload, error) {
+	if s.reminderRepo == nil {
+		return nil, errors.New("calendar reminders not configured")
+	}
+	trimmedSlug := strings.Trim(strings.TrimSpace(slug), "/")
+	trimmedToken := strings.TrimSpace(token)
+	if trimmedSlug == "" || trimmedToken == "" {
+		return nil, errors.New("invalid calendar link")
+	}
+
+	row, err := s.reminderRepo.GetBySlugAndToken(trimmedSlug, trimmedToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.reminderRepo.MarkOptedIn(row.ID, time.Now().UTC()); err != nil {
+		log.Printf("⚠️ failed to mark calendar opt-in (id=%s): %v", row.ID, err)
+	}
+
+	location := ""
+	if row.EventLocation != nil {
+		location = strings.TrimSpace(*row.EventLocation)
+	}
+
+	endAt := row.EventStartsAt.Add(2 * time.Hour)
+	if row.EventEndsAt != nil {
+		endAt = row.EventEndsAt.UTC()
+	}
+
+	return &models.FormCalendarPayload{
+		EventTitle:    row.EventTitle,
+		EventDate:     row.EventDate,
+		EventTime:     row.EventTime,
+		EventLocation: location,
+		GoogleURL:     buildGoogleCalendarURL(row.EventTitle, location, buildCalendarDetails(row.EventTitle, valueOrEmpty(row.RegistrationCode), s.branding.AppName), row.EventStartsAt.UTC(), endAt),
+		ICSURL:        s.buildCalendarICSURL(trimmedSlug, trimmedToken),
+	}, nil
+}
+
+func (s *formService) BuildCalendarICS(slug, token string) (string, []byte, error) {
+	if s.reminderRepo == nil {
+		return "", nil, errors.New("calendar reminders not configured")
+	}
+	trimmedSlug := strings.Trim(strings.TrimSpace(slug), "/")
+	trimmedToken := strings.TrimSpace(token)
+	if trimmedSlug == "" || trimmedToken == "" {
+		return "", nil, errors.New("invalid calendar link")
+	}
+
+	row, err := s.reminderRepo.GetBySlugAndToken(trimmedSlug, trimmedToken)
+	if err != nil {
+		return "", nil, err
+	}
+
+	filename := sanitizeCalendarFilename(row.EventTitle)
+	content := buildICSContent(row, s.branding.AppName)
+	return filename, []byte(content), nil
+}
+
+func buildICSContent(row *models.FormCalendarReminder, appName string) string {
+	if row == nil {
+		return ""
+	}
+	start := row.EventStartsAt.UTC()
+	end := start.Add(2 * time.Hour)
+	if row.EventEndsAt != nil && row.EventEndsAt.After(start) {
+		end = row.EventEndsAt.UTC()
+	}
+
+	location := ""
+	if row.EventLocation != nil {
+		location = *row.EventLocation
+	}
+	description := buildCalendarDetails(row.EventTitle, valueOrEmpty(row.RegistrationCode), appName)
+
+	lines := []string{
+		"BEGIN:VCALENDAR",
+		"VERSION:2.0",
+		"PRODID:-//Wisdom House//Event Registration//EN",
+		"CALSCALE:GREGORIAN",
+		"METHOD:PUBLISH",
+		"BEGIN:VEVENT",
+		"UID:" + escapeICS(row.ID) + "@wisdomchurchhq.org",
+		"DTSTAMP:" + time.Now().UTC().Format("20060102T150405Z"),
+		"DTSTART:" + start.Format("20060102T150405Z"),
+		"DTEND:" + end.Format("20060102T150405Z"),
+		"SUMMARY:" + escapeICS(row.EventTitle),
+	}
+	if strings.TrimSpace(location) != "" {
+		lines = append(lines, "LOCATION:"+escapeICS(location))
+	}
+	if strings.TrimSpace(description) != "" {
+		lines = append(lines, "DESCRIPTION:"+escapeICS(description))
+	}
+	lines = append(lines,
+		"END:VEVENT",
+		"END:VCALENDAR",
+		"",
+	)
+	return strings.Join(lines, "\r\n")
+}
+
+func escapeICS(value string) string {
+	v := strings.TrimSpace(value)
+	v = strings.ReplaceAll(v, "\\", "\\\\")
+	v = strings.ReplaceAll(v, ";", "\\;")
+	v = strings.ReplaceAll(v, ",", "\\,")
+	v = strings.ReplaceAll(v, "\r\n", "\\n")
+	v = strings.ReplaceAll(v, "\n", "\\n")
+	return v
+}
+
+func sanitizeCalendarFilename(title string) string {
+	name := strings.ToLower(strings.TrimSpace(title))
+	if name == "" {
+		name = "event"
+	}
+	name = strings.ReplaceAll(name, " ", "-")
+	name = slugInvalidRe.ReplaceAllString(name, "")
+	name = strings.Trim(name, "-")
+	if name == "" {
+		name = "event"
+	}
+	return name + ".ics"
+}
+
+func valueOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
+}
+
+func (s *formService) SendEventReminderEmails(now time.Time, lookAhead time.Duration) (int, int, error) {
+	if s.reminderRepo == nil || s.sender == nil {
+		return 0, 0, nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if lookAhead <= 0 {
+		lookAhead = 24 * time.Hour
+	}
+
+	rows, err := s.reminderRepo.ListDue(now.UTC(), now.UTC().Add(lookAhead), 500)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	sent := 0
+	failed := 0
+	for i := range rows {
+		item := rows[i]
+		addr := strings.TrimSpace(item.Email)
+		if addr == "" {
+			failed++
+			continue
+		}
+
+		location := valueOrEmpty(item.EventLocation)
+		regCode := valueOrEmpty(item.RegistrationCode)
+		icsURL := s.buildCalendarICSURL(item.Slug, item.CalendarToken)
+		googleURL := buildGoogleCalendarURL(
+			item.EventTitle,
+			location,
+			buildCalendarDetails(item.EventTitle, regCode, s.branding.AppName),
+			item.EventStartsAt.UTC(),
+			func() time.Time {
+				if item.EventEndsAt != nil {
+					return item.EventEndsAt.UTC()
+				}
+				return item.EventStartsAt.UTC().Add(2 * time.Hour)
+			}(),
+		)
+
+		subject := "Gentle reminder: " + strings.TrimSpace(item.EventTitle) + " is tomorrow"
+		body := email.RenderEventReminderEmail(email.EventReminderTemplateData{
+			Branding:          s.branding,
+			RecipientName:     valueOrEmpty(item.RecipientName),
+			EventTitle:        item.EventTitle,
+			EventDate:         item.EventDate,
+			EventTime:         item.EventTime,
+			EventLocation:     location,
+			RegistrationCode:  regCode,
+			GoogleCalendarURL: googleURL,
+			CalendarICSURL:    icsURL,
+			UnsubscribeURL:    strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/") + "/api/v1/notifications/unsubscribe?email=" + url.QueryEscape(addr),
+		})
+
+		if err := s.sender.SendHTML(addr, subject, body); err != nil {
+			failed++
+			log.Printf("⚠️ failed to send event reminder email to %s: %v", addr, err)
+			continue
+		}
+		if err := s.reminderRepo.MarkReminderSent(item.ID, now.UTC()); err != nil {
+			failed++
+			log.Printf("⚠️ failed to mark event reminder sent (id=%s): %v", item.ID, err)
+			continue
+		}
+		sent++
+	}
+
+	return sent, failed, nil
 }
 
 func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
