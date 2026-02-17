@@ -285,6 +285,28 @@ CREATE TABLE IF NOT EXISTS public.form_submissions (
   CONSTRAINT form_submissions_pkey PRIMARY KEY (id)
 );
 
+CREATE TABLE IF NOT EXISTS public.form_calendar_reminders (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  form_id uuid NOT NULL,
+  submission_id uuid NOT NULL,
+  slug character varying(255) NOT NULL,
+  email character varying(255) NOT NULL,
+  recipient_name character varying(255),
+  registration_code character varying(64),
+  event_title character varying(255) NOT NULL,
+  event_location character varying(255),
+  event_date character varying(20) NOT NULL,
+  event_time character varying(64) NOT NULL,
+  event_starts_at timestamp with time zone NOT NULL,
+  event_ends_at timestamp with time zone,
+  calendar_token character varying(120) NOT NULL,
+  opted_in_at timestamp with time zone,
+  reminder_sent_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  CONSTRAINT form_calendar_reminders_pkey PRIMARY KEY (id)
+);
+
 -- =========================
 -- ASSETS / EMAIL TEMPLATES
 -- =========================
@@ -522,6 +544,18 @@ BEGIN
       ADD CONSTRAINT fk_form_submissions_form_id
       FOREIGN KEY (form_id) REFERENCES public.forms(id) ON DELETE CASCADE;
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_form_calendar_reminders_form_id') THEN
+    ALTER TABLE public.form_calendar_reminders
+      ADD CONSTRAINT fk_form_calendar_reminders_form_id
+      FOREIGN KEY (form_id) REFERENCES public.forms(id) ON DELETE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_form_calendar_reminders_submission_id') THEN
+    ALTER TABLE public.form_calendar_reminders
+      ADD CONSTRAINT fk_form_calendar_reminders_submission_id
+      FOREIGN KEY (submission_id) REFERENCES public.form_submissions(id) ON DELETE CASCADE;
+  END IF;
 END $$;
 
 -- =========================
@@ -611,6 +645,21 @@ CREATE INDEX IF NOT EXISTS idx_form_submissions_form_id
 
 CREATE INDEX IF NOT EXISTS idx_form_submissions_form_id_created_at
   ON public.form_submissions (form_id, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_form_calendar_reminders_submission_id
+  ON public.form_calendar_reminders (submission_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_form_calendar_reminders_token
+  ON public.form_calendar_reminders (calendar_token);
+
+CREATE INDEX IF NOT EXISTS idx_form_calendar_reminders_slug
+  ON public.form_calendar_reminders (slug);
+
+CREATE INDEX IF NOT EXISTS idx_form_calendar_reminders_email
+  ON public.form_calendar_reminders (email);
+
+CREATE INDEX IF NOT EXISTS idx_form_calendar_reminders_due
+  ON public.form_calendar_reminders (opted_in_at, reminder_sent_at, event_starts_at);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_object_key_unique
   ON public.assets (object_key)

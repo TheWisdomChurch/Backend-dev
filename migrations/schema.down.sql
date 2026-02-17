@@ -6,6 +6,11 @@ BEGIN;
 
 DROP INDEX IF EXISTS public.idx_form_submissions_form_id_created_at;
 DROP INDEX IF EXISTS public.idx_form_submissions_form_id;
+DROP INDEX IF EXISTS public.idx_form_calendar_reminders_due;
+DROP INDEX IF EXISTS public.idx_form_calendar_reminders_email;
+DROP INDEX IF EXISTS public.idx_form_calendar_reminders_slug;
+DROP INDEX IF EXISTS public.idx_form_calendar_reminders_token;
+DROP INDEX IF EXISTS public.idx_form_calendar_reminders_submission_id;
 DROP INDEX IF EXISTS public.idx_email_templates_key_version_unique;
 DROP INDEX IF EXISTS public.idx_email_templates_key;
 DROP INDEX IF EXISTS public.idx_email_templates_owner;
@@ -41,6 +46,7 @@ DROP INDEX IF EXISTS public.idx_users_email_unique;
 
 DROP TABLE IF EXISTS public.email_templates CASCADE;
 DROP TABLE IF EXISTS public.assets CASCADE;
+DROP TABLE IF EXISTS public.form_calendar_reminders CASCADE;
 DROP TABLE IF EXISTS public.form_submissions CASCADE;
 DROP TABLE IF EXISTS public.form_fields CASCADE;
 DROP TABLE IF EXISTS public.forms CASCADE;
