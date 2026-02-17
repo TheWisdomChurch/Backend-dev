@@ -264,6 +264,66 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 	}
 }
 
+func startFormReminderScheduler(
+	ctx context.Context,
+	logger *log.Logger,
+	lock *redisLock,
+	svc service.FormService,
+	interval time.Duration,
+	lookAhead time.Duration,
+) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	if lookAhead <= 0 {
+		lookAhead = 24 * time.Hour
+	}
+
+	run := func() {
+		now := time.Now().UTC()
+		if lock != nil {
+			key := "form_event_reminder:" + now.Format("2006010215")
+			ok, err := lock.Acquire(ctx, key, 70*time.Minute)
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Form reminder lock failed: %v", err)
+				}
+				return
+			}
+			if !ok {
+				return
+			}
+		}
+
+		sent, failed, err := svc.SendEventReminderEmails(now, lookAhead)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("⚠️ Form reminder scheduler failed: %v", err)
+			}
+			return
+		}
+		if logger != nil && (sent > 0 || failed > 0) {
+			logger.Printf("📩 Form reminders: sent=%d failed=%d", sent, failed)
+		}
+	}
+
+	run()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
+
 func parseHourMinute(raw string) (int, int, error) {
 	parts := strings.Split(strings.TrimSpace(raw), ":")
 	if len(parts) != 2 {
@@ -492,6 +552,8 @@ func setupRouter(
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
 	api.POST("/forms/:slug/submissions", formHandler.SubmitPublicForm)
+	api.GET("/forms/:slug/calendar/confirm", formHandler.ConfirmCalendarOptIn)
+	api.GET("/forms/:slug/calendar.ics", formHandler.DownloadCalendarICS)
 
 	// Workforce public apply
 	api.POST("/workforce/apply", workforceHandler.Apply)
@@ -704,6 +766,7 @@ func main() {
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
 	formRepo := repository.NewFormRepository(db)
+	formCalendarReminderRepo := repository.NewFormCalendarReminderRepository(db)
 	assetRepo := repository.NewAssetRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
@@ -824,6 +887,7 @@ func main() {
 		formRepo,
 		eventRepo,
 		registrationSequenceRepo,
+		formCalendarReminderRepo,
 		emailTemplateRepo,
 		workforceService,
 		memberService,
@@ -877,6 +941,7 @@ func main() {
 	defer cleanupCancel()
 
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
+	go startFormReminderScheduler(cleanupCtx, logger, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 
 	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
 	if schedulerEnabled {
