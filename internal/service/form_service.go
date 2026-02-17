@@ -2151,25 +2151,6 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	}
 
 	var body string
-	if templateImageURL != "" {
-		message := ""
-		if settings != nil && settings.SuccessMessage != nil {
-			message = strings.TrimSpace(*settings.SuccessMessage)
-		}
-		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
-			Branding:          s.branding,
-			RecipientName:     recipient,
-			FormTitle:         formTitle,
-			RegistrationCode:  code,
-			Message:           message,
-			HeroImageURL:      templateImageURL,
-			CalendarOptInURL:  calendarOptInURL,
-			GoogleCalendarURL: googleCalendarURL,
-			CalendarICSURL:    calendarICSURL,
-			SubscribeURL:      subscribeURL,
-			UnsubscribeURL:    unsubscribeURL,
-		})
-	}
 
 	if s.templateRepo != nil {
 		var tpl *models.EmailTemplate
@@ -2190,7 +2171,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 				tpl = t
 			}
 		}
-		if tpl != nil && strings.TrimSpace(body) == "" {
+		if tpl != nil {
 			if rendered, err := renderDBTemplate(tpl, templateData); err == nil && strings.TrimSpace(rendered) != "" {
 				body = rendered
 				if tpl.Subject != nil && strings.TrimSpace(*tpl.Subject) != "" {
