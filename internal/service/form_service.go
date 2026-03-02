@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -131,7 +132,7 @@ func (s *formService) buildPublicURL(slug string) *string {
 	if slug == "" || s.publicBaseURL == "" {
 		return nil
 	}
-	u := fmt.Sprintf("%s/forms/%s", s.publicBaseURL, slug)
+	u := fmt.Sprintf("%s/form/%s", s.publicBaseURL, slug)
 	return &u
 }
 
@@ -416,6 +417,7 @@ func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) 
 	if err != nil {
 		return nil, err
 	}
+	form.Fields = applyImplicitFieldVisibilityDefaults(form.Fields)
 
 	settings, _ := decodeSettings(form.Settings)
 	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
@@ -488,7 +490,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		}
 	}
 
-	cleanValues, err := validateSubmission(form.Fields, req.Values)
+	fields := applyImplicitFieldVisibilityDefaults(form.Fields)
+
+	cleanValues, err := validateSubmission(fields, req.Values)
 	if err != nil {
 		return err
 	}
@@ -502,7 +506,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	// Extract common fields into columns for analytics
-	name, email, phone, addr := extractCommonFields(form.Fields, cleanValues)
+	name, email, phone, addr := extractCommonFields(fields, cleanValues)
 
 	var regCode *string
 	if s.sequenceRepo != nil {
@@ -1399,6 +1403,125 @@ func decodeVisibility(j datatypes.JSON) *models.FormFieldVisibility {
 	return &v
 }
 
+func normalizeVisibilityToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isAffirmativeVisibilityOption(value string) bool {
+	switch normalizeVisibilityToken(value) {
+	case "yes", "true", "1":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNegativeVisibilityOption(value string) bool {
+	switch normalizeVisibilityToken(value) {
+	case "no", "false", "0":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeImplicitYesField(label string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(label)), "if yes")
+}
+
+func findImplicitYesOptionValue(field models.FormField) (string, bool) {
+	if field.Type != models.FieldRadio && field.Type != models.FieldSelect {
+		return "", false
+	}
+
+	opts := decodeOptionsToDTO(field.Options)
+	if len(opts) == 0 {
+		return "", false
+	}
+
+	yesValue := ""
+	hasNoOption := false
+	for _, opt := range opts {
+		label := strings.TrimSpace(opt.Label)
+		value := strings.TrimSpace(opt.Value)
+
+		if yesValue == "" && (isAffirmativeVisibilityOption(label) || isAffirmativeVisibilityOption(value)) {
+			if value != "" {
+				yesValue = value
+			} else {
+				yesValue = label
+			}
+		}
+		if isNegativeVisibilityOption(label) || isNegativeVisibilityOption(value) {
+			hasNoOption = true
+		}
+	}
+
+	if yesValue == "" || !hasNoOption {
+		return "", false
+	}
+	return yesValue, true
+}
+
+func applyImplicitFieldVisibilityDefaults(fields []models.FormField) []models.FormField {
+	if len(fields) == 0 {
+		return fields
+	}
+
+	enriched := append([]models.FormField(nil), fields...)
+	sort.SliceStable(enriched, func(i, j int) bool {
+		if enriched[i].Order == enriched[j].Order {
+			return i < j
+		}
+		return enriched[i].Order < enriched[j].Order
+	})
+
+	for i := range enriched {
+		if decodeVisibility(enriched[i].Visibility) != nil {
+			continue
+		}
+		if !looksLikeImplicitYesField(enriched[i].Label) {
+			continue
+		}
+
+		for prev := i - 1; prev >= 0; prev-- {
+			fieldKey := strings.TrimSpace(enriched[prev].Key)
+			yesValue, ok := findImplicitYesOptionValue(enriched[prev])
+			if !ok || fieldKey == "" {
+				continue
+			}
+
+			vis := models.FormFieldVisibility{
+				Match: "all",
+				Rules: []models.FormFieldCondition{
+					{
+						FieldKey: fieldKey,
+						Operator: "equals",
+						Value:    yesValue,
+					},
+				},
+			}
+			if raw, err := json.Marshal(vis); err == nil {
+				enriched[i].Visibility = datatypes.JSON(raw)
+			}
+			break
+		}
+	}
+
+	return enriched
+}
+
 func isFieldVisible(f models.FormField, values map[string]any) bool {
 	vis := decodeVisibility(f.Visibility)
 	if vis == nil || len(vis.Rules) == 0 {
@@ -1494,6 +1617,8 @@ func valueIn(val any, list []any) bool {
 ========================= */
 
 func validateSubmission(fields []models.FormField, values map[string]any) (map[string]any, error) {
+	fields = applyImplicitFieldVisibilityDefaults(fields)
+
 	fieldByKey := map[string]models.FormField{}
 	for _, f := range fields {
 		fieldByKey[f.Key] = f
