@@ -491,8 +491,13 @@ func setupRouter(
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.RateLimiter(middleware.RateLimiterOptions{
-		RedisURL: cfg.Redis.URL,
-		Prefix:   "rl",
+		RequestsPerMinute: cfg.RateLimit.Global.RequestsPerMinute,
+		Burst:             cfg.RateLimit.Global.Burst,
+		Window:            cfg.RateLimit.Global.Window,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl",
+		Message:           "Too many requests. Please wait a moment and try again.",
+		SkipPathPrefixes:  []string{"/api/v1/auth/login", "/api/v1/auth/otp/"},
 	}))
 
 	// Swagger + basic health
@@ -508,15 +513,24 @@ func setupRouter(
 	// AUTH
 	auth := api.Group("/auth")
 	auth.Use(middleware.DeviceFingerprint(secure))
-	auth.POST("/login", authHandler.Login)
+	loginRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: cfg.RateLimit.Auth.RequestsPerMinute,
+		Burst:             cfg.RateLimit.Auth.Burst,
+		Window:            cfg.RateLimit.Auth.Window,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:login",
+		Message:           "Too many authentication attempts. Please wait a moment and try again.",
+	})
+
+	auth.POST("/login", loginRateLimiter, authHandler.Login)
 	// Backwards-compatible aliases for older admin clients
-	auth.POST("/login/verify-otp", authHandler.VerifyLoginOTP)
-	auth.POST("/login/resend-otp", authHandler.ResendLoginOTP)
+	auth.POST("/login/verify-otp", loginRateLimiter, authHandler.VerifyLoginOTP)
+	auth.POST("/login/resend-otp", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.POST("/register", authHandler.Register)
 	auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
 	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
-	auth.POST("/otp/verify", authHandler.VerifyLoginOTP)
-	auth.POST("/otp/resend", authHandler.ResendLoginOTP)
+	auth.POST("/otp/verify", loginRateLimiter, authHandler.VerifyLoginOTP)
+	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 
 	authProtected := auth.Group("")
 	authProtected.Use(authGuard, sessionGuard)
