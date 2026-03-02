@@ -13,13 +13,14 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig `json:"database"`
-	Server   ServerConfig   `json:"server"`
-	Redis    RedisConfig    `json:"redis"`
-	SMTP     SMTPConfig     `json:"smtp"`
-	CORS     CORSConfig     `json:"cors"`
-	JWT      JWTConfig      `json:"jwt"`
-	App      AppConfig      `json:"app"`
+	Database  DatabaseConfig  `json:"database"`
+	Server    ServerConfig    `json:"server"`
+	Redis     RedisConfig     `json:"redis"`
+	RateLimit RateLimitConfig `json:"rate_limit"`
+	SMTP      SMTPConfig      `json:"smtp"`
+	CORS      CORSConfig      `json:"cors"`
+	JWT       JWTConfig       `json:"jwt"`
+	App       AppConfig       `json:"app"`
 
 	// BunnyCDN / Bunny Storage config (OPTIONAL)
 	Bunny BunnyConfig `json:"bunny"`
@@ -98,6 +99,17 @@ type RedisConfig struct {
 	WriteTimeout time.Duration `json:"write_timeout" env:"REDIS_WRITE_TIMEOUT"`
 	PoolTimeout  time.Duration `json:"pool_timeout" env:"REDIS_POOL_TIMEOUT"`
 	IdleTimeout  time.Duration `json:"idle_timeout" env:"REDIS_IDLE_TIMEOUT"`
+}
+
+type RateLimitPolicyConfig struct {
+	RequestsPerMinute int           `json:"requests_per_minute"`
+	Burst             int           `json:"burst"`
+	Window            time.Duration `json:"window"`
+}
+
+type RateLimitConfig struct {
+	Global RateLimitPolicyConfig `json:"global"`
+	Auth   RateLimitPolicyConfig `json:"auth"`
 }
 
 /* ========================================================================== */
@@ -232,6 +244,18 @@ func Load() (*Config, error) {
 			WriteTimeout: getEnvAsDuration("REDIS_WRITE_TIMEOUT", 3*time.Second),
 			PoolTimeout:  getEnvAsDuration("REDIS_POOL_TIMEOUT", 4*time.Second),
 			IdleTimeout:  getEnvAsDuration("REDIS_IDLE_TIMEOUT", 5*time.Minute),
+		},
+		RateLimit: RateLimitConfig{
+			Global: RateLimitPolicyConfig{
+				RequestsPerMinute: getEnvAsInt("RATE_LIMIT_GLOBAL_RPM", 300),
+				Burst:             getEnvAsInt("RATE_LIMIT_GLOBAL_BURST", 100),
+				Window:            getEnvAsDuration("RATE_LIMIT_GLOBAL_WINDOW", time.Minute),
+			},
+			Auth: RateLimitPolicyConfig{
+				RequestsPerMinute: getEnvAsInt("RATE_LIMIT_AUTH_RPM", 20),
+				Burst:             getEnvAsInt("RATE_LIMIT_AUTH_BURST", 10),
+				Window:            getEnvAsDuration("RATE_LIMIT_AUTH_WINDOW", time.Minute),
+			},
 		},
 		SMTP: SMTPConfig{
 			Host:     smtpHost,
