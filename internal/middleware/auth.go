@@ -11,9 +11,12 @@ import (
 )
 
 type AccessClaims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
+	UserID                    string `json:"user_id"`
+	Email                     string `json:"email"`
+	Role                      string `json:"role"`
+	RememberMe                bool   `json:"remember_me"`
+	SessionIdleTimeoutSeconds int64  `json:"session_idle_timeout_seconds"`
+	AuthMethod                string `json:"auth_method"`
 	jwt.RegisteredClaims
 }
 
@@ -87,6 +90,9 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("role", claims.Role)
+		c.Set("remember_me", claims.RememberMe)
+		c.Set("session_idle_timeout_seconds", claims.SessionIdleTimeoutSeconds)
+		c.Set("auth_method", claims.AuthMethod)
 		c.Next()
 	}
 }
@@ -98,6 +104,9 @@ func OptionalAuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			c.Set("user_id", claims.UserID)
 			c.Set("email", claims.Email)
 			c.Set("role", claims.Role)
+			c.Set("remember_me", claims.RememberMe)
+			c.Set("session_idle_timeout_seconds", claims.SessionIdleTimeoutSeconds)
+			c.Set("auth_method", claims.AuthMethod)
 		}
 		c.Next()
 	}

@@ -20,6 +20,7 @@ type Config struct {
 	SMTP      SMTPConfig      `json:"smtp"`
 	CORS      CORSConfig      `json:"cors"`
 	JWT       JWTConfig       `json:"jwt"`
+	Auth      AuthConfig      `json:"auth"`
 	App       AppConfig       `json:"app"`
 
 	// BunnyCDN / Bunny Storage config (OPTIONAL)
@@ -141,6 +142,18 @@ type CORSConfig struct {
 type JWTConfig struct {
 	Secret     string        `json:"-" env:"JWT_SECRET"`
 	Expiration time.Duration `json:"expiration" env:"JWT_EXPIRATION"`
+}
+
+type AuthConfig struct {
+	SessionIdleTimeout           time.Duration `json:"session_idle_timeout" env:"AUTH_SESSION_IDLE_TIMEOUT"`
+	RememberedSessionIdleTimeout time.Duration `json:"remembered_session_idle_timeout" env:"AUTH_REMEMBERED_SESSION_IDLE_TIMEOUT"`
+	RememberMeTTL                time.Duration `json:"remember_me_ttl" env:"AUTH_REMEMBER_ME_TTL"`
+	SecretKey                    string        `json:"-" env:"AUTH_SECRET_KEY"`
+	MFAIssuer                    string        `json:"mfa_issuer" env:"AUTH_MFA_ISSUER"`
+	GoogleClientID               string        `json:"-" env:"AUTH_GOOGLE_CLIENT_ID"`
+	GoogleClientSecret           string        `json:"-" env:"AUTH_GOOGLE_CLIENT_SECRET"`
+	GoogleRedirectURL            string        `json:"google_redirect_url" env:"AUTH_GOOGLE_REDIRECT_URL"`
+	GoogleHostedDomain           string        `json:"google_hosted_domain" env:"AUTH_GOOGLE_HOSTED_DOMAIN"`
 }
 
 type AppConfig struct {
@@ -277,6 +290,17 @@ func Load() (*Config, error) {
 			Secret:     getEnv("JWT_SECRET", ""),
 			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
 		},
+		Auth: AuthConfig{
+			SessionIdleTimeout:           getEnvAsDuration("AUTH_SESSION_IDLE_TIMEOUT", 30*time.Minute),
+			RememberedSessionIdleTimeout: getEnvAsDuration("AUTH_REMEMBERED_SESSION_IDLE_TIMEOUT", 7*24*time.Hour),
+			RememberMeTTL:                getEnvAsDuration("AUTH_REMEMBER_ME_TTL", 30*24*time.Hour),
+			SecretKey:                    getEnv("AUTH_SECRET_KEY", ""),
+			MFAIssuer:                    getEnv("AUTH_MFA_ISSUER", getEnv("APP_NAME", "Wisdom House Backend")),
+			GoogleClientID:               getEnv("AUTH_GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret:           getEnv("AUTH_GOOGLE_CLIENT_SECRET", ""),
+			GoogleRedirectURL:            getEnv("AUTH_GOOGLE_REDIRECT_URL", ""),
+			GoogleHostedDomain:           getEnv("AUTH_GOOGLE_HOSTED_DOMAIN", ""),
+		},
 		App: AppConfig{
 			Environment:               env,
 			LogLevel:                  getEnv("LOG_LEVEL", "info"),
@@ -344,6 +368,39 @@ func (c *DatabaseConfig) DSN() string {
 func validateConfig(cfg *Config) error {
 	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
+	}
+	if cfg.Auth.SessionIdleTimeout <= 0 {
+		return fmt.Errorf("AUTH_SESSION_IDLE_TIMEOUT must be greater than 0")
+	}
+	if cfg.Auth.RememberedSessionIdleTimeout <= 0 {
+		return fmt.Errorf("AUTH_REMEMBERED_SESSION_IDLE_TIMEOUT must be greater than 0")
+	}
+	if cfg.Auth.RememberMeTTL <= 0 {
+		return fmt.Errorf("AUTH_REMEMBER_ME_TTL must be greater than 0")
+	}
+	if strings.TrimSpace(cfg.Auth.MFAIssuer) == "" {
+		return fmt.Errorf("AUTH_MFA_ISSUER is required")
+	}
+
+	googleFields := []string{
+		strings.TrimSpace(cfg.Auth.GoogleClientID),
+		strings.TrimSpace(cfg.Auth.GoogleClientSecret),
+		strings.TrimSpace(cfg.Auth.GoogleRedirectURL),
+	}
+	googleConfigured := 0
+	for _, field := range googleFields {
+		if field != "" {
+			googleConfigured++
+		}
+	}
+	if googleConfigured > 0 && googleConfigured < len(googleFields) {
+		return fmt.Errorf("AUTH_GOOGLE_CLIENT_ID, AUTH_GOOGLE_CLIENT_SECRET, and AUTH_GOOGLE_REDIRECT_URL must be configured together")
+	}
+	if strings.TrimSpace(cfg.Auth.GoogleRedirectURL) != "" {
+		parsed, err := url.Parse(strings.TrimSpace(cfg.Auth.GoogleRedirectURL))
+		if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("AUTH_GOOGLE_REDIRECT_URL must be a valid absolute URL")
+		}
 	}
 
 	// In production, require DATABASE_URL (recommended),
