@@ -22,6 +22,8 @@ DROP INDEX IF EXISTS public.idx_form_fields_form_id_order;
 DROP INDEX IF EXISTS public.idx_form_fields_form_id;
 DROP INDEX IF EXISTS public.idx_forms_status;
 DROP INDEX IF EXISTS public.idx_forms_event_id;
+DROP INDEX IF EXISTS public.idx_forms_report_access_token_unique;
+DROP INDEX IF EXISTS public.idx_users_federated_subject_unique;
 DROP INDEX IF EXISTS public.idx_members_birthday_month_day;
 DROP INDEX IF EXISTS public.idx_leadership_anniversary_month_day;
 DROP INDEX IF EXISTS public.idx_leadership_email;

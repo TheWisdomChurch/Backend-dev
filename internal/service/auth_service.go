@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -21,8 +21,6 @@ import (
 type authServiceImpl struct {
 	userRepo        repository.UserRepository
 	otp             OTPService
-	jwtSecret       string
-	jwtExpiration   time.Duration
 	sender          EmailSender
 	branding        email.Branding
 	security        SecurityService
@@ -31,6 +29,8 @@ type authServiceImpl struct {
 	disableLoginOTP bool
 	approvalSvc     ApprovalService
 	notifySvc       AdminNotificationService
+	totpProtector   *authutil.Protector
+	mfaIssuer       string
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -55,12 +55,14 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecret string, jwtExpiration time.Duration, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService) AuthService {
+func NewAuthService(userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
+	var protector *authutil.Protector
+	if p, err := authutil.NewProtector(authSecret); err == nil {
+		protector = p
+	}
 	return &authServiceImpl{
 		userRepo:        userRepo,
 		otp:             otp,
-		jwtSecret:       jwtSecret,
-		jwtExpiration:   jwtExpiration,
 		sender:          sender,
 		branding:        branding,
 		security:        security,
@@ -69,6 +71,8 @@ func NewAuthService(userRepo repository.UserRepository, otp OTPService, jwtSecre
 		disableLoginOTP: disableLoginOTP,
 		approvalSvc:     approvalSvc,
 		notifySvc:       notifySvc,
+		totpProtector:   protector,
+		mfaIssuer:       strings.TrimSpace(mfaIssuer),
 	}
 }
 
@@ -106,135 +110,71 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 	user.FailedLoginCount = 0
 	user.LastFailedLoginAt = nil
 
-	needOTP := true
-	if s.disableOTP || s.disableLoginOTP {
-		needOTP = false
-	}
-
-	// Step-up: untrusted/new/expired device requires OTP
-	if !s.disableOTP && !s.disableLoginOTP && s.trustedDevs != nil && meta.DeviceID != "" {
-		if dev, err := s.trustedDevs.Find(user.ID, meta.DeviceID); err == nil && dev != nil && dev.Trusted && dev.ExpiresAt.After(time.Now().UTC()) {
-			needOTP = false
-		}
-	}
-
-	if s.otp != nil && needOTP {
-		challenge, err := generateLoginChallenge()
-		if err != nil {
-			return nil, errors.New("failed to start verification")
-		}
-		purpose := loginOTPPurposePrefix + challenge
-		actionURL := s.buildOTPLink(otpEntryPath, purpose, user.Email)
-
-		resp, err := s.otp.SendOTP(&models.SendOTPRequest{
-			Email:       user.Email,
-			Purpose:     purpose,
-			ActionURL:   actionURL,
-			ActionLabel: "Approve sign-in",
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		_ = s.userRepo.Update(user)
-
-		expires := resp.ExpiresAt
-		if s.security != nil {
-			s.security.RecordEvent("otp_challenge", user, meta, map[string]interface{}{"purpose": purpose})
-		}
-
-		return &LoginResult{
-			User:         sanitizeUser(user),
-			OTPRequired:  true,
-			OTPPurpose:   purpose,
-			OTPExpiresAt: &expires,
-			OTPActionURL: actionURL,
-		}, nil
-	}
-
-	now := time.Now().UTC()
-	user.LastLoginAt = &now
-	if err := s.userRepo.Update(user); err != nil {
-		return nil, errors.New("failed to update profile")
-	}
-
-	res := &LoginResult{
-		User: sanitizeUser(user),
-	}
-
-	// Persist/refresh trusted device
-	s.upsertTrustedDevice(user, meta, true)
-
-	return res, nil
+	return s.completePrimaryLogin(user, meta, "password")
 }
 
-func (s *authServiceImpl) VerifyLoginOTP(email, code, purpose string, meta LoginMetadata) (*models.User, error) {
-	if s.disableOTP || s.disableLoginOTP {
-		return nil, errors.New("otp is disabled")
-	}
-	if s.otp == nil {
-		return nil, errors.New("otp service not configured")
-	}
-
+func (s *authServiceImpl) VerifyLoginMFA(email, code, purpose, method string, meta LoginMetadata) (*models.User, string, error) {
 	emailAddr := normalizeEmail(email)
-	if emailAddr == "" || strings.TrimSpace(purpose) == "" {
-		return nil, errors.New("invalid request")
-	}
-
-	if !strings.HasPrefix(strings.TrimSpace(purpose), loginOTPPurposePrefix) {
-		return nil, errors.New("invalid code")
-	}
-
-	resp, err := s.otp.VerifyOTP(&models.VerifyOTPRequest{
-		Email:   emailAddr,
-		Code:    code,
-		Purpose: purpose,
-	})
-	if err != nil {
-		// fallback: if purpose mismatched or missing, try latest login OTP
-		if strings.Contains(err.Error(), "otp not found") && s.trustedDevs != nil {
-			if latest, err2 := s.otp.(*otpService).repo.GetLatestActiveByPrefix(emailAddr, loginOTPPurposePrefix); err2 == nil {
-				purpose = latest.Purpose
-				resp, err = s.otp.VerifyOTP(&models.VerifyOTPRequest{
-					Email:   emailAddr,
-					Code:    code,
-					Purpose: purpose,
-				})
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if resp == nil || !resp.Verified {
-		return nil, errors.New("invalid code")
+	if emailAddr == "" {
+		return nil, "", errors.New("invalid request")
 	}
 
 	user, err := s.userRepo.FindByEmail(emailAddr)
-	if err != nil {
-		return nil, errors.New("user not found")
+	if err != nil || user == nil {
+		return nil, "", errors.New("user not found")
 	}
-	if user == nil {
-		return nil, errors.New("user not found")
-	}
-
 	if !user.IsActive {
-		return nil, errors.New("account is deactivated")
+		return nil, "", errors.New("account is deactivated")
 	}
 
-	now := time.Now().UTC()
-	user.LastLoginAt = &now
-	user.FailedLoginCount = 0
-	user.LastFailedLoginAt = nil
-
-	if err := s.userRepo.Update(user); err != nil {
-		return nil, errors.New("failed to update profile")
+	method = normalizeMFAMethod(method)
+	if method == "" {
+		if strings.HasPrefix(strings.TrimSpace(purpose), loginOTPPurposePrefix) {
+			method = "email_otp"
+		} else if user.TOTPEnabled && normalizeMFAMethod(user.PreferredMFAMethod) == "totp" {
+			method = "totp"
+		} else {
+			method = "email_otp"
+		}
 	}
 
-	s.upsertTrustedDevice(user, meta, true)
+	switch method {
+	case "totp":
+		if !s.verifyStoredTOTP(user, code) {
+			return nil, "", errors.New("invalid code")
+		}
+	case "email_otp":
+		if s.disableOTP || s.disableLoginOTP {
+			return nil, "", errors.New("otp is disabled")
+		}
+		if s.otp == nil {
+			return nil, "", errors.New("otp service not configured")
+		}
+		purpose = strings.TrimSpace(purpose)
+		if purpose == "" || !strings.HasPrefix(purpose, loginOTPPurposePrefix) {
+			return nil, "", errors.New("invalid code")
+		}
 
-	return sanitizeUser(user), nil
+		resp, err := s.otp.VerifyOTP(&models.VerifyOTPRequest{
+			Email:   emailAddr,
+			Code:    code,
+			Purpose: purpose,
+		})
+		if err != nil {
+			return nil, "", err
+		}
+		if resp == nil || !resp.Verified {
+			return nil, "", errors.New("invalid code")
+		}
+	default:
+		return nil, "", errors.New("unsupported verification method")
+	}
+
+	if err := s.markLoginComplete(user, meta); err != nil {
+		return nil, "", err
+	}
+
+	return sanitizeUser(user), method, nil
 }
 
 func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadata) {
@@ -263,6 +203,123 @@ func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadat
 			s.security.NotifySuspiciousLogin(user, meta, "Multiple failed login attempts")
 		}
 	}
+}
+
+func (s *authServiceImpl) completePrimaryLogin(user *models.User, meta LoginMetadata, authMethod string) (*LoginResult, error) {
+	if user == nil {
+		return nil, errors.New("user not found")
+	}
+
+	if s.isTrustedDevice(user, meta) {
+		if err := s.markLoginComplete(user, meta); err != nil {
+			return nil, err
+		}
+		return &LoginResult{
+			User:       sanitizeUser(user),
+			AuthMethod: authMethod,
+		}, nil
+	}
+
+	method := s.resolveMFAMethod(user)
+	switch method {
+	case "totp":
+		if s.disableOTP {
+			break
+		}
+		if !user.TOTPEnabled {
+			break
+		}
+		if s.security != nil {
+			s.security.RecordEvent("totp_challenge", user, meta, nil)
+		}
+		return &LoginResult{
+			User:        sanitizeUser(user),
+			OTPRequired: true,
+			MFAMethod:   "totp",
+		}, nil
+	case "email_otp":
+		if s.disableOTP || s.disableLoginOTP {
+			break
+		}
+		if s.otp == nil {
+			return nil, errors.New("otp service not configured")
+		}
+		challenge, err := generateLoginChallenge()
+		if err != nil {
+			return nil, errors.New("failed to start verification")
+		}
+		purpose := loginOTPPurposePrefix + challenge
+		actionURL := s.buildOTPLink(otpEntryPath, purpose, user.Email)
+
+		resp, err := s.otp.SendOTP(&models.SendOTPRequest{
+			Email:       user.Email,
+			Purpose:     purpose,
+			ActionURL:   actionURL,
+			ActionLabel: "Approve sign-in",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if s.security != nil {
+			s.security.RecordEvent("otp_challenge", user, meta, map[string]interface{}{"purpose": purpose})
+		}
+
+		expires := resp.ExpiresAt
+		return &LoginResult{
+			User:         sanitizeUser(user),
+			OTPRequired:  true,
+			MFAMethod:    "email_otp",
+			OTPPurpose:   purpose,
+			OTPExpiresAt: &expires,
+			OTPActionURL: actionURL,
+		}, nil
+	}
+
+	if err := s.markLoginComplete(user, meta); err != nil {
+		return nil, err
+	}
+
+	return &LoginResult{
+		User:       sanitizeUser(user),
+		AuthMethod: authMethod,
+	}, nil
+}
+
+func (s *authServiceImpl) markLoginComplete(user *models.User, meta LoginMetadata) error {
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	user.FailedLoginCount = 0
+	user.LastFailedLoginAt = nil
+
+	if err := s.userRepo.Update(user); err != nil {
+		return errors.New("failed to update profile")
+	}
+
+	s.upsertTrustedDevice(user, meta, true)
+	return nil
+}
+
+func (s *authServiceImpl) isTrustedDevice(user *models.User, meta LoginMetadata) bool {
+	if s.trustedDevs == nil || user == nil || strings.TrimSpace(meta.DeviceID) == "" {
+		return false
+	}
+	dev, err := s.trustedDevs.Find(user.ID, meta.DeviceID)
+	return err == nil && dev != nil && dev.Trusted && dev.ExpiresAt.After(time.Now().UTC())
+}
+
+func (s *authServiceImpl) resolveMFAMethod(user *models.User) string {
+	if user == nil {
+		return "email_otp"
+	}
+	method := normalizeMFAMethod(user.PreferredMFAMethod)
+	switch method {
+	case "totp":
+		if user.TOTPEnabled {
+			return "totp"
+		}
+	}
+	return "email_otp"
 }
 
 func (s *authServiceImpl) sendFailedLoginAlert(user *models.User, meta LoginMetadata) {
@@ -402,7 +459,10 @@ func (s *authServiceImpl) ResetPasswordWithOTP(emailStr, code, purpose, newPassw
 }
 
 func (s *authServiceImpl) buildOTPLink(path, purpose, email string) string {
-	base := strings.TrimSpace(s.branding.FrontendURL)
+	base := strings.TrimSpace(s.branding.AdminPortalURL)
+	if base == "" {
+		base = strings.TrimSpace(s.branding.FrontendURL)
+	}
 	if base == "" {
 		base = strings.TrimSpace(s.branding.PublicURL)
 	}
@@ -481,6 +541,9 @@ func (s *authServiceImpl) ResendLoginOTP(email string, meta LoginMetadata) (*Log
 	if isAdminRole(user.Role) && !user.AdminApproved {
 		return nil, ErrAdminPending
 	}
+	if s.resolveMFAMethod(user) == "totp" {
+		return nil, errors.New("authenticator app verification is enabled for this account")
+	}
 
 	challenge, err := generateLoginChallenge()
 	if err != nil {
@@ -507,6 +570,7 @@ func (s *authServiceImpl) ResendLoginOTP(email string, meta LoginMetadata) (*Log
 	return &LoginResult{
 		User:         sanitizeUser(user),
 		OTPRequired:  true,
+		MFAMethod:    "email_otp",
 		OTPPurpose:   purpose,
 		OTPExpiresAt: &expires,
 		OTPActionURL: actionURL,
@@ -757,18 +821,4 @@ func (s *authServiceImpl) ClearData(userID string) error {
 	}
 
 	return nil
-}
-
-// Helper method to generate JWT token
-func (s *authServiceImpl) generateToken(user *models.User) (string, error) {
-	claims := jwt.MapClaims{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"role":    user.Role,
-		"exp":     time.Now().Add(s.jwtExpiration).Unix(),
-		"iat":     time.Now().Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(s.jwtSecret))
 }

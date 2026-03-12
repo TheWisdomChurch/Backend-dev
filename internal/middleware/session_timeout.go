@@ -8,7 +8,7 @@ import (
 )
 
 // SessionTimeout enforces inactivity logout based on a last-activity cookie.
-func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
+func SessionTimeout(defaultTimeout, rememberedTimeout time.Duration, secure bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
 			c.Next()
@@ -17,6 +17,7 @@ func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
 
 		now := time.Now().UTC()
 		sameSite := sameSiteForEnv(secure)
+		persistentActivityCookie := false
 
 		expireAuth := func() {
 			// expire auth + activity cookies
@@ -42,6 +43,31 @@ func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
 			})
 		}
 
+		timeout := defaultTimeout
+		if rememberMe, _ := c.Get("remember_me"); rememberMe == true {
+			timeout = rememberedTimeout
+			persistentActivityCookie = true
+		}
+		if raw, exists := c.Get("session_idle_timeout_seconds"); exists {
+			switch v := raw.(type) {
+			case int64:
+				if v > 0 {
+					timeout = time.Duration(v) * time.Second
+				}
+			case int:
+				if v > 0 {
+					timeout = time.Duration(v) * time.Second
+				}
+			case float64:
+				if v > 0 {
+					timeout = time.Duration(v) * time.Second
+				}
+			}
+		}
+		if timeout <= 0 {
+			timeout = defaultTimeout
+		}
+
 		lastActivityCookie, err := c.Request.Cookie("last_activity")
 		if err != nil || lastActivityCookie.Value == "" {
 			expireAuth()
@@ -63,12 +89,18 @@ func SessionTimeout(timeout time.Duration, secure bool) gin.HandlerFunc {
 		}
 
 		// refresh last activity
+		maxAge := 0
+		expires := time.Time{}
+		if persistentActivityCookie {
+			maxAge = int(timeout.Seconds())
+			expires = now.Add(timeout)
+		}
 		http.SetCookie(c.Writer, &http.Cookie{
 			Name:     "last_activity",
 			Value:    now.Format(time.RFC3339),
 			Path:     "/",
-			MaxAge:   int(timeout.Seconds()),
-			Expires:  now.Add(timeout),
+			MaxAge:   maxAge,
+			Expires:  expires,
 			Secure:   secure,
 			HttpOnly: true,
 			SameSite: sameSite,

@@ -503,12 +503,17 @@ func setupRouter(
 	// Swagger + basic health
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	router.GET("/forms/:slug", formHandler.ViewPublicFormPage)
+	router.GET("/form/:slug", formHandler.RedirectLegacyPublicFormPage)
+	router.GET("/reports/forms/:slug", formHandler.ViewPublicFormReport)
+	router.GET("/reports/forms/:slug/data", formHandler.GetPublicFormReportData)
+	router.GET("/reports/forms/:slug/export.pdf", formHandler.ExportPublicFormReportPDF)
 
 	api := router.Group("/api/v1")
 
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
-	sessionGuard := middleware.SessionTimeout(30*time.Minute, secure)
+	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
 
 	// AUTH
 	auth := api.Group("/auth")
@@ -531,6 +536,8 @@ func setupRouter(
 	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
 	auth.POST("/otp/verify", loginRateLimiter, authHandler.VerifyLoginOTP)
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
+	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
+	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
 
 	authProtected := auth.Group("")
 	authProtected.Use(authGuard, sessionGuard)
@@ -541,6 +548,11 @@ func setupRouter(
 	authProtected.POST("/clear-data", authHandler.ClearData)
 	authProtected.POST("/refresh", authHandler.RefreshToken)
 	authProtected.POST("/logout", authHandler.Logout)
+	authProtected.GET("/mfa", authHandler.GetMFASecurityProfile)
+	authProtected.POST("/mfa/totp/setup", authHandler.BeginTOTPSetup)
+	authProtected.POST("/mfa/totp/enable", authHandler.EnableTOTP)
+	authProtected.POST("/mfa/totp/disable", authHandler.DisableTOTP)
+	authProtected.PATCH("/mfa/method", authHandler.SetPreferredMFAMethod)
 
 	// OTP
 	api.POST("/otp/send", otpHandler.SendOTP)
@@ -566,6 +578,9 @@ func setupRouter(
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
 	api.POST("/forms/:slug/submissions", formHandler.SubmitPublicForm)
+	api.GET("/forms/:slug/report", formHandler.ViewPublicFormReport)
+	api.GET("/forms/:slug/report/data", formHandler.GetPublicFormReportData)
+	api.GET("/forms/:slug/report/export.pdf", formHandler.ExportPublicFormReportPDF)
 	api.GET("/forms/:slug/calendar/confirm", formHandler.ConfirmCalendarOptIn)
 	api.GET("/forms/:slug/calendar.ics", formHandler.DownloadCalendarICS)
 
@@ -603,6 +618,8 @@ func setupRouter(
 	admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
 	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
 	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
+	admin.GET("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
+	admin.POST("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
 
 	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
 	admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
@@ -858,14 +875,17 @@ func main() {
 		trustedDeviceRepo,
 		emailSender,
 		branding,
-		cfg.App.FrontendURL,
+		func() string {
+			if strings.TrimSpace(cfg.App.AdminPortalURL) != "" {
+				return cfg.App.AdminPortalURL
+			}
+			return cfg.App.FrontendURL
+		}(),
 	)
 
 	authService := service.NewAuthService(
 		userRepo,
 		otpService,
-		cfg.JWT.Secret,
-		cfg.JWT.Expiration,
 		emailSender,
 		branding,
 		securityService,
@@ -874,6 +894,13 @@ func main() {
 		disableLoginOTP,
 		approvalService,
 		adminNotificationService,
+		cfg.Auth.MFAIssuer,
+		func() string {
+			if strings.TrimSpace(cfg.Auth.SecretKey) != "" {
+				return cfg.Auth.SecretKey
+			}
+			return cfg.JWT.Secret
+		}(),
 	)
 
 	adminService := service.NewAdminService(
@@ -894,9 +921,6 @@ func main() {
 	memberService := service.NewMemberService(memberRepo, eventRepo, emailSender, branding)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
-	if publicBaseURL == "" {
-		publicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.App.FrontendURL), "/")
-	}
 	formService := service.NewFormService(
 		formRepo,
 		eventRepo,
@@ -924,7 +948,25 @@ func main() {
 	// Handlers
 	// -------------------------------------------------------------------------
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService, userRepo)
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, handlers.AuthHandlerOptions{
+		JWTSecret:                    cfg.JWT.Secret,
+		Secure:                       strings.TrimSpace(cfg.App.Environment) == "production",
+		AccessTokenTTL:               cfg.JWT.Expiration,
+		RememberMeTTL:                cfg.Auth.RememberMeTTL,
+		SessionIdleTimeout:           cfg.Auth.SessionIdleTimeout,
+		RememberedSessionIdleTimeout: cfg.Auth.RememberedSessionIdleTimeout,
+		PostLoginRedirectURL:         cfg.App.AdminPortalURL,
+		AuthSecretKey: func() string {
+			if strings.TrimSpace(cfg.Auth.SecretKey) != "" {
+				return cfg.Auth.SecretKey
+			}
+			return cfg.JWT.Secret
+		}(),
+		GoogleClientID:     cfg.Auth.GoogleClientID,
+		GoogleClientSecret: cfg.Auth.GoogleClientSecret,
+		GoogleRedirectURL:  cfg.Auth.GoogleRedirectURL,
+		GoogleHostedDomain: cfg.Auth.GoogleHostedDomain,
+	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader)
 	assetHandler := handlers.NewAssetHandler(assetService)

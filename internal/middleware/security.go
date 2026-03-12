@@ -1,6 +1,10 @@
 package middleware
 
-import "github.com/gin-gonic/gin"
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
 
 func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -17,6 +21,17 @@ func SecurityHeaders() gin.HandlerFunc {
 					"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "+
 					"font-src 'self' https://fonts.gstatic.com; "+
 					"img-src 'self' data: https:;")
+		} else if isPresentationPage(path) {
+			c.Header("Content-Security-Policy",
+				"default-src 'self'; "+
+					"frame-ancestors 'none'; "+
+					"base-uri 'self'; "+
+					"form-action 'self'; "+
+					"connect-src 'self'; "+
+					"script-src 'self' 'unsafe-inline'; "+
+					"style-src 'self' 'unsafe-inline'; "+
+					"img-src 'self' data: https:; "+
+					"font-src 'self' data: https:;")
 		} else {
 			c.Header("Content-Security-Policy",
 				"default-src 'none'; "+
@@ -26,4 +41,11 @@ func SecurityHeaders() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func isPresentationPage(path string) bool {
+	return strings.HasPrefix(path, "/forms/") ||
+		strings.HasPrefix(path, "/form/") ||
+		strings.HasPrefix(path, "/reports/forms/") ||
+		strings.HasPrefix(path, "/api/v1/auth/oauth/google/")
 }
