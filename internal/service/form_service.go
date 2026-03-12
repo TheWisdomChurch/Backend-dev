@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"gorm.io/datatypes"
 
 	"wisdomHouse-backend/internal/email"
+	"wisdomHouse-backend/internal/exportpdf"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -35,6 +37,7 @@ var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
 var templateKeyRe = regexp.MustCompile(`^[A-Za-z0-9/_-]+$`)
 var ErrFormExpired = errors.New("form expired")
 var ErrFormClosed = errors.New("registration closed")
+var ErrFormReportAccessDenied = errors.New("invalid report link")
 var flexibleTimeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",
@@ -49,9 +52,13 @@ type FormService interface {
 	Update(id string, req *models.UpdateFormRequest) (*models.Form, error)
 	Delete(id string) error
 	Publish(id string) (string, *string, error)
+	GetOrCreateReportLink(formID string) (*models.FormReportLinkPayload, error)
 
 	GetPublic(slug string) (*models.PublicFormPayload, error)
+	GetPublicReport(slug, accessToken string, page, limit int, start, end *time.Time) (*models.PublicFormReportPayload, error)
 	Submit(slug string, req *models.SubmitFormRequest) error
+	BuildAdminReportPDF(formID string, start, end *time.Time) (string, []byte, error)
+	BuildPublicReportPDF(slug, accessToken string, start, end *time.Time) (string, []byte, error)
 
 	// Admin submissions
 	ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
@@ -132,7 +139,7 @@ func (s *formService) buildPublicURL(slug string) *string {
 	if slug == "" || s.publicBaseURL == "" {
 		return nil
 	}
-	u := fmt.Sprintf("%s/form/%s", s.publicBaseURL, slug)
+	u := fmt.Sprintf("%s/forms/%s", s.publicBaseURL, slug)
 	return &u
 }
 
@@ -157,6 +164,89 @@ func (s *formService) attachPublicURLs(forms []models.Form) {
 	for i := range forms {
 		s.attachPublicURL(&forms[i])
 	}
+}
+
+func (s *formService) buildPublicAPIURL(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
+	if base == "" {
+		return path
+	}
+	return base + path
+}
+
+func (s *formService) buildPublicReportPath(slug, accessToken string) string {
+	return fmt.Sprintf(
+		"/reports/forms/%s?access=%s",
+		url.PathEscape(strings.TrimSpace(slug)),
+		url.QueryEscape(strings.TrimSpace(accessToken)),
+	)
+}
+
+func (s *formService) buildPublicReportDataPath(slug, accessToken string) string {
+	return fmt.Sprintf(
+		"/reports/forms/%s/data?access=%s",
+		url.PathEscape(strings.TrimSpace(slug)),
+		url.QueryEscape(strings.TrimSpace(accessToken)),
+	)
+}
+
+func (s *formService) buildPublicReportPDFPath(slug, accessToken string) string {
+	return fmt.Sprintf(
+		"/reports/forms/%s/export.pdf?access=%s",
+		url.PathEscape(strings.TrimSpace(slug)),
+		url.QueryEscape(strings.TrimSpace(accessToken)),
+	)
+}
+
+func (s *formService) buildReportLinkPayload(form *models.Form, accessToken string) *models.FormReportLinkPayload {
+	if form == nil || form.Slug == nil {
+		return nil
+	}
+
+	slug := strings.TrimSpace(*form.Slug)
+	if slug == "" {
+		return nil
+	}
+
+	return &models.FormReportLinkPayload{
+		FormID:        form.ID,
+		FormTitle:     strings.TrimSpace(form.Title),
+		Slug:          slug,
+		ReportURL:     s.buildPublicAPIURL(s.buildPublicReportPath(slug, accessToken)),
+		ReportDataURL: s.buildPublicAPIURL(s.buildPublicReportDataPath(slug, accessToken)),
+		ExportPDFURL:  s.buildPublicAPIURL(s.buildPublicReportPDFPath(slug, accessToken)),
+	}
+}
+
+func (s *formService) ensureReportAccessToken(form *models.Form) (string, error) {
+	if form == nil {
+		return "", errors.New("form not found")
+	}
+
+	if !form.IsPublished || form.Slug == nil || strings.TrimSpace(*form.Slug) == "" {
+		return "", errors.New("publish the form before generating a report link")
+	}
+
+	if existing := strings.TrimSpace(ptrString(form.ReportAccessToken)); existing != "" {
+		return existing, nil
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		token, err := generateSecureToken(32)
+		if err != nil {
+			return "", err
+		}
+		form.ReportAccessToken = &token
+		if err := s.repo.Update(form); err != nil {
+			if isUniqueViolationErr(err) {
+				continue
+			}
+			return "", err
+		}
+		return token, nil
+	}
+
+	return "", errors.New("failed to generate report link")
 }
 
 func (s *formService) List(page, limit int) ([]models.Form, int64, error) {
@@ -412,6 +502,20 @@ func (s *formService) Publish(id string) (string, *string, error) {
 	return slug, publicURL, nil
 }
 
+func (s *formService) GetOrCreateReportLink(formID string) (*models.FormReportLinkPayload, error) {
+	form, err := s.repo.GetByID(formID)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := s.ensureReportAccessToken(form)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.buildReportLinkPayload(form, token), nil
+}
+
 func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) {
 	form, err := s.repo.GetBySlug(slug)
 	if err != nil {
@@ -450,6 +554,61 @@ func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) 
 	}
 
 	return payload, nil
+}
+
+func (s *formService) GetPublicReport(slug, accessToken string, page, limit int, start, end *time.Time) (*models.PublicFormReportPayload, error) {
+	form, err := s.getAuthorizedPublicReportForm(slug, accessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 25
+	}
+
+	offset := (page - 1) * limit
+	items, total, err := s.repo.ListSubmissions(form.ID, offset, limit, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	latestItems, _, err := s.repo.ListSubmissions(form.ID, 0, 10, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	orderedFields := orderFormFields(form.Fields)
+	token := strings.TrimSpace(accessToken)
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(limit) - 1) / int64(limit))
+	}
+
+	reportURL := s.buildPublicAPIURL(s.buildPublicReportPath(strings.TrimSpace(ptrString(form.Slug)), token))
+	reportDataURL := s.buildPublicAPIURL(s.buildPublicReportDataPath(strings.TrimSpace(ptrString(form.Slug)), token))
+	exportPDFURL := s.buildPublicAPIURL(s.buildPublicReportPDFPath(strings.TrimSpace(ptrString(form.Slug)), token))
+
+	return &models.PublicFormReportPayload{
+		BrandName:           s.reportBrandName(),
+		FormID:              form.ID,
+		FormTitle:           strings.TrimSpace(form.Title),
+		FormDescription:     form.Description,
+		Slug:                strings.TrimSpace(ptrString(form.Slug)),
+		Summary:             buildFormReportSummary(latestItems, total),
+		LatestRegistrations: buildReportSubmissionList(latestItems, orderedFields),
+		Submissions:         buildReportSubmissionList(items, orderedFields),
+		Page:                page,
+		Limit:               limit,
+		Total:               total,
+		TotalPages:          totalPages,
+		ReportURL:           reportURL,
+		ReportDataURL:       reportDataURL,
+		ExportPDFURL:        exportPDFURL,
+		GeneratedAt:         time.Now().UTC(),
+	}, nil
 }
 
 func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
@@ -547,6 +706,22 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	return nil
 }
 
+func (s *formService) BuildAdminReportPDF(formID string, start, end *time.Time) (string, []byte, error) {
+	form, err := s.repo.GetByID(formID)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.buildFormReportPDF(form, start, end)
+}
+
+func (s *formService) BuildPublicReportPDF(slug, accessToken string, start, end *time.Time) (string, []byte, error) {
+	form, err := s.getAuthorizedPublicReportForm(slug, accessToken)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.buildFormReportPDF(form, start, end)
+}
+
 func (s *formService) ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error) {
 	if page < 1 {
 		page = 1
@@ -556,6 +731,287 @@ func (s *formService) ListSubmissions(formID string, page, limit int, start, end
 	}
 	offset := (page - 1) * limit
 	return s.repo.ListSubmissions(formID, offset, limit, start, end)
+}
+
+func (s *formService) reportBrandName() string {
+	brandName := strings.TrimSpace(s.branding.AppName)
+	if brandName == "" {
+		brandName = "Submission Report"
+	}
+	return brandName
+}
+
+func (s *formService) getAuthorizedPublicReportForm(slug, accessToken string) (*models.Form, error) {
+	token := strings.TrimSpace(accessToken)
+	if token == "" {
+		return nil, ErrFormReportAccessDenied
+	}
+
+	form, err := s.repo.GetBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+
+	expected := strings.TrimSpace(ptrString(form.ReportAccessToken))
+	if expected == "" {
+		return nil, ErrFormReportAccessDenied
+	}
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(token)) != 1 {
+		return nil, ErrFormReportAccessDenied
+	}
+
+	return form, nil
+}
+
+func (s *formService) buildFormReportPDF(form *models.Form, start, end *time.Time) (string, []byte, error) {
+	if form == nil {
+		return "", nil, errors.New("form not found")
+	}
+
+	allSubmissions, err := s.listAllSubmissionsForReport(form.ID, start, end)
+	if err != nil {
+		return "", nil, err
+	}
+
+	labelMap := make(map[string]string, len(form.Fields))
+	for _, field := range orderFormFields(form.Fields) {
+		key := strings.TrimSpace(field.Key)
+		label := strings.TrimSpace(field.Label)
+		if key == "" {
+			continue
+		}
+		if label == "" {
+			label = humanizeFieldKey(key)
+		}
+		labelMap[key] = label
+	}
+
+	subs := make([]exportpdf.Submission, 0, len(allSubmissions))
+	for _, item := range allSubmissions {
+		subs = append(subs, exportpdf.Submission{
+			ID:               item.ID,
+			Name:             ptrString(item.Name),
+			Email:            ptrString(item.Email),
+			ContactNumber:    ptrString(item.ContactNumber),
+			ContactAddress:   ptrString(item.ContactAddress),
+			RegistrationCode: ptrString(item.RegistrationCode),
+			CreatedAt:        item.CreatedAt,
+			Values:           decodeSubmissionValues(item.Values),
+			FieldLabels:      labelMap,
+		})
+	}
+
+	fileName := reportFileName(form.Title)
+	pdfBytes, err := exportpdf.BuildSubmissionsPDF(s.reportBrandName(), strings.TrimSpace(form.Title), subs)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return fileName, pdfBytes, nil
+}
+
+func (s *formService) listAllSubmissionsForReport(formID string, start, end *time.Time) ([]models.FormSubmission, error) {
+	const pageSize = 250
+
+	offset := 0
+	all := make([]models.FormSubmission, 0, pageSize)
+
+	for {
+		items, total, err := s.repo.ListSubmissions(formID, offset, pageSize, start, end)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+		offset += len(items)
+
+		if int64(len(all)) >= total || len(items) < pageSize {
+			break
+		}
+	}
+
+	return all, nil
+}
+
+func buildFormReportSummary(latest []models.FormSubmission, total int64) models.FormReportSummary {
+	summary := models.FormReportSummary{
+		TotalSubmissions: total,
+	}
+	if len(latest) > 0 {
+		latestAt := latest[0].CreatedAt
+		summary.LatestSubmissionAt = &latestAt
+	}
+	return summary
+}
+
+func buildReportSubmissionList(items []models.FormSubmission, orderedFields []models.FormField) []models.FormReportSubmission {
+	out := make([]models.FormReportSubmission, 0, len(items))
+	for _, item := range items {
+		out = append(out, buildReportSubmission(item, orderedFields))
+	}
+	return out
+}
+
+func buildReportSubmission(item models.FormSubmission, orderedFields []models.FormField) models.FormReportSubmission {
+	values := decodeSubmissionValues(item.Values)
+	fields := make([]models.FormReportFieldValue, 0, len(values))
+	seen := make(map[string]bool, len(values))
+
+	for _, field := range orderedFields {
+		key := strings.TrimSpace(field.Key)
+		if key == "" {
+			continue
+		}
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		text := reportValueString(value)
+		if text == "" {
+			continue
+		}
+		label := strings.TrimSpace(field.Label)
+		if label == "" {
+			label = humanizeFieldKey(key)
+		}
+		fields = append(fields, models.FormReportFieldValue{
+			Key:   key,
+			Label: label,
+			Value: text,
+		})
+		seen[key] = true
+	}
+
+	extras := make([]string, 0)
+	for key := range values {
+		if seen[key] {
+			continue
+		}
+		extras = append(extras, key)
+	}
+	sort.Strings(extras)
+	for _, key := range extras {
+		text := reportValueString(values[key])
+		if text == "" {
+			continue
+		}
+		fields = append(fields, models.FormReportFieldValue{
+			Key:   key,
+			Label: humanizeFieldKey(key),
+			Value: text,
+		})
+	}
+
+	return models.FormReportSubmission{
+		ID:               item.ID,
+		Name:             item.Name,
+		Email:            item.Email,
+		ContactNumber:    item.ContactNumber,
+		ContactAddress:   item.ContactAddress,
+		RegistrationCode: item.RegistrationCode,
+		Values:           values,
+		Fields:           fields,
+		CreatedAt:        item.CreatedAt,
+	}
+}
+
+func orderFormFields(fields []models.FormField) []models.FormField {
+	ordered := append([]models.FormField(nil), fields...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Order == ordered[j].Order {
+			return ordered[i].Key < ordered[j].Key
+		}
+		return ordered[i].Order < ordered[j].Order
+	})
+	return ordered
+}
+
+func decodeSubmissionValues(raw datatypes.JSON) map[string]any {
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]any{}
+	}
+
+	out := map[string]any{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func reportValueString(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case bool:
+		if v {
+			return "Yes"
+		}
+		return "No"
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		f := float64(v)
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	case []string:
+		return strings.Join(v, ", ")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			part := reportValueString(item)
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func humanizeFieldKey(key string) string {
+	clean := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(key, "_", " "), "-", " "))
+	if clean == "" {
+		return "Response"
+	}
+	parts := strings.Fields(clean)
+	for i := range parts {
+		runes := []rune(strings.ToLower(parts[i]))
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
+}
+
+func reportFileName(title string) string {
+	t := strings.TrimSpace(title)
+	t = strings.ToLower(t)
+	t = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_' || r == ' ':
+			return r
+		default:
+			return -1
+		}
+	}, t)
+	t = strings.Join(strings.Fields(t), "-")
+	if t == "" {
+		t = "form"
+	}
+	return t + "-submissions.pdf"
 }
 
 func (s *formService) Stats(start, end *time.Time) (*models.FormStatsResponse, error) {
@@ -608,6 +1064,14 @@ func isMissingRelationErr(err error) bool {
 	return false
 }
 
+func isUniqueViolationErr(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
 func parseFlexibleTime(value string) (time.Time, error) {
 	val := strings.TrimSpace(value)
 	if val == "" {
@@ -654,6 +1118,125 @@ func normalizeAbsoluteTemplateURL(raw string) (string, error) {
 		return "", fmt.Errorf("missing URL host")
 	}
 	return parsed.String(), nil
+}
+
+func normalizeFormContentSections(sections *[]models.FormContentSectionDTO) error {
+	if sections == nil {
+		return nil
+	}
+
+	cleanSections := make([]models.FormContentSectionDTO, 0, len(*sections))
+	seenIDs := map[string]bool{}
+
+	for i, section := range *sections {
+		title := strings.TrimSpace(section.Title)
+		if title == "" {
+			return fmt.Errorf("sections[%d].title is required", i)
+		}
+		if utf8.RuneCountInString(title) > 160 {
+			return fmt.Errorf("sections[%d].title too long", i)
+		}
+		section.Title = title
+
+		if section.Subtitle != nil {
+			subtitle := strings.TrimSpace(*section.Subtitle)
+			if subtitle == "" {
+				section.Subtitle = nil
+			} else {
+				if utf8.RuneCountInString(subtitle) > 260 {
+					return fmt.Errorf("sections[%d].subtitle too long", i)
+				}
+				section.Subtitle = &subtitle
+			}
+		}
+
+		sectionID := slugify(title)
+		if section.ID != nil {
+			if candidate := slugify(*section.ID); candidate != "" {
+				sectionID = candidate
+			}
+		}
+		if sectionID == "" {
+			sectionID = fmt.Sprintf("section-%d", i+1)
+		}
+		if seenIDs[sectionID] {
+			return fmt.Errorf("sections[%d].id duplicates another section", i)
+		}
+		seenIDs[sectionID] = true
+		section.ID = &sectionID
+
+		if section.Layout != nil {
+			layout := strings.ToLower(strings.TrimSpace(*section.Layout))
+			switch layout {
+			case "":
+				section.Layout = nil
+			case "grid", "stack", "timeline", "split":
+				section.Layout = &layout
+			default:
+				return fmt.Errorf("sections[%d].layout must be grid, stack, timeline, or split", i)
+			}
+		}
+
+		cleanItems := make([]models.FormContentSectionItemDTO, 0, len(section.Items))
+		for j, item := range section.Items {
+			itemTitle := strings.TrimSpace(item.Title)
+			if itemTitle == "" {
+				return fmt.Errorf("sections[%d].items[%d].title is required", i, j)
+			}
+			if utf8.RuneCountInString(itemTitle) > 140 {
+				return fmt.Errorf("sections[%d].items[%d].title too long", i, j)
+			}
+			item.Title = itemTitle
+
+			normalizeOptionalText := func(value **string, max int, fieldName string) error {
+				if *value == nil {
+					return nil
+				}
+				trimmed := strings.TrimSpace(**value)
+				if trimmed == "" {
+					*value = nil
+					return nil
+				}
+				if utf8.RuneCountInString(trimmed) > max {
+					return fmt.Errorf("sections[%d].items[%d].%s too long", i, j, fieldName)
+				}
+				*value = &trimmed
+				return nil
+			}
+
+			if err := normalizeOptionalText(&item.Body, 320, "body"); err != nil {
+				return err
+			}
+			if err := normalizeOptionalText(&item.Eyebrow, 80, "eyebrow"); err != nil {
+				return err
+			}
+			if err := normalizeOptionalText(&item.Icon, 40, "icon"); err != nil {
+				return err
+			}
+			if err := normalizeOptionalText(&item.LinkText, 80, "linkText"); err != nil {
+				return err
+			}
+			if item.LinkURL != nil {
+				raw := strings.TrimSpace(*item.LinkURL)
+				if raw == "" {
+					item.LinkURL = nil
+				} else {
+					normalized, err := normalizeAbsoluteTemplateURL(raw)
+					if err != nil {
+						return fmt.Errorf("sections[%d].items[%d].linkUrl is invalid", i, j)
+					}
+					item.LinkURL = &normalized
+				}
+			}
+
+			cleanItems = append(cleanItems, item)
+		}
+		section.Items = cleanItems
+		cleanSections = append(cleanSections, section)
+	}
+
+	*sections = cleanSections
+	return nil
 }
 
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
@@ -732,8 +1315,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		} else {
 			normalized, parseErr := normalizeAbsoluteTemplateURL(raw)
 			if parseErr != nil {
-				// Permanent resilience: ignore malformed URL instead of failing form creation.
-				s.ResponseEmailTemplateURL = nil
+				return nil, fmt.Errorf("responseEmailTemplateUrl is invalid")
 			} else {
 				s.ResponseEmailTemplateURL = &normalized
 			}
@@ -874,6 +1456,9 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			}
 		}
 		s.IntroBulletSubtexts = &clean
+	}
+	if err := normalizeFormContentSections(s.Sections); err != nil {
+		return nil, err
 	}
 
 	// Normalize and validate optional design settings

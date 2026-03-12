@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS public.users (
   last_name character varying(100) NOT NULL,
   email character varying(255) NOT NULL,
   password character varying(255) NOT NULL,
+  federated_provider character varying(50),
+  federated_subject character varying(255),
+  federated_linked_at timestamp with time zone,
+  preferred_mfa_method character varying(30) DEFAULT 'email_otp' NOT NULL,
+  totp_enabled boolean DEFAULT false NOT NULL,
+  totp_secret_enc text,
+  totp_pending_enc text,
   role character varying(50) DEFAULT 'admin'::character varying NOT NULL,
   is_active boolean DEFAULT true NOT NULL,
   admin_approved boolean DEFAULT true NOT NULL,
@@ -245,6 +252,7 @@ CREATE TABLE IF NOT EXISTS public.forms (
   slug character varying(255),
   is_published boolean DEFAULT false NOT NULL,
   status character varying(20) NOT NULL DEFAULT 'draft',
+  report_access_token character varying(160),
   published_at timestamp with time zone,
   settings jsonb,
   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -361,7 +369,17 @@ ALTER TABLE public.events
 
 ALTER TABLE public.forms
   ADD COLUMN IF NOT EXISTS status character varying(20) NOT NULL DEFAULT 'draft',
+  ADD COLUMN IF NOT EXISTS report_access_token character varying(160),
   ADD COLUMN IF NOT EXISTS published_at timestamp with time zone;
+
+ALTER TABLE public.users
+  ADD COLUMN IF NOT EXISTS federated_provider character varying(50),
+  ADD COLUMN IF NOT EXISTS federated_subject character varying(255),
+  ADD COLUMN IF NOT EXISTS federated_linked_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS preferred_mfa_method character varying(30) NOT NULL DEFAULT 'email_otp',
+  ADD COLUMN IF NOT EXISTS totp_enabled boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS totp_secret_enc text,
+  ADD COLUMN IF NOT EXISTS totp_pending_enc text;
 
 ALTER TABLE public.form_fields
   ADD COLUMN IF NOT EXISTS validation jsonb,
@@ -455,6 +473,16 @@ ALTER TABLE public.forms
 ALTER TABLE public.forms
   ADD CONSTRAINT forms_status_check
   CHECK (status IN ('draft', 'published', 'invalid'));
+
+UPDATE public.users
+SET preferred_mfa_method = CASE
+    WHEN preferred_mfa_method IN ('email_otp', 'totp') THEN preferred_mfa_method
+    ELSE 'email_otp'
+  END
+WHERE preferred_mfa_method IS NULL OR preferred_mfa_method NOT IN ('email_otp', 'totp');
+
+ALTER TABLE public.users
+  ALTER COLUMN preferred_mfa_method SET DEFAULT 'email_otp';
 
 UPDATE public.leadership_members
 SET role = CASE
@@ -566,6 +594,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
   ON public.users (email)
   WHERE deleted_at IS NULL;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_federated_subject_unique
+  ON public.users (federated_subject)
+  WHERE federated_subject IS NOT NULL AND deleted_at IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_email_unique
   ON public.subscribers (email)
   WHERE deleted_at IS NULL;
@@ -573,6 +605,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_email_unique
 CREATE UNIQUE INDEX IF NOT EXISTS idx_forms_slug_unique
   ON public.forms (slug)
   WHERE slug IS NOT NULL AND deleted_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_forms_report_access_token_unique
+  ON public.forms (report_access_token)
+  WHERE report_access_token IS NOT NULL AND deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_trusted_devices_user_id
   ON public.trusted_devices (user_id);

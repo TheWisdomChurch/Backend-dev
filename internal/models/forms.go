@@ -30,6 +30,8 @@ type Form struct {
 
 	IsPublished bool       `gorm:"not null;default:false" json:"isPublished"`
 	Status      FormStatus `gorm:"size:20;not null;default:'draft'" json:"status"`
+	// Stored server-side only; used to authorize the public report link.
+	ReportAccessToken *string `gorm:"size:160;uniqueIndex" json:"-"`
 
 	PublishedAt *time.Time `json:"publishedAt,omitempty"`
 

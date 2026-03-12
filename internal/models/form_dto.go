@@ -1,6 +1,8 @@
 // internal/models/form_dto.go
 package models
 
+import "time"
+
 type FormFieldOptionDTO struct {
 	Label string `json:"label" binding:"required"`
 	Value string `json:"value" binding:"required"`
@@ -51,6 +53,23 @@ type FormDesignSettingsDTO struct {
 	FormHeaderNote     *string   `json:"formHeaderNote,omitempty"`
 }
 
+type FormContentSectionItemDTO struct {
+	Title    string  `json:"title" binding:"required"`
+	Body     *string `json:"body,omitempty"`
+	Eyebrow  *string `json:"eyebrow,omitempty"`
+	Icon     *string `json:"icon,omitempty"`
+	LinkText *string `json:"linkText,omitempty"`
+	LinkURL  *string `json:"linkUrl,omitempty"`
+}
+
+type FormContentSectionDTO struct {
+	ID       *string                     `json:"id,omitempty"`
+	Title    string                      `json:"title" binding:"required"`
+	Subtitle *string                     `json:"subtitle,omitempty"`
+	Layout   *string                     `json:"layout,omitempty"` // grid|stack|timeline|split
+	Items    []FormContentSectionItemDTO `json:"items,omitempty"`
+}
+
 type FormSettingsDTO struct {
 	Capacity       *int    `json:"capacity,omitempty"`
 	ClosesAt       *string `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
@@ -74,20 +93,21 @@ type FormSettingsDTO struct {
 	Design *FormDesignSettingsDTO `json:"design,omitempty"`
 
 	// Extended builder settings (kept at root for backward compat with frontend)
-	IntroTitle            *string   `json:"introTitle,omitempty"`
-	IntroSubtitle         *string   `json:"introSubtitle,omitempty"`
-	IntroBullets          *[]string `json:"introBullets,omitempty"`
-	IntroBulletSubtexts   *[]string `json:"introBulletSubtexts,omitempty"`
-	LayoutMode            *string   `json:"layoutMode,omitempty"`
-	DateFormat            *string   `json:"dateFormat,omitempty"`
-	FooterText            *string   `json:"footerText,omitempty"`
-	FooterBg              *string   `json:"footerBg,omitempty"`
-	FooterTextColor       *string   `json:"footerTextColor,omitempty"`
-	SubmitButtonText      *string   `json:"submitButtonText,omitempty"`
-	SubmitButtonBg        *string   `json:"submitButtonBg,omitempty"`
-	SubmitButtonTextColor *string   `json:"submitButtonTextColor,omitempty"`
-	SubmitButtonIcon      *string   `json:"submitButtonIcon,omitempty"`
-	FormHeaderNote        *string   `json:"formHeaderNote,omitempty"`
+	IntroTitle            *string                  `json:"introTitle,omitempty"`
+	IntroSubtitle         *string                  `json:"introSubtitle,omitempty"`
+	IntroBullets          *[]string                `json:"introBullets,omitempty"`
+	IntroBulletSubtexts   *[]string                `json:"introBulletSubtexts,omitempty"`
+	LayoutMode            *string                  `json:"layoutMode,omitempty"`
+	DateFormat            *string                  `json:"dateFormat,omitempty"`
+	FooterText            *string                  `json:"footerText,omitempty"`
+	FooterBg              *string                  `json:"footerBg,omitempty"`
+	FooterTextColor       *string                  `json:"footerTextColor,omitempty"`
+	Sections              *[]FormContentSectionDTO `json:"sections,omitempty"`
+	SubmitButtonText      *string                  `json:"submitButtonText,omitempty"`
+	SubmitButtonBg        *string                  `json:"submitButtonBg,omitempty"`
+	SubmitButtonTextColor *string                  `json:"submitButtonTextColor,omitempty"`
+	SubmitButtonIcon      *string                  `json:"submitButtonIcon,omitempty"`
+	FormHeaderNote        *string                  `json:"formHeaderNote,omitempty"`
 }
 
 type CreateFormRequest struct {
@@ -115,4 +135,55 @@ type SubmitFormRequest struct {
 type PublicFormPayload struct {
 	Form  *Form  `json:"form"`
 	Event *Event `json:"event,omitempty"`
+}
+
+type FormReportLinkPayload struct {
+	FormID        string `json:"formId"`
+	FormTitle     string `json:"formTitle"`
+	Slug          string `json:"slug"`
+	ReportURL     string `json:"reportUrl"`
+	ReportDataURL string `json:"reportDataUrl"`
+	ExportPDFURL  string `json:"exportPdfUrl"`
+}
+
+type FormReportSummary struct {
+	TotalSubmissions   int64      `json:"totalSubmissions"`
+	LatestSubmissionAt *time.Time `json:"latestSubmissionAt,omitempty"`
+}
+
+type FormReportFieldValue struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type FormReportSubmission struct {
+	ID               string                 `json:"id"`
+	Name             *string                `json:"name,omitempty"`
+	Email            *string                `json:"email,omitempty"`
+	ContactNumber    *string                `json:"contactNumber,omitempty"`
+	ContactAddress   *string                `json:"contactAddress,omitempty"`
+	RegistrationCode *string                `json:"registrationCode,omitempty"`
+	Values           map[string]any         `json:"values,omitempty"`
+	Fields           []FormReportFieldValue `json:"fields,omitempty"`
+	CreatedAt        time.Time              `json:"createdAt"`
+}
+
+type PublicFormReportPayload struct {
+	BrandName           string                 `json:"brandName"`
+	FormID              string                 `json:"formId"`
+	FormTitle           string                 `json:"formTitle"`
+	FormDescription     *string                `json:"formDescription,omitempty"`
+	Slug                string                 `json:"slug"`
+	Summary             FormReportSummary      `json:"summary"`
+	LatestRegistrations []FormReportSubmission `json:"latestRegistrations"`
+	Submissions         []FormReportSubmission `json:"submissions"`
+	Page                int                    `json:"page"`
+	Limit               int                    `json:"limit"`
+	Total               int64                  `json:"total"`
+	TotalPages          int                    `json:"totalPages"`
+	ReportURL           string                 `json:"reportUrl"`
+	ReportDataURL       string                 `json:"reportDataUrl"`
+	ExportPDFURL        string                 `json:"exportPdfUrl"`
+	GeneratedAt         time.Time              `json:"generatedAt"`
 }

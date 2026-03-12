@@ -13,6 +13,7 @@ import (
 type UserRepository interface {
 	Create(user *models.User) error
 	FindByEmail(email string) (*models.User, error)
+	FindByFederatedAccount(provider, subject string) (*models.User, error)
 	FindByID(id string) (*models.User, error)
 	FindAll() ([]models.User, error)
 	FindByRoles(roles []string) ([]models.User, error)
@@ -39,6 +40,18 @@ func (r *userRepository) Create(user *models.User) error {
 func (r *userRepository) FindByEmail(email string) (*models.User, error) {
 	var user models.User
 	err := r.db.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *userRepository) FindByFederatedAccount(provider, subject string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("federated_provider = ? AND federated_subject = ?", provider, subject).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
