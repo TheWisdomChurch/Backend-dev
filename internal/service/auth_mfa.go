@@ -47,21 +47,33 @@ func (s *authServiceImpl) BeginTOTPSetup(userID string) (*models.TOTPSetupRespon
 	if !user.IsActive {
 		return nil, errors.New("account is deactivated")
 	}
-
-	secret, err := authutil.GenerateTOTPSecret(20)
-	if err != nil {
-		return nil, errors.New("failed to generate authenticator secret")
+	if user.TOTPEnabled {
+		return nil, errors.New("authenticator app is already enabled")
 	}
 
-	encrypted, err := s.totpProtector.EncryptString(secret)
-	if err != nil {
-		return nil, errors.New("failed to secure authenticator secret")
+	var secret string
+	if user.TOTPPendingEnc != nil && strings.TrimSpace(*user.TOTPPendingEnc) != "" {
+		if decrypted, decryptErr := s.totpProtector.DecryptString(*user.TOTPPendingEnc); decryptErr == nil {
+			secret = strings.TrimSpace(decrypted)
+		}
 	}
 
-	user.TOTPPendingEnc = &encrypted
-	user.UpdatedAt = time.Now().UTC()
-	if err := s.userRepo.Update(user); err != nil {
-		return nil, errors.New("failed to prepare authenticator setup")
+	if secret == "" {
+		secret, err = authutil.GenerateTOTPSecret(20)
+		if err != nil {
+			return nil, errors.New("failed to generate authenticator secret")
+		}
+
+		encrypted, err := s.totpProtector.EncryptString(secret)
+		if err != nil {
+			return nil, errors.New("failed to secure authenticator secret")
+		}
+
+		user.TOTPPendingEnc = &encrypted
+		user.UpdatedAt = time.Now().UTC()
+		if err := s.userRepo.Update(user); err != nil {
+			return nil, errors.New("failed to prepare authenticator setup")
+		}
 	}
 
 	issuer := strings.TrimSpace(s.mfaIssuer)

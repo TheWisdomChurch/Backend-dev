@@ -32,13 +32,16 @@ func GenerateTOTPSecret(size int) (string, error) {
 }
 
 func BuildTOTPAuthURL(issuer, accountName, secret string) string {
-	normalizedIssuer := strings.TrimSpace(issuer)
+	normalizedIssuer := sanitizeTOTPLabelPart(issuer)
 	if normalizedIssuer == "" {
 		normalizedIssuer = "Secure Account"
 	}
 
-	normalizedAccount := strings.TrimSpace(accountName)
-	label := url.PathEscape(normalizedIssuer + ":" + normalizedAccount)
+	normalizedAccount := sanitizeTOTPLabelPart(accountName)
+	label := url.PathEscape(normalizedIssuer)
+	if normalizedAccount != "" {
+		label += ":" + url.PathEscape(normalizedAccount)
+	}
 
 	query := url.Values{}
 	query.Set("secret", strings.TrimSpace(secret))
@@ -48,6 +51,12 @@ func BuildTOTPAuthURL(issuer, accountName, secret string) string {
 	query.Set("period", strconv.Itoa(int(DefaultTOTPPeriod/time.Second)))
 
 	return "otpauth://totp/" + label + "?" + query.Encode()
+}
+
+func sanitizeTOTPLabelPart(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = strings.ReplaceAll(normalized, ":", "")
+	return normalized
 }
 
 func VerifyTOTP(secret, code string, now time.Time, skew int) bool {
