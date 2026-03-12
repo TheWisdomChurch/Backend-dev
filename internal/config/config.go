@@ -378,6 +378,12 @@ func validateConfig(cfg *Config) error {
 	if cfg.Auth.RememberMeTTL <= 0 {
 		return fmt.Errorf("AUTH_REMEMBER_ME_TTL must be greater than 0")
 	}
+	if strings.TrimSpace(cfg.Auth.SecretKey) == "" {
+		return fmt.Errorf("AUTH_SECRET_KEY is required")
+	}
+	if len(strings.TrimSpace(cfg.Auth.SecretKey)) < 32 {
+		return fmt.Errorf("AUTH_SECRET_KEY must be at least 32 characters")
+	}
 	if strings.TrimSpace(cfg.Auth.MFAIssuer) == "" {
 		return fmt.Errorf("AUTH_MFA_ISSUER is required")
 	}

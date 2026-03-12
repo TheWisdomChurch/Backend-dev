@@ -895,12 +895,7 @@ func main() {
 		approvalService,
 		adminNotificationService,
 		cfg.Auth.MFAIssuer,
-		func() string {
-			if strings.TrimSpace(cfg.Auth.SecretKey) != "" {
-				return cfg.Auth.SecretKey
-			}
-			return cfg.JWT.Secret
-		}(),
+		cfg.Auth.SecretKey,
 	)
 
 	adminService := service.NewAdminService(
@@ -956,16 +951,11 @@ func main() {
 		SessionIdleTimeout:           cfg.Auth.SessionIdleTimeout,
 		RememberedSessionIdleTimeout: cfg.Auth.RememberedSessionIdleTimeout,
 		PostLoginRedirectURL:         cfg.App.AdminPortalURL,
-		AuthSecretKey: func() string {
-			if strings.TrimSpace(cfg.Auth.SecretKey) != "" {
-				return cfg.Auth.SecretKey
-			}
-			return cfg.JWT.Secret
-		}(),
-		GoogleClientID:     cfg.Auth.GoogleClientID,
-		GoogleClientSecret: cfg.Auth.GoogleClientSecret,
-		GoogleRedirectURL:  cfg.Auth.GoogleRedirectURL,
-		GoogleHostedDomain: cfg.Auth.GoogleHostedDomain,
+		AuthSecretKey:                cfg.Auth.SecretKey,
+		GoogleClientID:               cfg.Auth.GoogleClientID,
+		GoogleClientSecret:           cfg.Auth.GoogleClientSecret,
+		GoogleRedirectURL:            cfg.Auth.GoogleRedirectURL,
+		GoogleHostedDomain:           cfg.Auth.GoogleHostedDomain,
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader)
