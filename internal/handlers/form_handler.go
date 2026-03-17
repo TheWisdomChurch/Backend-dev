@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
@@ -188,7 +189,8 @@ func (h *FormHandler) SendAdminFormCampaign(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.svc.SendFormCampaignEmail(formID, &req)
+	actor := buildFormCampaignActor(c)
+	resp, err := h.svc.SendFormCampaignEmail(formID, &req, actor)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
@@ -199,6 +201,55 @@ func (h *FormHandler) SendAdminFormCampaign(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Form campaign email sent", resp)
+}
+
+func (h *FormHandler) ListAdminFormCampaignHistory(c *gin.Context) {
+	formID := c.Param("id")
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+
+	items, total, err := h.svc.ListCampaignDeliveries(formID, page, limit)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Form campaign history loaded", gin.H{
+		"data":       items,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
+func buildFormCampaignActor(c *gin.Context) *models.FormCampaignSendActor {
+	if c == nil {
+		return nil
+	}
+
+	actor := &models.FormCampaignSendActor{}
+	if userID, ok := middleware.GetUserIDFromContext(c); ok {
+		actor.UserID = strings.TrimSpace(userID)
+	}
+	if raw, exists := c.Get("email"); exists {
+		if email, ok := raw.(string); ok {
+			actor.Email = strings.TrimSpace(email)
+		}
+	}
+	if raw, exists := c.Get("role"); exists {
+		if role, ok := raw.(string); ok {
+			actor.Role = strings.TrimSpace(role)
+		}
+	}
+	if actor.UserID == "" && actor.Email == "" && actor.Role == "" {
+		return nil
+	}
+	return actor
 }
 
 func (h *FormHandler) GetPublicForm(c *gin.Context) {
