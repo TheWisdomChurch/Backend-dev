@@ -27,6 +27,8 @@ type FormRepository interface {
 	CountSubmissions(formID string) (int64, error)
 	CreateSubmission(sub *models.FormSubmission) error
 	ListEmailSubmissions(formID string) ([]models.FormSubmission, error)
+	CreateCampaignDelivery(item *models.FormCampaignDelivery) error
+	ListCampaignDeliveries(formID string, offset, limit int) ([]models.FormCampaignDelivery, int64, error)
 
 	ListSubmissions(formID string, offset, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
 	ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error)
@@ -95,6 +97,9 @@ func (r *formRepository) Update(form *models.Form) error {
 
 func (r *formRepository) Delete(id string) error {
 	return r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormCampaignDelivery{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Unscoped().Where("form_id = ?", id).Delete(&models.FormCalendarReminder{}).Error; err != nil {
 			return err
 		}
@@ -193,6 +198,28 @@ func (r *formRepository) ListEmailSubmissions(formID string) ([]models.FormSubmi
 		Order("created_at DESC").
 		Find(&items).Error
 	return items, err
+}
+
+func (r *formRepository) CreateCampaignDelivery(item *models.FormCampaignDelivery) error {
+	return r.db.DB.Create(item).Error
+}
+
+func (r *formRepository) ListCampaignDeliveries(formID string, offset, limit int) ([]models.FormCampaignDelivery, int64, error) {
+	var items []models.FormCampaignDelivery
+	var total int64
+
+	q := r.db.DB.Model(&models.FormCampaignDelivery{}).
+		Where("form_id = ?", formID)
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := q.
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&items).Error
+	return items, total, err
 }
 
 func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *gorm.DB {
