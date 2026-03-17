@@ -86,6 +86,13 @@ type FormSettingsDTO struct {
 	ResponseEmailTemplateURL *string `json:"responseEmailTemplateUrl,omitempty"`
 	ResponseEmailSubject     *string `json:"responseEmailSubject,omitempty"`
 
+	// Campaign email (bulk outreach to form registrants)
+	CampaignEmailEnabled     *bool   `json:"campaignEmailEnabled,omitempty"`
+	CampaignEmailTemplateID  *string `json:"campaignEmailTemplateId,omitempty"`
+	CampaignEmailTemplateKey *string `json:"campaignEmailTemplateKey,omitempty"`
+	CampaignEmailTemplateURL *string `json:"campaignEmailTemplateUrl,omitempty"`
+	CampaignEmailSubject     *string `json:"campaignEmailSubject,omitempty"`
+
 	// Submission routing (optional): send submissions into workforce/members tables.
 	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|workforce_new|workforce_serving|member
 	SubmissionDepartment *string `json:"submissionDepartment,omitempty"` // default department for workforce
@@ -130,6 +137,56 @@ type UpdateFormRequest struct {
 
 type SubmitFormRequest struct {
 	Values map[string]any `json:"values" binding:"required"`
+}
+
+type FormCampaignEmailCTA struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+type FormCampaignEmailHighlight struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type SendFormCampaignEmailRequest struct {
+	Subject              *string                       `json:"subject,omitempty"`
+	Title                *string                       `json:"title,omitempty"`
+	PreviewText          *string                       `json:"previewText,omitempty"`
+	HeroEyebrow          *string                       `json:"heroEyebrow,omitempty"`
+	HeroTitle            *string                       `json:"heroTitle,omitempty"`
+	HeroSubtitle         *string                       `json:"heroSubtitle,omitempty"`
+	HTMLBody             *string                       `json:"htmlBody,omitempty"`
+	TextBody             *string                       `json:"textBody,omitempty"`
+	IntroHTML            *string                       `json:"introHtml,omitempty"`
+	BodyHTML             *string                       `json:"bodyHtml,omitempty"`
+	ClosingHTML          *string                       `json:"closingHtml,omitempty"`
+	HeroImageURL         *string                       `json:"heroImageUrl,omitempty"`
+	FlyerImageURLs       *[]string                     `json:"flyerImageUrls,omitempty"`
+	PrimaryCTA           *FormCampaignEmailCTA         `json:"primaryCta,omitempty"`
+	SecondaryCTA         *FormCampaignEmailCTA         `json:"secondaryCta,omitempty"`
+	Highlights           *[]FormCampaignEmailHighlight `json:"highlights,omitempty"`
+	FooterNote           *string                       `json:"footerNote,omitempty"`
+	IncludeCalendarLinks *bool                         `json:"includeCalendarLinks,omitempty"`
+	TemplateID           *string                       `json:"templateId,omitempty"`
+	TemplateKey          *string                       `json:"templateKey,omitempty"`
+}
+
+type SendFormCampaignEmailResponse struct {
+	FormID           string   `json:"formId"`
+	FormTitle        string   `json:"formTitle"`
+	EventTitle       *string  `json:"eventTitle,omitempty"`
+	Subject          string   `json:"subject"`
+	TemplateSource   string   `json:"templateSource"`
+	TotalRecipients  int      `json:"totalRecipients"`
+	Targeted         int      `json:"targeted"`
+	Sent             int      `json:"sent"`
+	Skipped          int      `json:"skipped"`
+	Failed           int      `json:"failed"`
+	FailedRecipients []string `json:"failedRecipients,omitempty"`
+	StartedAt        string   `json:"startedAt"`
+	CompletedAt      string   `json:"completedAt"`
+	SentAt           string   `json:"sentAt"`
 }
 
 type PublicFormPayload struct {

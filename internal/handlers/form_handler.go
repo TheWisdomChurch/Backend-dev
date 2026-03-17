@@ -180,6 +180,27 @@ func (h *FormHandler) GetFormStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Form stats retrieved", stats)
 }
 
+func (h *FormHandler) SendAdminFormCampaign(c *gin.Context) {
+	formID := c.Param("id")
+
+	var req models.SendFormCampaignEmailRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	resp, err := h.svc.SendFormCampaignEmail(formID, &req)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Form campaign email sent", resp)
+}
+
 func (h *FormHandler) GetPublicForm(c *gin.Context) {
 	slug := c.Param("slug")
 
