@@ -1,8 +1,8 @@
 package service
 
 import (
+	"log"
 	"strings"
-	"time"
 
 	"wisdomHouse-backend/internal/models"
 )
@@ -67,7 +67,9 @@ func (s *formService) syncCampaignReminder(
 	existing.EventStartsAt = startAt.UTC()
 	existing.EventEndsAt = &endCopy
 
-	_ = s.reminderRepo.Update(existing)
+	if err := s.reminderRepo.Update(existing); err != nil {
+		log.Printf("⚠️ failed to sync form campaign reminder (formID=%s, submissionID=%s): %v", form.ID, submission.ID, err)
+	}
 }
 
 func campaignEventTitle(form *models.Form, event *models.Event) string {

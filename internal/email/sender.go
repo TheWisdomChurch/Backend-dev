@@ -151,6 +151,25 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 	return s.sendInternal(to, subject, body, nil)
 }
 
+// SendHTMLText sends a multipart email with text and HTML alternatives.
+func (s *Sender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	htmlBody = strings.TrimSpace(htmlBody)
+	textBody = strings.TrimSpace(textBody)
+	if htmlBody == "" {
+		return fmt.Errorf("html body is required")
+	}
+
+	if textBody == "" {
+		return s.SendHTML(to, subject, htmlBody)
+	}
+
+	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
+		msg.SetBodyString(gomail.TypeTextPlain, textBody)
+		msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+		return nil
+	})
+}
+
 // SendHTMLWithAttachment sends an HTML email with a single attachment (e.g. PDF).
 func (s *Sender) SendHTMLWithAttachment(to, subject, body, attachmentName, contentType string, payload []byte) error {
 	if len(payload) == 0 {
