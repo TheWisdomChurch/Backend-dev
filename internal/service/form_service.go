@@ -3036,6 +3036,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 type formCampaignRequestView struct {
 	Campaign             email.FormCampaignTemplateData
 	IncludeCalendarLinks bool
+	TargetSubmissionIDs  []string
 	TemplateID           string
 	TemplateKey          string
 	Title                string
@@ -3127,6 +3128,22 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 	}
 	if len(submissions) == 0 {
 		return nil, errors.New("no registered users with email found for this form")
+	}
+	if len(normalized.TargetSubmissionIDs) > 0 {
+		targetedIDs := make(map[string]struct{}, len(normalized.TargetSubmissionIDs))
+		for _, id := range normalized.TargetSubmissionIDs {
+			targetedIDs[id] = struct{}{}
+		}
+		filtered := make([]models.FormSubmission, 0, len(normalized.TargetSubmissionIDs))
+		for _, submission := range submissions {
+			if _, ok := targetedIDs[strings.TrimSpace(submission.ID)]; ok {
+				filtered = append(filtered, submission)
+			}
+		}
+		submissions = filtered
+		if len(submissions) == 0 {
+			return nil, errors.New("no selected recipients matched this form")
+		}
 	}
 
 	var event *models.Event
@@ -3396,6 +3413,7 @@ func normalizeFormCampaignRequest(req *models.SendFormCampaignEmailRequest) (*fo
 	if err != nil {
 		return nil, err
 	}
+	targetSubmissionIDs := normalizeFormCampaignSubmissionIDs(req.TargetSubmissionIDs)
 	htmlBody := strings.TrimSpace(valueOrEmpty(req.HTMLBody))
 	textBody := strings.TrimSpace(valueOrEmpty(req.TextBody))
 
@@ -3429,6 +3447,7 @@ func normalizeFormCampaignRequest(req *models.SendFormCampaignEmailRequest) (*fo
 			FooterNote:     footerNote,
 		},
 		IncludeCalendarLinks: includeCalendarLinks,
+		TargetSubmissionIDs:  targetSubmissionIDs,
 		TemplateID:           templateID,
 		TemplateKey:          templateKey,
 		Title:                title,
@@ -3583,6 +3602,26 @@ func normalizeFormCampaignResourceKind(value string) string {
 	default:
 		return "resource"
 	}
+}
+
+func normalizeFormCampaignSubmissionIDs(items *[]string) []string {
+	if items == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(*items))
+	seen := make(map[string]struct{}, len(*items))
+	for _, raw := range *items {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func appendFailedRecipient(existing []string, emailAddr string) []string {

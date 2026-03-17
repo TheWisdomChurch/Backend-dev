@@ -128,6 +128,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.FormSubmission{},
 		&models.FormCalendarReminder{},
 		&models.FormCampaignDelivery{},
+		&models.AdminEmailDelivery{},
 		&models.RegistrationSequence{},
 		&models.Asset{},
 		&models.EmailTemplate{},

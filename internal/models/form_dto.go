@@ -175,6 +175,7 @@ type SendFormCampaignEmailRequest struct {
 	Highlights           *[]FormCampaignEmailHighlight `json:"highlights,omitempty"`
 	ResourceLinks        *[]FormCampaignEmailResource  `json:"resourceLinks,omitempty"`
 	FooterNote           *string                       `json:"footerNote,omitempty"`
+	TargetSubmissionIDs  *[]string                     `json:"targetSubmissionIds,omitempty"`
 	IncludeCalendarLinks *bool                         `json:"includeCalendarLinks,omitempty"`
 	TemplateID           *string                       `json:"templateId,omitempty"`
 	TemplateKey          *string                       `json:"templateKey,omitempty"`
