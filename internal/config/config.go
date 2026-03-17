@@ -226,6 +226,25 @@ func Load() (*Config, error) {
 		smtpTLS = getEnvAsBool("APP_SMTP_TLS", smtpTLS)
 	}
 
+	serverPort := strings.TrimSpace(getEnv("SERVER_PORT", ""))
+	if serverPort == "" {
+		serverPort = strings.TrimSpace(getEnv("API_PORT", ""))
+	}
+	if serverPort == "" {
+		serverPort = strings.TrimSpace(getEnv("PORT", ""))
+	}
+	if serverPort == "" {
+		serverPort = "8080"
+	}
+
+	serverGinMode := strings.TrimSpace(getEnv("SERVER_GIN_MODE", ""))
+	if serverGinMode == "" {
+		serverGinMode = strings.TrimSpace(getEnv("GIN_MODE", ""))
+	}
+	if serverGinMode == "" {
+		serverGinMode = "debug"
+	}
+
 	cfg := &Config{
 		Database: DatabaseConfig{
 			URL:             strings.TrimSpace(getEnv("DATABASE_URL", "")),
@@ -240,8 +259,8 @@ func Load() (*Config, error) {
 			ConnMaxLifetime: getEnvAsDuration("DATABASE_CONN_MAX_LIFETIME", time.Hour),
 		},
 		Server: ServerConfig{
-			Port:           getEnv("SERVER_PORT", "8080"),
-			GinMode:        getEnv("SERVER_GIN_MODE", "debug"),
+			Port:           serverPort,
+			GinMode:        serverGinMode,
 			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),

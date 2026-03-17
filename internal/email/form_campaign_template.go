@@ -16,6 +16,13 @@ type FormCampaignEmailHighlight struct {
 	Value string
 }
 
+type FormCampaignEmailResource struct {
+	Label       string
+	URL         string
+	Description string
+	Kind        string
+}
+
 type FormCampaignTemplateData struct {
 	Branding          Branding
 	Subject           string
@@ -31,6 +38,7 @@ type FormCampaignTemplateData struct {
 	HeroImageURL      string
 	FlyerImageURLs    []string
 	Highlights        []FormCampaignEmailHighlight
+	ResourceLinks     []FormCampaignEmailResource
 	PrimaryCTA        *FormCampaignEmailCTA
 	SecondaryCTA      *FormCampaignEmailCTA
 	EventTitle        string
@@ -56,6 +64,34 @@ var formCampaignHTMLTemplate = template.Must(template.New("form-campaign-email")
 	},
 	"hasText": func(s string) bool {
 		return strings.TrimSpace(s) != ""
+	},
+	"resourceKindLabel": func(kind string) string {
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "flyer":
+			return "Flyer"
+		case "document":
+			return "Document"
+		case "guide":
+			return "Guide"
+		case "schedule":
+			return "Schedule"
+		default:
+			return "Resource"
+		}
+	},
+	"resourceActionLabel": func(kind string) string {
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "flyer":
+			return "Download flyer"
+		case "document":
+			return "Download document"
+		case "guide":
+			return "Open guide"
+		case "schedule":
+			return "Open schedule"
+		default:
+			return "Open resource"
+		}
 	},
 }).Parse(`<!DOCTYPE html>
 <html>
@@ -122,6 +158,20 @@ var formCampaignHTMLTemplate = template.Must(template.New("form-campaign-email")
             {{end}}
             {{if hasText .CalendarICSURL}}
             <a href="{{.CalendarICSURL}}" style="display:inline-block;margin:0 12px 12px 0;padding:13px 18px;background:#1d2939;color:#ffffff;text-decoration:none;border-radius:999px;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:800;border:1px solid #344054;">Download .ics</a>
+            {{end}}
+          </div>
+          {{end}}
+
+          {{if .ResourceLinks}}
+          <div style="margin:28px 0 0;padding:22px;background:#ffffff;border:1px solid #e4e7ec;border-radius:22px;">
+            <div style="margin:0 0 14px;font-family:'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#7a5608;font-weight:800;">Event Resources</div>
+            {{range .ResourceLinks}}
+            <div style="margin:0 0 14px;padding:16px;background:#fff7e8;border:1px solid #e8d7b4;border-radius:16px;">
+              <div style="margin:0 0 8px;font-family:'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#667085;font-weight:800;">{{resourceKindLabel .Kind}}</div>
+              <div style="margin:0 0 8px;font-family:'Segoe UI',Arial,sans-serif;font-size:17px;line-height:1.6;color:#101828;font-weight:800;">{{.Label}}</div>
+              {{if hasText .Description}}<p style="margin:0 0 12px;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;line-height:1.7;color:#475467;">{{.Description}}</p>{{end}}
+              <a href="{{.URL}}" style="display:inline-block;padding:12px 18px;background:#ffffff;color:#101828;text-decoration:none;border-radius:999px;font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:800;border:1px solid #d0d5dd;">{{resourceActionLabel .Kind}}</a>
+            </div>
             {{end}}
           </div>
           {{end}}

@@ -149,6 +149,13 @@ type FormCampaignEmailHighlight struct {
 	Value string `json:"value"`
 }
 
+type FormCampaignEmailResource struct {
+	Label       string  `json:"label"`
+	URL         string  `json:"url"`
+	Description *string `json:"description,omitempty"`
+	Kind        *string `json:"kind,omitempty"`
+}
+
 type SendFormCampaignEmailRequest struct {
 	Subject              *string                       `json:"subject,omitempty"`
 	Title                *string                       `json:"title,omitempty"`
@@ -166,6 +173,7 @@ type SendFormCampaignEmailRequest struct {
 	PrimaryCTA           *FormCampaignEmailCTA         `json:"primaryCta,omitempty"`
 	SecondaryCTA         *FormCampaignEmailCTA         `json:"secondaryCta,omitempty"`
 	Highlights           *[]FormCampaignEmailHighlight `json:"highlights,omitempty"`
+	ResourceLinks        *[]FormCampaignEmailResource  `json:"resourceLinks,omitempty"`
 	FooterNote           *string                       `json:"footerNote,omitempty"`
 	IncludeCalendarLinks *bool                         `json:"includeCalendarLinks,omitempty"`
 	TemplateID           *string                       `json:"templateId,omitempty"`
@@ -173,6 +181,7 @@ type SendFormCampaignEmailRequest struct {
 }
 
 type SendFormCampaignEmailResponse struct {
+	DeliveryID       *string  `json:"deliveryId,omitempty"`
 	FormID           string   `json:"formId"`
 	FormTitle        string   `json:"formTitle"`
 	EventTitle       *string  `json:"eventTitle,omitempty"`
@@ -187,6 +196,32 @@ type SendFormCampaignEmailResponse struct {
 	StartedAt        string   `json:"startedAt"`
 	CompletedAt      string   `json:"completedAt"`
 	SentAt           string   `json:"sentAt"`
+}
+
+type FormCampaignDeliveryHistoryItem struct {
+	ID               string   `json:"id"`
+	FormID           string   `json:"formId"`
+	FormTitle        string   `json:"formTitle"`
+	EventID          *string  `json:"eventId,omitempty"`
+	EventTitle       *string  `json:"eventTitle,omitempty"`
+	Subject          string   `json:"subject"`
+	TemplateSource   string   `json:"templateSource"`
+	TemplateID       *string  `json:"templateId,omitempty"`
+	TemplateKey      *string  `json:"templateKey,omitempty"`
+	Status           string   `json:"status"`
+	TotalRecipients  int      `json:"totalRecipients"`
+	Targeted         int      `json:"targeted"`
+	Sent             int      `json:"sent"`
+	Skipped          int      `json:"skipped"`
+	Failed           int      `json:"failed"`
+	FailedRecipients []string `json:"failedRecipients,omitempty"`
+	StartedAt        string   `json:"startedAt"`
+	CompletedAt      *string  `json:"completedAt,omitempty"`
+	CreatedByUserID  *string  `json:"createdByUserId,omitempty"`
+	CreatedByEmail   *string  `json:"createdByEmail,omitempty"`
+	CreatedByRole    *string  `json:"createdByRole,omitempty"`
+	CreatedAt        string   `json:"createdAt"`
+	UpdatedAt        string   `json:"updatedAt"`
 }
 
 type PublicFormPayload struct {

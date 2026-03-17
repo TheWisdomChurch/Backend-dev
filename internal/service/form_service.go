@@ -32,6 +32,7 @@ import (
 )
 
 var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
+var slugDashCollapseRe = regexp.MustCompile(`-+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
@@ -63,6 +64,7 @@ type FormService interface {
 
 	// Admin submissions
 	ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
+	ListCampaignDeliveries(formID string, page, limit int) ([]models.FormCampaignDeliveryHistoryItem, int64, error)
 	Stats(start, end *time.Time) (*models.FormStatsResponse, error)
 	StatsByForm(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
 	CleanupExpiredForms(now time.Time) (int64, error)
@@ -70,7 +72,7 @@ type FormService interface {
 	ConfirmCalendarOptIn(slug, token string) (*models.FormCalendarPayload, error)
 	BuildCalendarICS(slug, token string) (string, []byte, error)
 	SendEventReminderEmails(now time.Time, lookAhead time.Duration) (int, int, error)
-	SendFormCampaignEmail(formID string, req *models.SendFormCampaignEmailRequest) (*models.SendFormCampaignEmailResponse, error)
+	SendFormCampaignEmail(formID string, req *models.SendFormCampaignEmailRequest, actor *models.FormCampaignSendActor) (*models.SendFormCampaignEmailResponse, error)
 }
 
 type formService struct {
@@ -733,6 +735,58 @@ func (s *formService) ListSubmissions(formID string, page, limit int, start, end
 	}
 	offset := (page - 1) * limit
 	return s.repo.ListSubmissions(formID, offset, limit, start, end)
+}
+
+func (s *formService) ListCampaignDeliveries(formID string, page, limit int) ([]models.FormCampaignDeliveryHistoryItem, int64, error) {
+	if strings.TrimSpace(formID) == "" {
+		return nil, 0, errors.New("form id is required")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+	if _, err := s.repo.GetByID(strings.TrimSpace(formID)); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	rows, total, err := s.repo.ListCampaignDeliveries(strings.TrimSpace(formID), offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]models.FormCampaignDeliveryHistoryItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, models.FormCampaignDeliveryHistoryItem{
+			ID:               row.ID,
+			FormID:           row.FormID,
+			FormTitle:        row.FormTitle,
+			EventID:          row.EventID,
+			EventTitle:       row.EventTitle,
+			Subject:          row.Subject,
+			TemplateSource:   row.TemplateSource,
+			TemplateID:       row.TemplateID,
+			TemplateKey:      row.TemplateKey,
+			Status:           string(row.Status),
+			TotalRecipients:  row.TotalRecipients,
+			Targeted:         row.Targeted,
+			Sent:             row.Sent,
+			Skipped:          row.Skipped,
+			Failed:           row.Failed,
+			FailedRecipients: decodeStringListJSON(row.FailedRecipients),
+			StartedAt:        row.StartedAt.UTC().Format(time.RFC3339),
+			CompletedAt:      formatOptionalTimeRFC3339(row.CompletedAt),
+			CreatedByUserID:  row.CreatedByUserID,
+			CreatedByEmail:   row.CreatedByEmail,
+			CreatedByRole:    row.CreatedByRole,
+			CreatedAt:        row.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt:        row.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	return items, total, nil
 }
 
 func (s *formService) reportBrandName() string {
@@ -3000,7 +3054,7 @@ type formCampaignRenderedContent struct {
 	Text string
 }
 
-func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormCampaignEmailRequest) (*models.SendFormCampaignEmailResponse, error) {
+func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormCampaignEmailRequest, actor *models.FormCampaignSendActor) (*models.SendFormCampaignEmailResponse, error) {
 	if s.sender == nil {
 		return nil, errors.New("email sender is not configured")
 	}
@@ -3244,6 +3298,7 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 			"HeroImageURL":      campaignData.HeroImageURL,
 			"FlyerImageURLs":    campaignData.FlyerImageURLs,
 			"Highlights":        campaignData.Highlights,
+			"ResourceLinks":     campaignData.ResourceLinks,
 			"PrimaryCTA":        campaignData.PrimaryCTA,
 			"SecondaryCTA":      campaignData.SecondaryCTA,
 			"FooterNote":        campaignData.FooterNote,
@@ -3273,6 +3328,13 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 	resp.TotalRecipients = resp.Targeted
 	resp.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	resp.SentAt = resp.CompletedAt
+
+	delivery, saveErr := s.saveFormCampaignDelivery(form, event, templateSelection, resp, actor)
+	if saveErr != nil {
+		log.Printf("⚠️ failed to persist form campaign delivery (formID=%s): %v", form.ID, saveErr)
+	} else if delivery != nil {
+		resp.DeliveryID = &delivery.ID
+	}
 
 	return resp, nil
 }
@@ -3330,6 +3392,10 @@ func normalizeFormCampaignRequest(req *models.SendFormCampaignEmailRequest) (*fo
 	if err != nil {
 		return nil, err
 	}
+	resourceLinks, err := normalizeFormCampaignResources(req.ResourceLinks)
+	if err != nil {
+		return nil, err
+	}
 	htmlBody := strings.TrimSpace(valueOrEmpty(req.HTMLBody))
 	textBody := strings.TrimSpace(valueOrEmpty(req.TextBody))
 
@@ -3357,6 +3423,7 @@ func normalizeFormCampaignRequest(req *models.SendFormCampaignEmailRequest) (*fo
 			HeroImageURL:   heroImageURL,
 			FlyerImageURLs: flyerImageURLs,
 			Highlights:     highlights,
+			ResourceLinks:  resourceLinks,
 			PrimaryCTA:     primaryCTA,
 			SecondaryCTA:   secondaryCTA,
 			FooterNote:     footerNote,
@@ -3465,6 +3532,57 @@ func normalizeFormCampaignHighlights(items *[]models.FormCampaignEmailHighlight)
 		})
 	}
 	return highlights, nil
+}
+
+func normalizeFormCampaignResources(items *[]models.FormCampaignEmailResource) ([]email.FormCampaignEmailResource, error) {
+	if items == nil {
+		return nil, nil
+	}
+	resources := make([]email.FormCampaignEmailResource, 0, len(*items))
+	for i, item := range *items {
+		label := strings.TrimSpace(item.Label)
+		urlValue := strings.TrimSpace(item.URL)
+		description := strings.TrimSpace(valueOrEmpty(item.Description))
+		kind := normalizeFormCampaignResourceKind(valueOrEmpty(item.Kind))
+		if label == "" && urlValue == "" && description == "" {
+			continue
+		}
+		if label == "" || urlValue == "" {
+			return nil, fmt.Errorf("resourceLinks[%d] requires both label and url", i)
+		}
+		if utf8.RuneCountInString(label) > 80 {
+			return nil, fmt.Errorf("resourceLinks[%d].label must be 80 characters or fewer", i)
+		}
+		if utf8.RuneCountInString(description) > 200 {
+			return nil, fmt.Errorf("resourceLinks[%d].description must be 200 characters or fewer", i)
+		}
+		normalizedURL, err := normalizeAbsoluteTemplateURL(urlValue)
+		if err != nil {
+			return nil, fmt.Errorf("resourceLinks[%d].url must be a valid absolute URL", i)
+		}
+		resources = append(resources, email.FormCampaignEmailResource{
+			Label:       label,
+			URL:         normalizedURL,
+			Description: description,
+			Kind:        kind,
+		})
+	}
+	return resources, nil
+}
+
+func normalizeFormCampaignResourceKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "flyer":
+		return "flyer"
+	case "document":
+		return "document"
+	case "guide":
+		return "guide"
+	case "schedule":
+		return "schedule"
+	default:
+		return "resource"
+	}
 }
 
 func appendFailedRecipient(existing []string, emailAddr string) []string {
@@ -3628,6 +3746,12 @@ func (s *formService) resolveDefaultFormCampaignTemplate(form *models.Form, sett
 			"forms/"+form.ID+"/campaign",
 		)
 	}
+	if titleKey := normalizeFormCampaignTemplateSegment(form.Title); titleKey != "" {
+		candidates = append(candidates,
+			"forms/"+titleKey+"/campaigns/primary",
+			"forms/"+titleKey+"/campaign",
+		)
+	}
 	if form.Slug != nil {
 		if slug := strings.TrimSpace(*form.Slug); slug != "" {
 			candidates = append(candidates,
@@ -3663,6 +3787,17 @@ func (s *formService) resolveDefaultFormCampaignTemplate(form *models.Form, sett
 		}
 	}
 	return remoteCandidate
+}
+
+func normalizeFormCampaignTemplateSegment(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return ""
+	}
+	value = slugInvalidRe.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	value = slugDashCollapseRe.ReplaceAllString(value, "-")
+	return value
 }
 
 func (s *formService) renderFormCampaignContent(selection *formCampaignTemplateSelection, campaign email.FormCampaignTemplateData, templateData map[string]any) (*formCampaignRenderedContent, error) {
@@ -3733,6 +3868,105 @@ func (s *formService) sendFormCampaignMessage(to, subject string, content *formC
 	}
 
 	return s.sender.SendHTML(to, subject, htmlBody)
+}
+
+func (s *formService) saveFormCampaignDelivery(
+	form *models.Form,
+	event *models.Event,
+	selection *formCampaignTemplateSelection,
+	resp *models.SendFormCampaignEmailResponse,
+	actor *models.FormCampaignSendActor,
+) (*models.FormCampaignDelivery, error) {
+	if form == nil || resp == nil {
+		return nil, errors.New("form campaign delivery payload is incomplete")
+	}
+
+	startedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(resp.StartedAt))
+	if err != nil {
+		return nil, err
+	}
+
+	var completedAt *time.Time
+	if value := strings.TrimSpace(resp.CompletedAt); value != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339, value); parseErr == nil {
+			completedAt = &parsed
+		} else {
+			return nil, parseErr
+		}
+	}
+
+	templateID, templateKey := extractFormCampaignTemplateReference(selection)
+	delivery := &models.FormCampaignDelivery{
+		FormID:           form.ID,
+		FormTitle:        strings.TrimSpace(resp.FormTitle),
+		EventID:          form.EventID,
+		EventTitle:       resp.EventTitle,
+		Subject:          strings.TrimSpace(resp.Subject),
+		TemplateSource:   strings.TrimSpace(resp.TemplateSource),
+		TemplateID:       templateID,
+		TemplateKey:      templateKey,
+		Status:           deriveFormCampaignDeliveryStatus(resp),
+		TotalRecipients:  resp.TotalRecipients,
+		Targeted:         resp.Targeted,
+		Sent:             resp.Sent,
+		Skipped:          resp.Skipped,
+		Failed:           resp.Failed,
+		FailedRecipients: encodeStringListJSON(resp.FailedRecipients),
+		StartedAt:        startedAt.UTC(),
+		CompletedAt:      completedAt,
+	}
+
+	if event != nil && event.ID != "" {
+		delivery.EventID = &event.ID
+	}
+	applyFormCampaignDeliveryActor(delivery, actor)
+
+	if err := s.repo.CreateCampaignDelivery(delivery); err != nil {
+		return nil, err
+	}
+	return delivery, nil
+}
+
+func applyFormCampaignDeliveryActor(delivery *models.FormCampaignDelivery, actor *models.FormCampaignSendActor) {
+	if delivery == nil || actor == nil {
+		return
+	}
+	if value := strings.TrimSpace(actor.UserID); value != "" {
+		delivery.CreatedByUserID = &value
+	}
+	if value := strings.TrimSpace(actor.Email); value != "" {
+		delivery.CreatedByEmail = &value
+	}
+	if value := strings.TrimSpace(actor.Role); value != "" {
+		delivery.CreatedByRole = &value
+	}
+}
+
+func deriveFormCampaignDeliveryStatus(resp *models.SendFormCampaignEmailResponse) models.FormCampaignDeliveryStatus {
+	if resp == nil {
+		return models.FormCampaignDeliveryFailed
+	}
+	switch {
+	case resp.Failed <= 0:
+		return models.FormCampaignDeliveryCompleted
+	case resp.Sent > 0:
+		return models.FormCampaignDeliveryPartial
+	default:
+		return models.FormCampaignDeliveryFailed
+	}
+}
+
+func extractFormCampaignTemplateReference(selection *formCampaignTemplateSelection) (*string, *string) {
+	if selection == nil {
+		return nil, nil
+	}
+	if selection.DBTemplate != nil {
+		return cleanOptionalString(selection.DBTemplate.ID), cleanOptionalString(selection.DBTemplate.TemplateKey)
+	}
+	if selection.RemoteKey != "" {
+		return nil, cleanOptionalString(selection.RemoteKey)
+	}
+	return nil, nil
 }
 
 func (s *formService) getOrCreateCampaignCalendarLinks(
@@ -4243,6 +4477,70 @@ func renderDBTextTemplate(tpl *models.EmailTemplate, data any) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func encodeStringListJSON(items []string) datatypes.JSON {
+	clean := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		clean = append(clean, value)
+	}
+	if len(clean) == 0 {
+		return datatypes.JSON([]byte("[]"))
+	}
+	raw, err := json.Marshal(clean)
+	if err != nil {
+		return datatypes.JSON([]byte("[]"))
+	}
+	return datatypes.JSON(raw)
+}
+
+func decodeStringListJSON(raw datatypes.JSON) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []string{}
+	}
+	var items []string
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return []string{}
+	}
+	clean := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		clean = append(clean, value)
+	}
+	return clean
+}
+
+func formatOptionalTimeRFC3339(value *time.Time) *string {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
+func cleanOptionalString(value string) *string {
+	clean := strings.TrimSpace(value)
+	if clean == "" {
+		return nil
+	}
+	return &clean
 }
 
 func stripHTMLToText(raw string) string {
