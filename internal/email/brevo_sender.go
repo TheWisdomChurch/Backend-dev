@@ -79,10 +79,20 @@ func NewBrevoSender(redisURL, apiKey, fromEmail, fromName, baseURL string) (*Bre
 func (s *BrevoSender) SendHTML(to, subject, body string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.opTimeout)
 	defer cancel()
-	return s.SendHTMLContext(ctx, to, subject, body)
+	return s.SendHTMLTextContext(ctx, to, subject, body, "")
+}
+
+func (s *BrevoSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), s.opTimeout)
+	defer cancel()
+	return s.SendHTMLTextContext(ctx, to, subject, htmlBody, textBody)
 }
 
 func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body string) error {
+	return s.SendHTMLTextContext(ctx, to, subject, body, "")
+}
+
+func (s *BrevoSender) SendHTMLTextContext(ctx context.Context, to, subject, htmlBody, textBody string) error {
 	// Rate limit: max 10/min per recipient
 	if s.redis != nil {
 		key := fmt.Sprintf("email_rate:%s:limit", to)
@@ -105,6 +115,9 @@ func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body str
 	if subject == "" {
 		return fmt.Errorf("subject is required")
 	}
+	if strings.TrimSpace(htmlBody) == "" {
+		return fmt.Errorf("html body is required")
+	}
 
 	type recipient struct {
 		Email string `json:"email"`
@@ -118,6 +131,7 @@ func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body str
 		Sender      sender      `json:"sender"`
 		To          []recipient `json:"to"`
 		Subject     string      `json:"subject"`
+		TextContent string      `json:"textContent,omitempty"`
 		HTMLContent string      `json:"htmlContent"`
 	}
 
@@ -128,7 +142,8 @@ func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body str
 		},
 		To:          []recipient{{Email: to}},
 		Subject:     subject,
-		HTMLContent: body,
+		TextContent: strings.TrimSpace(textBody),
+		HTMLContent: htmlBody,
 	}
 
 	data, err := json.Marshal(payload)

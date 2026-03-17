@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	texttemplate "text/template"
 	"time"
 	"unicode/utf8"
 
@@ -2994,9 +2995,19 @@ type formCampaignTemplateSelection struct {
 	Source     string
 }
 
+type formCampaignRenderedContent struct {
+	HTML string
+	Text string
+}
+
 func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormCampaignEmailRequest) (*models.SendFormCampaignEmailResponse, error) {
 	if s.sender == nil {
 		return nil, errors.New("email sender is not configured")
+	}
+	if senderStatus, ok := s.sender.(interface{ DisabledReason() string }); ok {
+		if reason := strings.TrimSpace(senderStatus.DisabledReason()); reason != "" {
+			return nil, errors.New(reason)
+		}
 	}
 	if strings.TrimSpace(formID) == "" {
 		return nil, errors.New("form id is required")
@@ -3022,9 +3033,15 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 		return nil, err
 	}
 	if templateSelection == nil && strings.TrimSpace(normalized.HTMLBody) != "" {
+		var textBody *string
+		if strings.TrimSpace(normalized.TextBody) != "" {
+			value := normalized.TextBody
+			textBody = &value
+		}
 		templateSelection = &formCampaignTemplateSelection{
 			DBTemplate: &models.EmailTemplate{
 				HTMLBody: normalized.HTMLBody,
+				TextBody: textBody,
 			},
 			Source: "request_html",
 		}
@@ -3171,6 +3188,14 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 		campaignData.GoogleCalendarURL = googleCalendarURL
 		campaignData.CalendarICSURL = calendarICSURL
 
+		campaignTitle := strings.TrimSpace(campaignData.HeroTitle)
+		if campaignTitle == "" {
+			campaignTitle = strings.TrimSpace(normalized.Title)
+		}
+		if campaignTitle == "" {
+			campaignTitle = formTitle
+		}
+
 		subscribeURL := ""
 		unsubscribeURL := ""
 		if strings.TrimSpace(s.branding.PublicURL) != "" {
@@ -3193,6 +3218,8 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 			"Name":              recipient,
 			"FirstName":         firstToken(recipient),
 			"Email":             addr,
+			"CampaignTitle":     campaignTitle,
+			"Title":             campaignTitle,
 			"RegistrationCode":  registrationCode,
 			"FormTitle":         formTitle,
 			"FormURL":           formURL,
@@ -3201,6 +3228,12 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 			"EventDate":         campaignData.EventDate,
 			"EventTime":         campaignData.EventTime,
 			"EventLocation":     campaignData.EventLocation,
+			"HeroEyebrow":       campaignData.HeroEyebrow,
+			"HeroTitle":         campaignData.HeroTitle,
+			"HeroSubtitle":      campaignData.HeroSubtitle,
+			"IntroHTML":         campaignData.IntroHTML,
+			"BodyHTML":          campaignData.BodyHTML,
+			"ClosingHTML":       campaignData.ClosingHTML,
 			"CalendarOptInURL":  calendarOptInURL,
 			"GoogleCalendarURL": googleCalendarURL,
 			"CalendarICSURL":    calendarICSURL,
@@ -3210,10 +3243,14 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 			"PreviewText":       campaignData.PreviewText,
 			"HeroImageURL":      campaignData.HeroImageURL,
 			"FlyerImageURLs":    campaignData.FlyerImageURLs,
+			"Highlights":        campaignData.Highlights,
+			"PrimaryCTA":        campaignData.PrimaryCTA,
+			"SecondaryCTA":      campaignData.SecondaryCTA,
+			"FooterNote":        campaignData.FooterNote,
 			"Year":              time.Now().UTC().Year(),
 		}
 
-		body, err := s.renderFormCampaignBody(templateSelection, campaignData, templateData)
+		content, err := s.renderFormCampaignContent(templateSelection, campaignData, templateData)
 		if err != nil {
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, addr)
@@ -3221,7 +3258,7 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 			continue
 		}
 
-		if err := s.sender.SendHTML(addr, subject, body); err != nil {
+		if err := s.sendFormCampaignMessage(addr, subject, content); err != nil {
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, addr)
 			log.Printf("⚠️ failed to send form campaign email to %s (formID=%s): %v", addr, form.ID, err)
@@ -3579,11 +3616,17 @@ func (s *formService) resolveDefaultFormCampaignTemplate(form *models.Form, sett
 		return nil
 	}
 
-	candidates := make([]string, 0, 4)
+	candidates := make([]string, 0, 6)
 	if settings != nil && settings.CampaignEmailTemplateKey != nil {
 		if key := strings.Trim(strings.TrimSpace(*settings.CampaignEmailTemplateKey), "/"); key != "" {
 			candidates = append(candidates, key)
 		}
+	}
+	if strings.TrimSpace(form.ID) != "" {
+		candidates = append(candidates,
+			"forms/"+form.ID+"/campaigns/primary",
+			"forms/"+form.ID+"/campaign",
+		)
 	}
 	if form.Slug != nil {
 		if slug := strings.TrimSpace(*form.Slug); slug != "" {
@@ -3595,6 +3638,7 @@ func (s *formService) resolveDefaultFormCampaignTemplate(form *models.Form, sett
 	}
 
 	seen := map[string]struct{}{}
+	var remoteCandidate *formCampaignTemplateSelection
 	for _, templateKey := range candidates {
 		if templateKey == "" {
 			continue
@@ -3611,31 +3655,84 @@ func (s *formService) resolveDefaultFormCampaignTemplate(form *models.Form, sett
 				}
 			}
 		}
+		if remoteCandidate == nil && s.tplStore != nil {
+			remoteCandidate = &formCampaignTemplateSelection{
+				RemoteKey: templateKey,
+				Source:    "remote:" + templateKey,
+			}
+		}
 	}
-	return nil
+	return remoteCandidate
 }
 
-func (s *formService) renderFormCampaignBody(selection *formCampaignTemplateSelection, campaign email.FormCampaignTemplateData, templateData map[string]any) (string, error) {
+func (s *formService) renderFormCampaignContent(selection *formCampaignTemplateSelection, campaign email.FormCampaignTemplateData, templateData map[string]any) (*formCampaignRenderedContent, error) {
 	if selection == nil {
-		return email.RenderFormCampaignEmail(campaign), nil
+		htmlBody := email.RenderFormCampaignEmail(campaign)
+		return &formCampaignRenderedContent{
+			HTML: htmlBody,
+			Text: stripHTMLToText(htmlBody),
+		}, nil
 	}
 	if selection.DBTemplate != nil {
-		return renderDBTemplate(selection.DBTemplate, templateData)
+		htmlBody, err := renderDBTemplate(selection.DBTemplate, templateData)
+		if err != nil {
+			return nil, err
+		}
+		textBody, err := renderDBTextTemplate(selection.DBTemplate, templateData)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(textBody) == "" {
+			textBody = stripHTMLToText(htmlBody)
+		}
+		return &formCampaignRenderedContent{
+			HTML: htmlBody,
+			Text: textBody,
+		}, nil
 	}
 	if selection.RemoteKey != "" && s.tplStore != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), s.templateTimeout)
 		defer cancel()
 
-		_, htmlOut, _, err := s.tplStore.RenderWithData(ctx, selection.RemoteKey, templateData)
+		textOut, htmlOut, _, err := s.tplStore.RenderWithData(ctx, selection.RemoteKey, templateData)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if strings.TrimSpace(htmlOut) == "" {
-			return "", errors.New("remote template rendered empty body")
+			return nil, errors.New("remote template rendered empty body")
 		}
-		return htmlOut, nil
+		if strings.TrimSpace(textOut) == "" {
+			textOut = stripHTMLToText(htmlOut)
+		}
+		return &formCampaignRenderedContent{
+			HTML: htmlOut,
+			Text: textOut,
+		}, nil
 	}
-	return email.RenderFormCampaignEmail(campaign), nil
+	htmlBody := email.RenderFormCampaignEmail(campaign)
+	return &formCampaignRenderedContent{
+		HTML: htmlBody,
+		Text: stripHTMLToText(htmlBody),
+	}, nil
+}
+
+func (s *formService) sendFormCampaignMessage(to, subject string, content *formCampaignRenderedContent) error {
+	if content == nil {
+		return errors.New("rendered campaign content is nil")
+	}
+	htmlBody := strings.TrimSpace(content.HTML)
+	if htmlBody == "" {
+		return errors.New("rendered campaign html body is empty")
+	}
+
+	textBody := strings.TrimSpace(content.Text)
+	if sender, ok := s.sender.(interface {
+		SendHTMLText(to, subject, htmlBody, textBody string) error
+	}); ok && textBody != "" {
+		return sender.SendHTMLText(to, subject, htmlBody, textBody)
+	}
+
+	return s.sender.SendHTML(to, subject, htmlBody)
 }
 
 func (s *formService) getOrCreateCampaignCalendarLinks(
@@ -3780,6 +3877,9 @@ func (s *formService) createCalendarReminder(form *models.Form, event *models.Ev
 	}
 
 	if err := s.reminderRepo.Create(item); err != nil {
+		if existing, getErr := s.reminderRepo.GetBySubmissionID(submissionID); getErr == nil && existing != nil {
+			return s.buildCalendarLinksFromReminder(existing)
+		}
 		log.Printf("⚠️ failed to persist calendar reminder (formID=%s, submissionID=%s): %v", form.ID, submissionID, err)
 		return "", "", ""
 	}
@@ -4124,6 +4224,55 @@ func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func renderDBTextTemplate(tpl *models.EmailTemplate, data any) (string, error) {
+	if tpl == nil || tpl.TextBody == nil {
+		return "", nil
+	}
+	raw := strings.TrimSpace(*tpl.TextBody)
+	if raw == "" {
+		return "", nil
+	}
+	t, err := texttemplate.New("db_text").Option("missingkey=error").Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func stripHTMLToText(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.NewReplacer(
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+		"</p>", "\n\n",
+		"</div>", "\n",
+		"</li>", "\n",
+		"&nbsp;", " ",
+	).Replace(trimmed)
+	withoutTags := regexp.MustCompile(`(?s)<[^>]*>`).ReplaceAllString(normalized, "")
+	lines := strings.Split(withoutTags, "\n")
+	clean := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(strings.TrimSpace(line)), " ")
+		if line == "" {
+			if len(clean) == 0 || clean[len(clean)-1] == "" {
+				continue
+			}
+		}
+		clean = append(clean, line)
+	}
+	return strings.TrimSpace(strings.Join(clean, "\n"))
 }
 
 func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {

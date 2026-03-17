@@ -129,6 +129,41 @@ func (s chainedEmailSender) SendHTML(to, subject, body string) error {
 	return nil
 }
 
+func (s chainedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	sendMultipart := func(sender service.EmailSender) error {
+		if sender == nil {
+			return nil
+		}
+		if multipart, ok := sender.(interface {
+			SendHTMLText(to, subject, htmlBody, textBody string) error
+		}); ok {
+			return multipart.SendHTMLText(to, subject, htmlBody, textBody)
+		}
+		return sender.SendHTML(to, subject, htmlBody)
+	}
+
+	if s.primary == nil {
+		if s.fallback != nil {
+			return sendMultipart(s.fallback)
+		}
+		return nil
+	}
+	if err := sendMultipart(s.primary); err != nil {
+		if s.fallback != nil {
+			if s.logger != nil {
+				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
+			}
+			if err2 := sendMultipart(s.fallback); err2 == nil {
+				return nil
+			} else {
+				return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, err2)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
 func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender {
 	if cfg == nil {
 		return noopEmailSender{}
@@ -456,7 +491,15 @@ func startBirthdayScheduler(
 type noopEmailSender struct{}
 
 func (noopEmailSender) SendHTML(string, string, string) error {
-	return nil
+	return errors.New("outbound email sending is disabled or not configured")
+}
+
+func (noopEmailSender) SendHTMLText(string, string, string, string) error {
+	return errors.New("outbound email sending is disabled or not configured")
+}
+
+func (noopEmailSender) DisabledReason() string {
+	return "outbound email sending is disabled or not configured"
 }
 
 // -----------------------------------------------------------------------------
