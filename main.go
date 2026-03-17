@@ -511,6 +511,7 @@ func setupRouter(
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
+	adminEmailHandler *handlers.AdminEmailHandler,
 	uploadHandler *handlers.UploadHandler,
 	assetHandler *handlers.AssetHandler,
 	eventHandler *handlers.EventHandler,
@@ -690,6 +691,8 @@ func setupRouter(
 	admin.GET("/email/templates/:id", emailTemplateRegistryHandler.Get)
 	admin.PUT("/email/templates/:id", emailTemplateRegistryHandler.Update)
 	admin.POST("/email/templates/:id/activate", emailTemplateRegistryHandler.Activate)
+	admin.GET("/email/compose/history", adminEmailHandler.ListComposeHistory)
+	admin.POST("/email/compose/send", adminEmailHandler.SendComposeEmail)
 
 	// Uploads
 	admin.POST("/uploads/images", uploadHandler.UploadImage)
@@ -844,6 +847,7 @@ func main() {
 	formRepo := repository.NewFormRepository(db)
 	formCalendarReminderRepo := repository.NewFormCalendarReminderRepository(db)
 	assetRepo := repository.NewAssetRepository(db)
+	adminEmailDeliveryRepo := repository.NewAdminEmailDeliveryRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -954,6 +958,7 @@ func main() {
 	)
 
 	assetService := service.NewAssetService(assetRepo, assetUploader)
+	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, emailSender, branding)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
@@ -1003,6 +1008,7 @@ func main() {
 		GoogleHostedDomain:           cfg.Auth.GoogleHostedDomain,
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
+	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader)
 	assetHandler := handlers.NewAssetHandler(assetService)
 	eventHandler := handlers.NewEventHandler(
@@ -1062,6 +1068,7 @@ func main() {
 		testimonialHandler,
 		authHandler,
 		adminHandler,
+		adminEmailHandler,
 		uploadHandler,
 		assetHandler,
 		eventHandler,
