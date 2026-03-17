@@ -620,6 +620,7 @@ func setupRouter(
 	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
 	admin.GET("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
 	admin.POST("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
+	admin.POST("/forms/:id/campaigns/send", formHandler.SendAdminFormCampaign)
 
 	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
 	admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS

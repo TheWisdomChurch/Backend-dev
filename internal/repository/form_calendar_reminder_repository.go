@@ -9,6 +9,8 @@ import (
 
 type FormCalendarReminderRepository interface {
 	Create(item *models.FormCalendarReminder) error
+	Update(item *models.FormCalendarReminder) error
+	GetBySubmissionID(submissionID string) (*models.FormCalendarReminder, error)
 	GetBySlugAndToken(slug, token string) (*models.FormCalendarReminder, error)
 	MarkOptedIn(id string, at time.Time) error
 	ListDue(now, until time.Time, limit int) ([]models.FormCalendarReminder, error)
@@ -25,6 +27,20 @@ func NewFormCalendarReminderRepository(db *database.Database) FormCalendarRemind
 
 func (r *formCalendarReminderRepository) Create(item *models.FormCalendarReminder) error {
 	return r.db.DB.Create(item).Error
+}
+
+func (r *formCalendarReminderRepository) Update(item *models.FormCalendarReminder) error {
+	return r.db.DB.Save(item).Error
+}
+
+func (r *formCalendarReminderRepository) GetBySubmissionID(submissionID string) (*models.FormCalendarReminder, error) {
+	var row models.FormCalendarReminder
+	if err := r.db.DB.
+		Where("submission_id = ?", submissionID).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
 
 func (r *formCalendarReminderRepository) GetBySlugAndToken(slug, token string) (*models.FormCalendarReminder, error) {

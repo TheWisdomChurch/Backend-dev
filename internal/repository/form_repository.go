@@ -26,6 +26,7 @@ type FormRepository interface {
 
 	CountSubmissions(formID string) (int64, error)
 	CreateSubmission(sub *models.FormSubmission) error
+	ListEmailSubmissions(formID string) ([]models.FormSubmission, error)
 
 	ListSubmissions(formID string, offset, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
 	ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error)
@@ -181,6 +182,17 @@ func (r *formRepository) CountSubmissions(formID string) (int64, error) {
 
 func (r *formRepository) CreateSubmission(sub *models.FormSubmission) error {
 	return r.db.DB.Create(sub).Error
+}
+
+func (r *formRepository) ListEmailSubmissions(formID string) ([]models.FormSubmission, error) {
+	var items []models.FormSubmission
+	err := r.db.DB.
+		Where("form_id = ?", formID).
+		Where("email IS NOT NULL").
+		Where("TRIM(email) <> ''").
+		Order("created_at DESC").
+		Find(&items).Error
+	return items, err
 }
 
 func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *gorm.DB {
