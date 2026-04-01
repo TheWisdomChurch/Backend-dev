@@ -67,3 +67,50 @@ type AdminEmailDeliveryHistoryItem struct {
 	CreatedAt        string                          `json:"createdAt"`
 	UpdatedAt        string                          `json:"updatedAt"`
 }
+
+type AdminEmailMarketingFormItem struct {
+	FormID           string  `json:"formId"`
+	FormTitle        string  `json:"formTitle"`
+	Status           string  `json:"status"`
+	IsPublished      bool    `json:"isPublished"`
+	PublicURL        *string `json:"publicUrl,omitempty"`
+	PublishedAt      *string `json:"publishedAt,omitempty"`
+	UpdatedAt        string  `json:"updatedAt"`
+	LastSubmissionAt *string `json:"lastSubmissionAt,omitempty"`
+	TotalSubmissions int     `json:"totalSubmissions"`
+	ValidRecipients  int     `json:"validRecipients"`
+	UniqueRecipients int     `json:"uniqueRecipients"`
+}
+
+type AdminEmailMarketingSummary struct {
+	TotalForms          int                             `json:"totalForms"`
+	PublishedForms      int                             `json:"publishedForms"`
+	DraftForms          int                             `json:"draftForms"`
+	TotalSubmissions    int                             `json:"totalSubmissions"`
+	ReachableRecipients int                             `json:"reachableRecipients"`
+	TotalCampaigns      int64                           `json:"totalCampaigns"`
+	TopForms            []AdminEmailMarketingFormItem   `json:"topForms,omitempty"`
+	RecentCampaigns     []AdminEmailDeliveryHistoryItem `json:"recentCampaigns,omitempty"`
+}
+
+type AdminEmailAudienceRecipientSource struct {
+	FormID    string `json:"formId"`
+	FormTitle string `json:"formTitle"`
+}
+
+type AdminEmailAudiencePreviewRecipient struct {
+	Email       string                              `json:"email"`
+	Name        string                              `json:"name,omitempty"`
+	SourceForms []AdminEmailAudienceRecipientSource `json:"sourceForms,omitempty"`
+}
+
+type AdminEmailAudiencePreview struct {
+	Forms            []AdminEmailMarketingFormItem        `json:"forms"`
+	TotalForms       int                                  `json:"totalForms"`
+	TotalSubmissions int                                  `json:"totalSubmissions"`
+	ValidRecipients  int                                  `json:"validRecipients"`
+	UniqueRecipients int                                  `json:"uniqueRecipients"`
+	Skipped          int                                  `json:"skipped"`
+	PreviewCount     int                                  `json:"previewCount"`
+	Recipients       []AdminEmailAudiencePreviewRecipient `json:"recipients"`
+}

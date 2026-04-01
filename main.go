@@ -691,6 +691,9 @@ func setupRouter(
 	admin.GET("/email/templates/:id", emailTemplateRegistryHandler.Get)
 	admin.PUT("/email/templates/:id", emailTemplateRegistryHandler.Update)
 	admin.POST("/email/templates/:id/activate", emailTemplateRegistryHandler.Activate)
+	admin.GET("/email/marketing/summary", adminEmailHandler.GetMarketingSummary)
+	admin.GET("/email/marketing/forms", adminEmailHandler.ListAudienceForms)
+	admin.GET("/email/marketing/audience/preview", adminEmailHandler.PreviewAudience)
 	admin.GET("/email/compose/history", adminEmailHandler.ListComposeHistory)
 	admin.POST("/email/compose/send", adminEmailHandler.SendComposeEmail)
 
