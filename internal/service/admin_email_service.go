@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,9 @@ import (
 type AdminEmailService interface {
 	SendComposeEmail(req *models.SendAdminComposeEmailRequest, actor *models.AdminEmailSendActor) (*models.SendAdminComposeEmailResponse, error)
 	ListDeliveries(page, limit int) ([]models.AdminEmailDeliveryHistoryItem, int64, error)
+	GetMarketingSummary() (*models.AdminEmailMarketingSummary, error)
+	ListAudienceForms(page, limit int) ([]models.AdminEmailMarketingFormItem, int64, error)
+	PreviewAudience(formIDs []string, limit int) (*models.AdminEmailAudiencePreview, error)
 }
 
 type adminEmailService struct {
@@ -51,9 +55,10 @@ type adminComposeRecipient struct {
 }
 
 type adminComposeFormAudience struct {
-	Summary    models.AdminEmailAudienceFormSummary
-	Recipients []adminComposeRecipient
-	Skipped    int
+	Summary          models.AdminEmailAudienceFormSummary
+	Recipients       []adminComposeRecipient
+	Skipped          int
+	LastSubmissionAt *time.Time
 }
 
 func NewAdminEmailService(
@@ -105,36 +110,194 @@ func (s *adminEmailService) ListDeliveries(page, limit int) ([]models.AdminEmail
 		return nil, 0, err
 	}
 
-	items := make([]models.AdminEmailDeliveryHistoryItem, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, models.AdminEmailDeliveryHistoryItem{
-			ID:               row.ID,
-			Subject:          row.Subject,
-			TemplateSource:   row.TemplateSource,
-			TemplateID:       row.TemplateID,
-			TemplateKey:      row.TemplateKey,
-			AudienceSource:   string(row.AudienceSource),
-			ManualRecipients: row.ManualRecipients,
-			FormRecipients:   row.FormRecipients,
-			SourceForms:      decodeAdminEmailSourceFormsJSON(row.SourceForms),
-			Status:           string(row.Status),
-			TotalRecipients:  row.TotalRecipients,
-			Targeted:         row.Targeted,
-			Sent:             row.Sent,
-			Skipped:          row.Skipped,
-			Failed:           row.Failed,
-			FailedRecipients: decodeStringListJSON(row.FailedRecipients),
-			StartedAt:        row.StartedAt.UTC().Format(time.RFC3339),
-			CompletedAt:      formatOptionalTimeRFC3339(row.CompletedAt),
-			CreatedByUserID:  row.CreatedByUserID,
-			CreatedByEmail:   row.CreatedByEmail,
-			CreatedByRole:    row.CreatedByRole,
-			CreatedAt:        row.CreatedAt.UTC().Format(time.RFC3339),
-			UpdatedAt:        row.UpdatedAt.UTC().Format(time.RFC3339),
-		})
+	return mapAdminEmailDeliveryHistoryRows(rows), total, nil
+}
+
+func (s *adminEmailService) GetMarketingSummary() (*models.AdminEmailMarketingSummary, error) {
+	if s.formRepo == nil {
+		return nil, errors.New("form repository is not configured")
+	}
+
+	forms, err := s.listAllForms()
+	if err != nil {
+		return nil, err
+	}
+
+	summary := &models.AdminEmailMarketingSummary{
+		TopForms:        []models.AdminEmailMarketingFormItem{},
+		RecentCampaigns: []models.AdminEmailDeliveryHistoryItem{},
+	}
+	globalRecipients := make(map[string]struct{})
+	topForms := make([]models.AdminEmailMarketingFormItem, 0, len(forms))
+
+	for i := range forms {
+		audience, err := s.resolveFormAudienceByForm(&forms[i])
+		if err != nil {
+			return nil, err
+		}
+
+		item := s.buildMarketingFormItem(&forms[i], audience)
+		topForms = append(topForms, item)
+
+		summary.TotalForms++
+		if forms[i].IsPublished {
+			summary.PublishedForms++
+		} else {
+			summary.DraftForms++
+		}
+		summary.TotalSubmissions += item.TotalSubmissions
+
+		for _, recipient := range audience.Recipients {
+			globalRecipients[recipient.Email] = struct{}{}
+		}
+	}
+
+	summary.ReachableRecipients = len(globalRecipients)
+	sort.Slice(topForms, func(i, j int) bool {
+		if topForms[i].UniqueRecipients != topForms[j].UniqueRecipients {
+			return topForms[i].UniqueRecipients > topForms[j].UniqueRecipients
+		}
+		if topForms[i].TotalSubmissions != topForms[j].TotalSubmissions {
+			return topForms[i].TotalSubmissions > topForms[j].TotalSubmissions
+		}
+		return topForms[i].UpdatedAt > topForms[j].UpdatedAt
+	})
+	if len(topForms) > 6 {
+		topForms = topForms[:6]
+	}
+	summary.TopForms = topForms
+
+	if s.deliveryRepo != nil {
+		rows, total, err := s.deliveryRepo.List(0, 5)
+		if err != nil {
+			return nil, err
+		}
+		summary.TotalCampaigns = total
+		summary.RecentCampaigns = mapAdminEmailDeliveryHistoryRows(rows)
+	}
+
+	return summary, nil
+}
+
+func (s *adminEmailService) ListAudienceForms(page, limit int) ([]models.AdminEmailMarketingFormItem, int64, error) {
+	if s.formRepo == nil {
+		return nil, 0, errors.New("form repository is not configured")
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	forms, total, err := s.formRepo.List((page-1)*limit, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]models.AdminEmailMarketingFormItem, 0, len(forms))
+	for i := range forms {
+		audience, err := s.resolveFormAudienceByForm(&forms[i])
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, s.buildMarketingFormItem(&forms[i], audience))
 	}
 
 	return items, total, nil
+}
+
+func (s *adminEmailService) PreviewAudience(formIDs []string, limit int) (*models.AdminEmailAudiencePreview, error) {
+	if s.formRepo == nil {
+		return nil, errors.New("form repository is not configured")
+	}
+
+	normalizedFormIDs := normalizeAdminComposeFormIDs(&formIDs)
+	if len(normalizedFormIDs) == 0 {
+		return nil, errors.New("select at least one form audience")
+	}
+
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	resp := &models.AdminEmailAudiencePreview{
+		Forms:      make([]models.AdminEmailMarketingFormItem, 0, len(normalizedFormIDs)),
+		Recipients: []models.AdminEmailAudiencePreviewRecipient{},
+	}
+
+	type recipientAggregate struct {
+		item       models.AdminEmailAudiencePreviewRecipient
+		sourceForm map[string]struct{}
+	}
+
+	recipientOrder := make([]string, 0)
+	recipientMap := make(map[string]*recipientAggregate)
+
+	for _, formID := range normalizedFormIDs {
+		form, err := s.formRepo.GetByID(formID)
+		if err != nil {
+			return nil, err
+		}
+
+		audience, err := s.resolveFormAudienceByForm(form)
+		if err != nil {
+			return nil, err
+		}
+
+		resp.Forms = append(resp.Forms, s.buildMarketingFormItem(form, audience))
+		resp.TotalForms++
+		resp.TotalSubmissions += audience.Summary.TotalSubmissions
+		resp.ValidRecipients += audience.Summary.ValidRecipients
+		resp.Skipped += audience.Skipped
+
+		for _, recipient := range audience.Recipients {
+			if existing, ok := recipientMap[recipient.Email]; ok {
+				if existing.item.Name == "" && recipient.Name != "" {
+					existing.item.Name = recipient.Name
+				}
+				if _, seen := existing.sourceForm[form.ID]; !seen {
+					existing.sourceForm[form.ID] = struct{}{}
+					existing.item.SourceForms = append(existing.item.SourceForms, models.AdminEmailAudienceRecipientSource{
+						FormID:    form.ID,
+						FormTitle: strings.TrimSpace(form.Title),
+					})
+					resp.Skipped++
+				}
+				continue
+			}
+
+			recipientMap[recipient.Email] = &recipientAggregate{
+				item: models.AdminEmailAudiencePreviewRecipient{
+					Email: recipient.Email,
+					Name:  recipient.Name,
+					SourceForms: []models.AdminEmailAudienceRecipientSource{
+						{
+							FormID:    form.ID,
+							FormTitle: strings.TrimSpace(form.Title),
+						},
+					},
+				},
+				sourceForm: map[string]struct{}{form.ID: {}},
+			}
+			recipientOrder = append(recipientOrder, recipient.Email)
+		}
+	}
+
+	resp.UniqueRecipients = len(recipientOrder)
+	for i, emailAddr := range recipientOrder {
+		if i >= limit {
+			break
+		}
+		resp.Recipients = append(resp.Recipients, recipientMap[emailAddr].item)
+	}
+	resp.PreviewCount = len(resp.Recipients)
+
+	return resp, nil
 }
 
 func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRequest, actor *models.AdminEmailSendActor) (*models.SendAdminComposeEmailResponse, error) {
@@ -456,6 +619,14 @@ func (s *adminEmailService) resolveFormAudience(formID string) (*adminComposeFor
 		return nil, err
 	}
 
+	return s.resolveFormAudienceByForm(form)
+}
+
+func (s *adminEmailService) resolveFormAudienceByForm(form *models.Form) (*adminComposeFormAudience, error) {
+	if form == nil {
+		return nil, errors.New("form not found")
+	}
+
 	submissions, err := s.formRepo.ListEmailSubmissions(form.ID)
 	if err != nil {
 		return nil, err
@@ -490,7 +661,7 @@ func (s *adminEmailService) resolveFormAudience(formID string) (*adminComposeFor
 		})
 	}
 
-	return &adminComposeFormAudience{
+	audience := &adminComposeFormAudience{
 		Summary: models.AdminEmailAudienceFormSummary{
 			FormID:           form.ID,
 			FormTitle:        strings.TrimSpace(form.Title),
@@ -500,7 +671,98 @@ func (s *adminEmailService) resolveFormAudience(formID string) (*adminComposeFor
 		},
 		Recipients: recipients,
 		Skipped:    skipped,
-	}, nil
+	}
+	if len(submissions) > 0 {
+		lastSubmissionAt := submissions[0].CreatedAt.UTC()
+		audience.LastSubmissionAt = &lastSubmissionAt
+	}
+
+	return audience, nil
+}
+
+func (s *adminEmailService) buildMarketingFormItem(form *models.Form, audience *adminComposeFormAudience) models.AdminEmailMarketingFormItem {
+	item := models.AdminEmailMarketingFormItem{}
+	if form != nil {
+		item.FormID = form.ID
+		item.FormTitle = strings.TrimSpace(form.Title)
+		item.Status = string(form.Status)
+		item.IsPublished = form.IsPublished
+		item.PublicURL = buildAdminEmailFormPublicURL(s.branding, form.Slug)
+		item.UpdatedAt = form.UpdatedAt.UTC().Format(time.RFC3339)
+		item.PublishedAt = formatOptionalTimeRFC3339(form.PublishedAt)
+	}
+	if audience != nil {
+		item.TotalSubmissions = audience.Summary.TotalSubmissions
+		item.ValidRecipients = audience.Summary.ValidRecipients
+		item.UniqueRecipients = audience.Summary.UniqueRecipients
+		item.LastSubmissionAt = formatOptionalTimeRFC3339(audience.LastSubmissionAt)
+	}
+	return item
+}
+
+func (s *adminEmailService) listAllForms() ([]models.Form, error) {
+	if s.formRepo == nil {
+		return nil, errors.New("form repository is not configured")
+	}
+
+	all := make([]models.Form, 0)
+	offset := 0
+	limit := 100
+	for {
+		items, total, err := s.formRepo.List(offset, limit)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+		offset += len(items)
+		if len(items) == 0 || int64(offset) >= total {
+			break
+		}
+	}
+
+	return all, nil
+}
+
+func buildAdminEmailFormPublicURL(branding email.Branding, slug *string) *string {
+	base := strings.TrimRight(strings.TrimSpace(branding.PublicURL), "/")
+	value := strings.Trim(strings.TrimSpace(valueOrEmpty(slug)), "/")
+	if base == "" || value == "" {
+		return nil
+	}
+	publicURL := base + "/forms/" + url.PathEscape(value)
+	return &publicURL
+}
+
+func mapAdminEmailDeliveryHistoryRows(rows []models.AdminEmailDelivery) []models.AdminEmailDeliveryHistoryItem {
+	items := make([]models.AdminEmailDeliveryHistoryItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, models.AdminEmailDeliveryHistoryItem{
+			ID:               row.ID,
+			Subject:          row.Subject,
+			TemplateSource:   row.TemplateSource,
+			TemplateID:       row.TemplateID,
+			TemplateKey:      row.TemplateKey,
+			AudienceSource:   string(row.AudienceSource),
+			ManualRecipients: row.ManualRecipients,
+			FormRecipients:   row.FormRecipients,
+			SourceForms:      decodeAdminEmailSourceFormsJSON(row.SourceForms),
+			Status:           string(row.Status),
+			TotalRecipients:  row.TotalRecipients,
+			Targeted:         row.Targeted,
+			Sent:             row.Sent,
+			Skipped:          row.Skipped,
+			Failed:           row.Failed,
+			FailedRecipients: decodeStringListJSON(row.FailedRecipients),
+			StartedAt:        row.StartedAt.UTC().Format(time.RFC3339),
+			CompletedAt:      formatOptionalTimeRFC3339(row.CompletedAt),
+			CreatedByUserID:  row.CreatedByUserID,
+			CreatedByEmail:   row.CreatedByEmail,
+			CreatedByRole:    row.CreatedByRole,
+			CreatedAt:        row.CreatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt:        row.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return items
 }
 
 func deriveAdminEmailAudienceSource(manualCount, formCount int) models.AdminEmailAudienceSource {
