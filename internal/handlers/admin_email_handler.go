@@ -55,6 +55,74 @@ func (h *AdminEmailHandler) ListComposeHistory(c *gin.Context) {
 	})
 }
 
+func (h *AdminEmailHandler) GetMarketingSummary(c *gin.Context) {
+	resp, err := h.svc.GetMarketingSummary()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load email marketing summary")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Email marketing summary loaded", resp)
+}
+
+func (h *AdminEmailHandler) ListAudienceForms(c *gin.Context) {
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "12"), 1, 100)
+
+	items, total, err := h.svc.ListAudienceForms(page, limit)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form audiences")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Form audiences loaded", gin.H{
+		"data":       items,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
+func (h *AdminEmailHandler) PreviewAudience(c *gin.Context) {
+	limit := parseIntClamp(c.DefaultQuery("limit", "25"), 1, 200)
+	formIDs := parseAdminEmailFormIDsQuery(c)
+
+	resp, err := h.svc.PreviewAudience(formIDs, limit)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Audience preview loaded", resp)
+}
+
+func parseAdminEmailFormIDsQuery(c *gin.Context) []string {
+	if c == nil {
+		return nil
+	}
+
+	rawValues := append([]string{}, c.QueryArray("formIds")...)
+	if csv := strings.TrimSpace(c.Query("formIds")); csv != "" {
+		rawValues = append(rawValues, strings.Split(csv, ",")...)
+	}
+
+	formIDs := make([]string, 0, len(rawValues))
+	seen := make(map[string]struct{}, len(rawValues))
+	for _, raw := range rawValues {
+		formID := strings.TrimSpace(raw)
+		if formID == "" {
+			continue
+		}
+		if _, exists := seen[formID]; exists {
+			continue
+		}
+		seen[formID] = struct{}{}
+		formIDs = append(formIDs, formID)
+	}
+	return formIDs
+}
+
 func buildAdminEmailActor(c *gin.Context) *models.AdminEmailSendActor {
 	if c == nil {
 		return nil
