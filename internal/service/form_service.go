@@ -83,13 +83,14 @@ type formService struct {
 	// So keep it as a pointer and nil-check works.
 	eventRepo *repository.EventRepository
 
-	sequenceRepo *repository.RegistrationSequenceRepository
-	reminderRepo repository.FormCalendarReminderRepository
-	templateRepo repository.EmailTemplateRepository
-	workforceSvc WorkforceService
-	memberSvc    MemberService
-	sender       EmailSender
-	branding     email.Branding
+	sequenceRepo  *repository.RegistrationSequenceRepository
+	reminderRepo  repository.FormCalendarReminderRepository
+	templateRepo  repository.EmailTemplateRepository
+	workforceSvc  WorkforceService
+	memberSvc     MemberService
+	leadershipSvc LeadershipService
+	sender        EmailSender
+	branding      email.Branding
 
 	publicBaseURL   string
 	tplStore        *email.TemplateStore
@@ -104,6 +105,7 @@ func NewFormService(
 	templateRepo repository.EmailTemplateRepository,
 	workforceSvc WorkforceService,
 	memberSvc MemberService,
+	leadershipSvc LeadershipService,
 	sender EmailSender,
 	branding email.Branding,
 	publicBaseURL string,
@@ -130,6 +132,7 @@ func NewFormService(
 		templateRepo:    templateRepo,
 		workforceSvc:    workforceSvc,
 		memberSvc:       memberSvc,
+		leadershipSvc:   leadershipSvc,
 		sender:          sender,
 		branding:        branding,
 		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
@@ -1449,10 +1452,10 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		switch target {
 		case "", "none":
 			s.SubmissionTarget = nil
-		case "workforce", "workforce_new", "workforce_serving", "member":
+		case "workforce", "workforce_new", "workforce_serving", "member", "leadership":
 			s.SubmissionTarget = &target
 		default:
-			return nil, fmt.Errorf("submissionTarget must be workforce, workforce_new, workforce_serving, or member")
+			return nil, fmt.Errorf("submissionTarget must be workforce, workforce_new, workforce_serving, member, or leadership")
 		}
 	}
 	if s.SubmissionDepartment, err = normalizeText("submissionDepartment", s.SubmissionDepartment, 120); err != nil {
@@ -4650,6 +4653,16 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		}
 		_, err = s.memberSvc.Create(req)
 		return err
+	case "leadership":
+		if s.leadershipSvc == nil {
+			return errors.New("leadership service not configured")
+		}
+		req, err := buildLeadershipRequest(values)
+		if err != nil {
+			return err
+		}
+		_, err = s.leadershipSvc.Apply(req)
+		return err
 	default:
 		return nil
 	}
@@ -4743,6 +4756,66 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 		b := strings.TrimSpace(birthday)
 		req.Birthday = &b
 	}
+	return req, nil
+}
+
+func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequest, error) {
+	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
+	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
+	if first == "" || last == "" {
+		full := valueAsString(values, "fullName", "full_name", "name")
+		if full != "" {
+			f, l := splitName(full)
+			if first == "" {
+				first = f
+			}
+			if last == "" {
+				last = l
+			}
+		}
+	}
+	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" {
+		return nil, errors.New("missing required leadership fields")
+	}
+
+	roleRaw := strings.ToLower(strings.TrimSpace(valueAsString(values, "role", "leadershipRole", "leadership_role", "leadershipCategory")))
+	role := models.LeadershipRoleAssociatePastor
+	switch models.LeadershipRole(roleRaw) {
+	case models.LeadershipRoleSeniorPastor, models.LeadershipRoleAssociatePastor, models.LeadershipRoleDeacon, models.LeadershipRoleDeaconess, models.LeadershipRoleReverend:
+		role = models.LeadershipRole(roleRaw)
+	}
+
+	emailAddr := valueAsString(values, "email", "contactEmail")
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
+	bio := valueAsString(values, "bio", "notes", "note", "comment", "message", "about")
+	imageURL := valueAsString(values, "imageUrl", "image", "profileImage", "profile_image")
+	birthday := valueAsString(values, "birthday", "birthDate", "dob")
+	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "anniversaryDate")
+
+	req := &models.CreateLeadershipRequest{
+		FirstName: strings.TrimSpace(first),
+		LastName:  strings.TrimSpace(last),
+		Email:     strings.TrimSpace(emailAddr),
+		Phone:     strings.TrimSpace(phone),
+		Role:      role,
+	}
+	if strings.TrimSpace(bio) != "" {
+		clean := strings.TrimSpace(bio)
+		req.Bio = &clean
+	}
+	if strings.TrimSpace(imageURL) != "" {
+		clean := strings.TrimSpace(imageURL)
+		req.ImageURL = &clean
+	}
+	if strings.TrimSpace(birthday) != "" {
+		clean := strings.TrimSpace(birthday)
+		req.Birthday = &clean
+	}
+	if strings.TrimSpace(anniversary) != "" {
+		clean := strings.TrimSpace(anniversary)
+		req.Anniversary = &clean
+	}
+
 	return req, nil
 }
 

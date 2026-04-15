@@ -71,6 +71,25 @@ As church leadership, I can retrieve actionable intelligence based on real platf
   - Endpoint returns metrics + recommendations.
   - Insight results are cached in Redis for efficient repeated access.
 
+### 7. Enterprise Store Operations
+As an admin, I can manage products, stock levels, and order lifecycle from backend APIs while the public storefront remains read-only and stock-aware.
+- Backend endpoints:
+  - Public: `/api/v1/store/products`, `/api/v1/store/orders`, `/api/v1/store/orders/:orderId`
+  - Admin: `/api/v1/admin/store/products*`, `/api/v1/admin/store/orders*`
+- Acceptance:
+  - Product CRUD and activation/deactivation are admin-only.
+  - Stock updates are persisted server-side.
+  - Order creation performs transactional stock checks/decrements.
+  - Out-of-stock products cannot be ordered.
+
+### 8. Forms-to-Operations Pipeline
+As an admin, I can create any form type (including leadership forms), collect responses, and use the data for operations and communication workflows.
+- Backend endpoints: `/api/v1/admin/forms*`, `/api/v1/forms/:slug*`, `/api/v1/admin/forms/:id/submissions*`
+- Acceptance:
+  - Form definitions and submissions are backend-owned.
+  - Submission stats and exports are available for leadership decisions.
+  - Form audiences can feed admin communication workflows.
+
 ## Decision Algorithm (v1)
 The backend computes a `DecisionReadinessScore` using weighted operational signals:
 - 35% submission momentum
