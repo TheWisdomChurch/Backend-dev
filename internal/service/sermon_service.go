@@ -50,12 +50,12 @@ func (s *sermonService) List(filter SermonFilter) ([]models.SermonVideo, error) 
 	}
 
 	searchURL := "https://www.googleapis.com/youtube/v3/search?" + url.Values{
-		"part":      []string{"snippet"},
-		"type":      []string{"video"},
-		"channelId": []string{channelID},
+		"part":       []string{"snippet"},
+		"type":       []string{"video"},
+		"channelId":  []string{channelID},
 		"maxResults": []string{fmt.Sprintf("%d", limit)},
-		"order":     []string{"date"},
-		"key":       []string{apiKey},
+		"order":      []string{"date"},
+		"key":        []string{apiKey},
 	}.Encode()
 
 	searchResp, err := s.httpClient.Get(searchURL)
@@ -121,7 +121,7 @@ func (s *sermonService) List(filter SermonFilter) ([]models.SermonVideo, error) 
 
 	var detailsPayload struct {
 		Items []struct {
-			ID            string `json:"id"`
+			ID             string `json:"id"`
 			ContentDetails struct {
 				Duration string `json:"duration"`
 			} `json:"contentDetails"`
@@ -319,4 +319,3 @@ func zeroIfEmpty(v string) string {
 	}
 	return strings.TrimSpace(v)
 }
-

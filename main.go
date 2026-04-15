@@ -530,6 +530,7 @@ func setupRouter(
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
 	sermonHandler *handlers.SermonHandler,
 	storeHandler *handlers.StoreHandler,
+	givingHandler *handlers.GivingHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -639,6 +640,7 @@ func setupRouter(
 	api.GET("/store/products", storeHandler.ListProducts)
 	api.POST("/store/orders", storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
+	api.GET("/giving/options", givingHandler.ListOptions)
 
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
@@ -1085,6 +1087,7 @@ func main() {
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
 	sermonHandler := handlers.NewSermonHandler(sermonService)
 	storeHandler := handlers.NewStoreHandler(storeService)
+	givingHandler := handlers.NewGivingHandler()
 
 	// -------------------------------------------------------------------------
 	// Background jobs
@@ -1141,6 +1144,7 @@ func main() {
 		emailTemplateRegistryHandler,
 		sermonHandler,
 		storeHandler,
+		givingHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {

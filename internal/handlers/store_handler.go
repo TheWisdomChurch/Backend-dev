@@ -62,14 +62,14 @@ func mapOrderResponse(order *models.StoreOrder) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"orderId":      order.OrderID,
-		"orderDate":    order.CreatedAt,
-		"status":       order.Status,
+		"orderId":       order.OrderID,
+		"orderDate":     order.CreatedAt,
+		"status":        order.Status,
 		"paymentMethod": order.PaymentMethod,
-		"subtotal":     order.Subtotal,
-		"deliveryFee":  order.DeliveryFee,
-		"total":        order.Total,
-		"items":        order.Items,
+		"subtotal":      order.Subtotal,
+		"deliveryFee":   order.DeliveryFee,
+		"total":         order.Total,
+		"items":         order.Items,
 		"customer": gin.H{
 			"firstName": order.CustomerFirstName,
 			"lastName":  order.CustomerLastName,

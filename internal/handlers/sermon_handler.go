@@ -32,4 +32,3 @@ func (h *SermonHandler) List(c *gin.Context) {
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Sermons loaded", items)
 }
-
