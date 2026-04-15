@@ -11,13 +11,13 @@ import (
 )
 
 type CreateStoreOrderRequest struct {
-	OrderID       string `json:"orderId"`
-	Subtotal      float64 `json:"subtotal"`
-	DeliveryFee   float64 `json:"deliveryFee"`
-	Total         float64 `json:"total"`
-	PaymentMethod string  `json:"paymentMethod"`
-	Items         []CreateStoreOrderItem `json:"items"`
-	Customer      CreateStoreOrderCustomer `json:"customer"`
+	OrderID       string                       `json:"orderId"`
+	Subtotal      float64                      `json:"subtotal"`
+	DeliveryFee   float64                      `json:"deliveryFee"`
+	Total         float64                      `json:"total"`
+	PaymentMethod string                       `json:"paymentMethod"`
+	Items         []CreateStoreOrderItem       `json:"items"`
+	Customer      CreateStoreOrderCustomer     `json:"customer"`
 	BankDetails   *CreateStoreOrderBankDetails `json:"bankDetails,omitempty"`
 }
 
@@ -85,20 +85,20 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 	}
 
 	order := &models.StoreOrder{
-		OrderID:            strings.TrimSpace(req.OrderID),
-		Status:             "pending",
-		Subtotal:           req.Subtotal,
-		DeliveryFee:        req.DeliveryFee,
-		Total:              req.Total,
-		PaymentMethod:      strings.TrimSpace(req.PaymentMethod),
-		CustomerFirstName:  strings.TrimSpace(req.Customer.FirstName),
-		CustomerLastName:   strings.TrimSpace(req.Customer.LastName),
-		CustomerEmail:      strings.TrimSpace(strings.ToLower(req.Customer.Email)),
-		CustomerPhone:      strings.TrimSpace(req.Customer.Phone),
-		CustomerAddress:    strPtrOrNil(req.Customer.Address),
-		CustomerCity:       strPtrOrNil(req.Customer.City),
-		CustomerState:      strPtrOrNil(req.Customer.State),
-		CustomerZipCode:    strPtrOrNil(req.Customer.ZipCode),
+		OrderID:             strings.TrimSpace(req.OrderID),
+		Status:              "pending",
+		Subtotal:            req.Subtotal,
+		DeliveryFee:         req.DeliveryFee,
+		Total:               req.Total,
+		PaymentMethod:       strings.TrimSpace(req.PaymentMethod),
+		CustomerFirstName:   strings.TrimSpace(req.Customer.FirstName),
+		CustomerLastName:    strings.TrimSpace(req.Customer.LastName),
+		CustomerEmail:       strings.TrimSpace(strings.ToLower(req.Customer.Email)),
+		CustomerPhone:       strings.TrimSpace(req.Customer.Phone),
+		CustomerAddress:     strPtrOrNil(req.Customer.Address),
+		CustomerCity:        strPtrOrNil(req.Customer.City),
+		CustomerState:       strPtrOrNil(req.Customer.State),
+		CustomerZipCode:     strPtrOrNil(req.Customer.ZipCode),
 		CustomerAccountName: nil,
 		CustomerBankName:    nil,
 	}
@@ -195,4 +195,3 @@ func strPtrOrNil(v string) *string {
 	}
 	return &trimmed
 }
-

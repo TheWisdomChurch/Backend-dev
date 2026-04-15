@@ -70,4 +70,3 @@ func (r *storeRepository) GetOrderByOrderID(orderID string) (*models.StoreOrder,
 	}
 	return &order, nil
 }
-
