@@ -7,13 +7,13 @@ import (
 )
 
 type StoreProduct struct {
-	ID            uint   `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name          string `gorm:"size:200;not null" json:"name"`
-	Category      string `gorm:"size:80;index;not null" json:"category"`
-	Price         string `gorm:"size:40;not null" json:"price"`
-	OriginalPrice *string `gorm:"size:40" json:"originalPrice,omitempty"`
-	Image         string `gorm:"type:text;not null" json:"image"`
-	Description   string `gorm:"type:text;not null" json:"description"`
+	ID            uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name          string         `gorm:"size:200;not null" json:"name"`
+	Category      string         `gorm:"size:80;index;not null" json:"category"`
+	Price         string         `gorm:"size:40;not null" json:"price"`
+	OriginalPrice *string        `gorm:"size:40" json:"originalPrice,omitempty"`
+	Image         string         `gorm:"type:text;not null" json:"image"`
+	Description   string         `gorm:"type:text;not null" json:"description"`
 	Sizes         datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"sizes"`
 	Colors        datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"colors"`
 	Tags          datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"tags"`
@@ -28,9 +28,9 @@ func (StoreProduct) TableName() string {
 }
 
 type StoreOrder struct {
-	ID       string `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	OrderID  string `gorm:"size:120;uniqueIndex;not null" json:"orderId"`
-	Status   string `gorm:"size:30;not null;default:'pending'" json:"status"`
+	ID      string `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	OrderID string `gorm:"size:120;uniqueIndex;not null" json:"orderId"`
+	Status  string `gorm:"size:30;not null;default:'pending'" json:"status"`
 
 	Subtotal    float64 `gorm:"not null;default:0" json:"subtotal"`
 	DeliveryFee float64 `gorm:"not null;default:0" json:"deliveryFee"`
@@ -38,10 +38,10 @@ type StoreOrder struct {
 
 	PaymentMethod string `gorm:"size:40;not null" json:"paymentMethod"`
 
-	CustomerFirstName string `gorm:"size:120;not null" json:"-"`
-	CustomerLastName  string `gorm:"size:120;not null" json:"-"`
-	CustomerEmail     string `gorm:"size:255;index;not null" json:"-"`
-	CustomerPhone     string `gorm:"size:64;not null" json:"-"`
+	CustomerFirstName string  `gorm:"size:120;not null" json:"-"`
+	CustomerLastName  string  `gorm:"size:120;not null" json:"-"`
+	CustomerEmail     string  `gorm:"size:255;index;not null" json:"-"`
+	CustomerPhone     string  `gorm:"size:64;not null" json:"-"`
 	CustomerAddress   *string `gorm:"type:text" json:"-"`
 	CustomerCity      *string `gorm:"size:120" json:"-"`
 	CustomerState     *string `gorm:"size:120" json:"-"`
