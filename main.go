@@ -886,6 +886,7 @@ func main() {
 	memberRepo := repository.NewMemberRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
+	storeRepo := repository.NewStoreRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache client (optional)
@@ -1036,6 +1037,8 @@ func main() {
 		emailSender,
 		branding,
 	)
+	storeService := service.NewStoreService(storeRepo)
+	sermonService := service.NewSermonService()
 
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
@@ -1080,6 +1083,8 @@ func main() {
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
+	sermonHandler := handlers.NewSermonHandler(sermonService)
+	storeHandler := handlers.NewStoreHandler(storeService)
 
 	// -------------------------------------------------------------------------
 	// Background jobs
@@ -1134,6 +1139,8 @@ func main() {
 		memberHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
+		sermonHandler,
+		storeHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
