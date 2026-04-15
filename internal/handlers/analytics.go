@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -104,4 +105,65 @@ func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Decision insights retrieved successfully", insights)
+}
+
+func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
+	var req struct {
+		BatchID string `json:"batchId"`
+		Events  []struct {
+			ID        string `json:"id"`
+			Category  string `json:"category"`
+			Action    string `json:"action"`
+			Timestamp int64  `json:"timestamp"`
+		} `json:"events"`
+		Session struct {
+			SessionID string `json:"sessionId"`
+			UserID    string `json:"userId"`
+		} `json:"session"`
+		UserProfile struct {
+			UserID string `json:"userId"`
+		} `json:"userProfile"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid analytics payload")
+		return
+	}
+	if req.BatchID == "" || len(req.Events) == 0 || req.Session.SessionID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "batchId, session.sessionId and events are required")
+		return
+	}
+
+	userID := req.UserProfile.UserID
+	if userID == "" {
+		userID = req.Session.UserID
+	}
+	userIDPtr := func() *string {
+		if userID == "" {
+			return nil
+		}
+		out := userID
+		return &out
+	}()
+
+	rawPayload, _ := json.Marshal(req)
+
+	record := models.AnalyticsBatch{
+		BatchID:    req.BatchID,
+		SessionID:  req.Session.SessionID,
+		UserID:     userIDPtr,
+		EventCount: len(req.Events),
+		Payload:    rawPayload,
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	if err := h.db.WithContext(ctx).Create(&record).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to persist analytics events")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Analytics events ingested", gin.H{
+		"batchId":         req.BatchID,
+		"eventsProcessed": len(req.Events),
+	})
 }

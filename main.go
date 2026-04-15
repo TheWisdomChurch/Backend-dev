@@ -528,6 +528,8 @@ func setupRouter(
 	memberHandler *handlers.MemberHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
+	sermonHandler *handlers.SermonHandler,
+	storeHandler *handlers.StoreHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -624,12 +626,19 @@ func setupRouter(
 	api.GET("/events", eventHandler.List)
 	api.GET("/events/:id", eventHandler.Get)
 	api.GET("/reels", reelHandler.List)
+	api.GET("/sermons", sermonHandler.List)
+	api.POST("/analytics/events", analyticsHandler.IngestEvents)
 
 	// Notifications (newsletter-style)
 	api.POST("/notifications/subscribe", notificationHandler.Subscribe)
 	api.GET("/notifications/subscribe", notificationHandler.SubscribeByLink)
 	api.POST("/notifications/unsubscribe", notificationHandler.Unsubscribe)
 	api.GET("/notifications/unsubscribe", notificationHandler.UnsubscribeByLink)
+
+	// Public store APIs (backend-driven)
+	api.GET("/store/products", storeHandler.ListProducts)
+	api.POST("/store/orders", storeHandler.CreateOrder)
+	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
 
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
