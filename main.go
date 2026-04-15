@@ -565,6 +565,7 @@ func setupRouter(
 	// AUTH
 	auth := api.Group("/auth")
 	auth.Use(middleware.DeviceFingerprint(secure))
+	auth.Use(middleware.NoStore())
 	loginRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
 		RequestsPerMinute: cfg.RateLimit.Auth.RequestsPerMinute,
 		Burst:             cfg.RateLimit.Auth.Burst,
@@ -610,8 +611,8 @@ func setupRouter(
 		Prefix:            "rl:otp",
 		Message:           "Too many OTP requests. Please wait before trying again.",
 	})
-	api.POST("/otp/send", otpRateLimiter, otpHandler.SendOTP)
-	api.POST("/otp/verify", otpRateLimiter, otpHandler.VerifyOTP)
+	api.POST("/otp/send", middleware.NoStore(), otpRateLimiter, otpHandler.SendOTP)
+	api.POST("/otp/verify", middleware.NoStore(), otpRateLimiter, otpHandler.VerifyOTP)
 
 	// Public testimonials
 	api.GET("/testimonials", testimonialHandler.GetPaginatedTestimonials)
