@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -26,6 +28,87 @@ func (h *StoreHandler) ListProducts(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Products loaded", items)
+}
+
+func (h *StoreHandler) ListProductsAdmin(c *gin.Context) {
+	includeInactive := strings.EqualFold(c.DefaultQuery("includeInactive", "false"), "true")
+	items, err := h.svc.ListProductsAdmin(includeInactive)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load products")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Products loaded", items)
+}
+
+func (h *StoreHandler) CreateProduct(c *gin.Context) {
+	var req service.UpsertStoreProductRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.svc.CreateProduct(req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusCreated, "Product created", item)
+}
+
+func (h *StoreHandler) UpdateProduct(c *gin.Context) {
+	id, err := parseProductID(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+		return
+	}
+	var req service.UpsertStoreProductRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.svc.UpdateProduct(id, req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Product updated", item)
+}
+
+func (h *StoreHandler) UpdateProductStock(c *gin.Context) {
+	id, err := parseProductID(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+		return
+	}
+	var req struct {
+		Stock int `json:"stock"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.svc.UpdateProductStock(id, req.Stock)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Stock updated", item)
+}
+
+func (h *StoreHandler) UpdateProductActive(c *gin.Context) {
+	id, err := parseProductID(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+		return
+	}
+	var req struct {
+		IsActive bool `json:"isActive"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.svc.UpdateProductActive(id, req.IsActive)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Product status updated", item)
 }
 
 func (h *StoreHandler) CreateOrder(c *gin.Context) {
@@ -57,6 +140,48 @@ func (h *StoreHandler) GetOrder(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Order loaded", mapOrderResponse(order))
 }
 
+func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
+	status := strings.TrimSpace(c.Query("status"))
+	items, total, err := h.svc.ListOrders(page, limit, status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load orders")
+		return
+	}
+	mapped := make([]gin.H, 0, len(items))
+	for i := range items {
+		mapped = append(mapped, mapOrderResponse(&items[i]))
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Orders loaded", gin.H{
+		"data":       mapped,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
+func (h *StoreHandler) UpdateOrderStatus(c *gin.Context) {
+	orderID := strings.TrimSpace(c.Param("orderId"))
+	if orderID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "orderId is required")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.svc.UpdateOrderStatus(orderID, req.Status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Order status updated", mapOrderResponse(item))
+}
+
 func mapOrderResponse(order *models.StoreOrder) gin.H {
 	if order == nil {
 		return gin.H{}
@@ -85,4 +210,12 @@ func mapOrderResponse(order *models.StoreOrder) gin.H {
 			"customerBankName":    order.CustomerBankName,
 		},
 	}
+}
+
+func parseProductID(raw string) (uint, error) {
+	id64, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id64 == 0 {
+		return 0, err
+	}
+	return uint(id64), nil
 }

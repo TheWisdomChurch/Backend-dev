@@ -52,9 +52,7 @@ func (h *TestimonialHandler) CreateTestimonial(c *gin.Context) {
 }
 
 func (h *TestimonialHandler) GetAllTestimonials(c *gin.Context) {
-	approved := c.DefaultQuery("approved", "true") == "true"
-
-	testimonials, err := h.svc.GetAllTestimonials(approved)
+	testimonials, err := h.svc.GetAllTestimonials(true)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
 		return
@@ -66,9 +64,8 @@ func (h *TestimonialHandler) GetAllTestimonials(c *gin.Context) {
 func (h *TestimonialHandler) GetPaginatedTestimonials(c *gin.Context) {
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
-	approved := c.DefaultQuery("approved", "true") == "true"
 
-	testimonials, total, err := h.svc.GetPaginatedTestimonials(page, limit, approved)
+	testimonials, total, err := h.svc.GetPaginatedTestimonials(page, limit, true)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch testimonials")
 		return
@@ -92,6 +89,10 @@ func (h *TestimonialHandler) GetTestimonialByID(c *gin.Context) {
 
 	testimonial, err := h.svc.GetTestimonialByID(id)
 	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
+		return
+	}
+	if !testimonial.IsApproved {
 		utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
 		return
 	}
