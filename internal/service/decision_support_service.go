@@ -1,0 +1,203 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"time"
+
+	"wisdomHouse-backend/internal/cache"
+	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/models"
+)
+
+type DecisionSupportService interface {
+	GetInsights(ctx context.Context) (*models.DecisionInsights, error)
+}
+
+type decisionSupportService struct {
+	db    *database.Database
+	cache *cache.RedisClient
+}
+
+func NewDecisionSupportService(db *database.Database, redisCache *cache.RedisClient) DecisionSupportService {
+	return &decisionSupportService{
+		db:    db,
+		cache: redisCache,
+	}
+}
+
+func (s *decisionSupportService) GetInsights(ctx context.Context) (*models.DecisionInsights, error) {
+	cacheKey := "analytics:decision_insights:v1"
+	if s.cache != nil {
+		var cached models.DecisionInsights
+		if err := s.cache.GetJSON(ctx, cacheKey, &cached); err == nil {
+			return &cached, nil
+		}
+	}
+
+	now := time.Now().UTC()
+	currentStart := now.AddDate(0, 0, -30)
+	previousStart := currentStart.AddDate(0, 0, -30)
+
+	var totalEvents int64
+	if err := s.db.WithContext(ctx).Model(&models.Event{}).Count(&totalEvents).Error; err != nil {
+		return nil, err
+	}
+
+	var upcomingEvents int64
+	if err := s.db.WithContext(ctx).Model(&models.Event{}).
+		Where("status = ?", models.EventStatusUpcoming).
+		Count(&upcomingEvents).Error; err != nil {
+		return nil, err
+	}
+
+	var totalMembers int64
+	if err := s.db.WithContext(ctx).Model(&models.Member{}).Count(&totalMembers).Error; err != nil {
+		return nil, err
+	}
+
+	var activeMembers int64
+	if err := s.db.WithContext(ctx).Model(&models.Member{}).
+		Where("is_active = ?", true).
+		Count(&activeMembers).Error; err != nil {
+		return nil, err
+	}
+
+	var workforceTotal int64
+	if err := s.db.WithContext(ctx).Model(&models.WorkforceMember{}).Count(&workforceTotal).Error; err != nil {
+		return nil, err
+	}
+
+	var workforceServing int64
+	if err := s.db.WithContext(ctx).Model(&models.WorkforceMember{}).
+		Where("status = ?", models.WorkforceStatusServing).
+		Count(&workforceServing).Error; err != nil {
+		return nil, err
+	}
+
+	var submissionsCurrent30d int64
+	if err := s.db.WithContext(ctx).Model(&models.FormSubmission{}).
+		Where("created_at >= ? AND created_at < ?", currentStart, now).
+		Count(&submissionsCurrent30d).Error; err != nil {
+		return nil, err
+	}
+
+	var submissionsPrevious30d int64
+	if err := s.db.WithContext(ctx).Model(&models.FormSubmission{}).
+		Where("created_at >= ? AND created_at < ?", previousStart, currentStart).
+		Count(&submissionsPrevious30d).Error; err != nil {
+		return nil, err
+	}
+
+	var submissionsDeltaPercent float64
+	switch {
+	case submissionsPrevious30d == 0 && submissionsCurrent30d > 0:
+		submissionsDeltaPercent = 100
+	case submissionsPrevious30d == 0:
+		submissionsDeltaPercent = 0
+	default:
+		submissionsDeltaPercent = ((float64(submissionsCurrent30d-submissionsPrevious30d) / float64(submissionsPrevious30d)) * 100)
+	}
+
+	memberActivationRate := ratio(activeMembers, totalMembers)
+	volunteerCoverageRate := ratio(workforceServing, workforceTotal)
+	upcomingEventLoadRate := ratio(upcomingEvents, max64(totalEvents, 1))
+	submissionMomentum := normalize(submissionsDeltaPercent, -100, 100)
+
+	decisionReadinessScore := clamp(
+		(0.35*submissionMomentum+
+			0.25*memberActivationRate+
+			0.25*volunteerCoverageRate+
+			0.15*(1-upcomingEventLoadRate))*100,
+		0,
+		100,
+	)
+
+	recommendations := make([]string, 0, 4)
+	if submissionsDeltaPercent < 0 {
+		recommendations = append(recommendations, "Submission volume is dropping. Trigger targeted follow-up campaigns for inactive segments within 7 days.")
+	}
+	if volunteerCoverageRate < 0.45 {
+		recommendations = append(recommendations, "Volunteer coverage is low. Prioritize workforce recruitment and automate onboarding reminders.")
+	}
+	if memberActivationRate < 0.7 {
+		recommendations = append(recommendations, "Active member ratio is below target. Launch retention journeys for members with no recent engagement.")
+	}
+	if len(recommendations) == 0 {
+		recommendations = append(recommendations, "Core indicators are healthy. Maintain cadence and validate forecasts weekly.")
+	}
+
+	out := &models.DecisionInsights{
+		GeneratedAt: now,
+		Window: models.DecisionWindow{
+			CurrentStart:  currentStart,
+			CurrentEnd:    now,
+			PreviousStart: previousStart,
+			PreviousEnd:   currentStart,
+		},
+		Core: models.DecisionCoreMetrics{
+			TotalEvents:            totalEvents,
+			UpcomingEvents:         upcomingEvents,
+			TotalMembers:           totalMembers,
+			ActiveMembers:          activeMembers,
+			TotalWorkforce:         workforceTotal,
+			ServingWorkforce:       workforceServing,
+			SubmissionsCurrent30d:  submissionsCurrent30d,
+			SubmissionsPrevious30d: submissionsPrevious30d,
+		},
+		Signals: models.DecisionSignalMetrics{
+			MemberActivationRate:   memberActivationRate,
+			VolunteerCoverageRate:  volunteerCoverageRate,
+			UpcomingEventLoadRate:  upcomingEventLoadRate,
+			SubmissionDeltaPercent: round(submissionsDeltaPercent, 2),
+			DecisionReadinessScore: round(decisionReadinessScore, 2),
+		},
+		Recommendations: recommendations,
+	}
+
+	if s.cache != nil {
+		if err := s.cache.SetJSON(ctx, cacheKey, out, 5*time.Minute); err != nil {
+			return out, fmt.Errorf("computed insights but failed to cache: %w", err)
+		}
+	}
+
+	return out, nil
+}
+
+func ratio(a, b int64) float64 {
+	if b <= 0 {
+		return 0
+	}
+	return float64(a) / float64(b)
+}
+
+func clamp(v, minV, maxV float64) float64 {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
+func normalize(v, minV, maxV float64) float64 {
+	if maxV <= minV {
+		return 0
+	}
+	n := (v - minV) / (maxV - minV)
+	return clamp(n, 0, 1)
+}
+
+func round(v float64, dp int) float64 {
+	p := math.Pow(10, float64(dp))
+	return math.Round(v*p) / p
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}

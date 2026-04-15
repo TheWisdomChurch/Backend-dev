@@ -19,6 +19,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/email"
@@ -529,10 +530,13 @@ func setupRouter(
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
 ) *gin.Engine {
 	router := gin.New()
+	secure := strings.TrimSpace(cfg.App.Environment) == "production"
+
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
-	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.SecurityHeaders(secure))
+	router.Use(middleware.RequestBodyLimit(cfg.Server.RequestBodyMax))
 	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.RateLimiter(middleware.RateLimiterOptions{
 		RequestsPerMinute: cfg.RateLimit.Global.RequestsPerMinute,
@@ -555,7 +559,6 @@ func setupRouter(
 
 	api := router.Group("/api/v1")
 
-	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
 	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
 
@@ -575,9 +578,9 @@ func setupRouter(
 	// Backwards-compatible aliases for older admin clients
 	auth.POST("/login/verify-otp", loginRateLimiter, authHandler.VerifyLoginOTP)
 	auth.POST("/login/resend-otp", loginRateLimiter, authHandler.ResendLoginOTP)
-	auth.POST("/register", authHandler.Register)
-	auth.POST("/password-reset/request", authHandler.RequestPasswordReset)
-	auth.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
+	auth.POST("/register", loginRateLimiter, authHandler.Register)
+	auth.POST("/password-reset/request", loginRateLimiter, authHandler.RequestPasswordReset)
+	auth.POST("/password-reset/confirm", loginRateLimiter, authHandler.ConfirmPasswordReset)
 	auth.POST("/otp/verify", loginRateLimiter, authHandler.VerifyLoginOTP)
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
@@ -599,8 +602,16 @@ func setupRouter(
 	authProtected.PATCH("/mfa/method", authHandler.SetPreferredMFAMethod)
 
 	// OTP
-	api.POST("/otp/send", otpHandler.SendOTP)
-	api.POST("/otp/verify", otpHandler.VerifyOTP)
+	otpRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: cfg.RateLimit.Auth.RequestsPerMinute,
+		Burst:             cfg.RateLimit.Auth.Burst,
+		Window:            cfg.RateLimit.Auth.Window,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:otp",
+		Message:           "Too many OTP requests. Please wait before trying again.",
+	})
+	api.POST("/otp/send", otpRateLimiter, otpHandler.SendOTP)
+	api.POST("/otp/verify", otpRateLimiter, otpHandler.VerifyOTP)
 
 	// Public testimonials
 	api.GET("/testimonials", testimonialHandler.GetPaginatedTestimonials)
@@ -653,6 +664,7 @@ func setupRouter(
 	admin.POST("/users/:id/approve", adminHandler.ApproveUser)
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
+	admin.GET("/analytics/insights", analyticsHandler.GetDecisionInsights)
 
 	// Forms
 	// Forms
@@ -866,6 +878,31 @@ func main() {
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 
 	// -------------------------------------------------------------------------
+	// Redis cache client (optional)
+	// -------------------------------------------------------------------------
+	var redisCache *cache.RedisClient
+	if strings.TrimSpace(cfg.Redis.URL) != "" {
+		redisCache, err = cache.NewRedisClient(cache.Config{
+			URL:          cfg.Redis.URL,
+			PoolSize:     cfg.Redis.PoolSize,
+			DialTimeout:  cfg.Redis.DialTimeout,
+			ReadTimeout:  cfg.Redis.ReadTimeout,
+			WriteTimeout: cfg.Redis.WriteTimeout,
+			PoolTimeout:  cfg.Redis.PoolTimeout,
+		})
+		if err != nil {
+			logger.Printf("⚠️ Redis cache not initialized: %v", err)
+		} else {
+			defer func() {
+				if cerr := redisCache.Close(); cerr != nil {
+					logger.Printf("⚠️ Error closing redis cache: %v", cerr)
+				}
+			}()
+			logger.Println("✅ Redis cache initialized")
+		}
+	}
+
+	// -------------------------------------------------------------------------
 	// Email sender (Brevo / SES)
 	// -------------------------------------------------------------------------
 	var emailSender service.EmailSender
@@ -1024,7 +1061,7 @@ func main() {
 	approvalRequestHandler := handlers.NewApprovalRequestHandler(approvalService, approvalRequestRepo)
 	adminNotificationHandler := handlers.NewAdminNotificationHandler(adminNotificationService)
 	reelHandler := handlers.NewReelHandler(reelRepo)
-	analyticsHandler := handlers.NewAnalyticsHandler(db)
+	analyticsHandler := handlers.NewAnalyticsHandler(db, redisCache)
 	formHandler := handlers.NewFormHandler(formService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
@@ -1088,6 +1125,11 @@ func main() {
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
 	)
+
+	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
+		logger.Fatalf("❌ Invalid SERVER_TRUSTED_PROXIES: %v", err)
+	}
+	logger.Printf("✅ Trusted proxies configured: %v", cfg.Server.TrustedProxies)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
