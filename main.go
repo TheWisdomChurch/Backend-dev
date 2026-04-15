@@ -1036,6 +1036,7 @@ func main() {
 		emailTemplateRepo,
 		workforceService,
 		memberService,
+		leadershipService,
 		emailSender,
 		branding,
 		publicBaseURL,
