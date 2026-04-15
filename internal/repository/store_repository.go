@@ -11,8 +11,8 @@ import (
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 
-	"gorm.io/gorm/clause"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type StoreRepository interface {
