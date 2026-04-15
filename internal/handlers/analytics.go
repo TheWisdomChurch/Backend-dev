@@ -7,17 +7,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
 )
 
 type AnalyticsHandler struct {
-	db *database.Database
+	db             *database.Database
+	decisionEngine service.DecisionSupportService
 }
 
-func NewAnalyticsHandler(db *database.Database) *AnalyticsHandler {
-	return &AnalyticsHandler{db: db}
+func NewAnalyticsHandler(db *database.Database, redisCache *cache.RedisClient) *AnalyticsHandler {
+	return &AnalyticsHandler{
+		db:             db,
+		decisionEngine: service.NewDecisionSupportService(db, redisCache),
+	}
 }
 
 func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
@@ -80,4 +86,22 @@ func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
 		"eventsByCategory": eventsByCategory,
 		"monthlyStats":     monthlyStats,
 	})
+}
+
+func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
+	if h.decisionEngine == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Decision insights engine is unavailable")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+	defer cancel()
+
+	insights, err := h.decisionEngine.GetInsights(ctx)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute decision insights")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Decision insights retrieved successfully", insights)
 }

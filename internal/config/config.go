@@ -87,6 +87,8 @@ type ServerConfig struct {
 	ReadTimeout    time.Duration `json:"read_timeout" env:"SERVER_READ_TIMEOUT"`
 	WriteTimeout   time.Duration `json:"write_timeout" env:"SERVER_WRITE_TIMEOUT"`
 	MaxHeaderBytes int           `json:"max_header_bytes" env:"SERVER_MAX_HEADER_BYTES"`
+	TrustedProxies []string      `json:"trusted_proxies" env:"SERVER_TRUSTED_PROXIES"`
+	RequestBodyMax int64         `json:"request_body_max" env:"SERVER_REQUEST_BODY_MAX_BYTES"`
 }
 
 type RedisConfig struct {
@@ -264,6 +266,8 @@ func Load() (*Config, error) {
 			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
+			TrustedProxies: splitEnv("SERVER_TRUSTED_PROXIES", []string{}),
+			RequestBodyMax: getEnvAsInt64("SERVER_REQUEST_BODY_MAX_BYTES", 2<<20),
 		},
 		Redis: RedisConfig{
 			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
@@ -397,6 +401,9 @@ func validateConfig(cfg *Config) error {
 	if cfg.Auth.RememberMeTTL <= 0 {
 		return fmt.Errorf("AUTH_REMEMBER_ME_TTL must be greater than 0")
 	}
+	if cfg.Server.RequestBodyMax <= 0 {
+		return fmt.Errorf("SERVER_REQUEST_BODY_MAX_BYTES must be greater than 0")
+	}
 	if strings.TrimSpace(cfg.Auth.SecretKey) == "" {
 		return fmt.Errorf("AUTH_SECRET_KEY is required")
 	}
@@ -501,6 +508,15 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return intValue
 		}
 	}
 	return defaultValue

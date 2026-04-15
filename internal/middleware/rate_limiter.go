@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"strconv"
@@ -129,7 +129,7 @@ func redisRateLimiter(rdb *redis.Client, opts RateLimiterOptions) gin.HandlerFun
 
 func redisKey(prefix, ip string) string {
 	// Avoid storing raw IPs (minor privacy hardening)
-	h := sha1.Sum([]byte(ip))
+	h := sha256.Sum256([]byte(ip))
 	return prefix + ":" + hex.EncodeToString(h[:])
 }
 
