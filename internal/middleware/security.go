@@ -6,12 +6,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SecurityHeaders() gin.HandlerFunc {
+func SecurityHeaders(isProduction bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("X-XSS-Protection", "0")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Cross-Origin-Opener-Policy", "same-origin")
+		c.Header("Cross-Origin-Resource-Policy", "same-origin")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		if isProduction {
+			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 
 		path := c.Request.URL.Path
 		if path == "/swagger/" || path == "/swagger/index.html" || (len(path) >= 9 && path[:9] == "/swagger/") {
