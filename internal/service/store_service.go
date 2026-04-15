@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"wisdomHouse-backend/internal/models"
@@ -49,8 +50,15 @@ type CreateStoreOrderBankDetails struct {
 
 type StoreService interface {
 	ListProducts() ([]models.StoreProduct, error)
+	ListProductsAdmin(includeInactive bool) ([]models.StoreProduct, error)
+	CreateProduct(req UpsertStoreProductRequest) (*models.StoreProduct, error)
+	UpdateProduct(id uint, req UpsertStoreProductRequest) (*models.StoreProduct, error)
+	UpdateProductStock(id uint, stock int) (*models.StoreProduct, error)
+	UpdateProductActive(id uint, isActive bool) (*models.StoreProduct, error)
 	CreateOrder(req CreateStoreOrderRequest) (*models.StoreOrder, error)
 	GetOrder(orderID string) (*models.StoreOrder, error)
+	ListOrders(page, limit int, status string) ([]models.StoreOrder, int64, error)
+	UpdateOrderStatus(orderID, status string) (*models.StoreOrder, error)
 }
 
 type storeService struct {
@@ -65,6 +73,63 @@ func NewStoreService(repo repository.StoreRepository) StoreService {
 
 func (s *storeService) ListProducts() ([]models.StoreProduct, error) {
 	return s.repo.ListProducts()
+}
+
+func (s *storeService) ListProductsAdmin(includeInactive bool) ([]models.StoreProduct, error) {
+	return s.repo.ListProductsAdmin(includeInactive)
+}
+
+type UpsertStoreProductRequest struct {
+	Name          string   `json:"name"`
+	Category      string   `json:"category"`
+	Price         string   `json:"price"`
+	OriginalPrice *string  `json:"originalPrice,omitempty"`
+	Image         string   `json:"image"`
+	Description   string   `json:"description"`
+	Sizes         []string `json:"sizes"`
+	Colors        []string `json:"colors"`
+	Tags          []string `json:"tags"`
+	Stock         int      `json:"stock"`
+	IsActive      *bool    `json:"isActive,omitempty"`
+}
+
+func (s *storeService) CreateProduct(req UpsertStoreProductRequest) (*models.StoreProduct, error) {
+	item, err := normalizeStoreProductPayload(req, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.CreateProduct(item); err != nil {
+		return nil, err
+	}
+	return s.repo.GetProductByID(item.ID)
+}
+
+func (s *storeService) UpdateProduct(id uint, req UpsertStoreProductRequest) (*models.StoreProduct, error) {
+	existing, err := s.repo.GetProductByID(id)
+	if err != nil {
+		return nil, err
+	}
+	item, err := normalizeStoreProductPayload(req, existing)
+	if err != nil {
+		return nil, err
+	}
+	item.ID = existing.ID
+	item.CreatedAt = existing.CreatedAt
+	if err := s.repo.UpdateProduct(item); err != nil {
+		return nil, err
+	}
+	return s.repo.GetProductByID(id)
+}
+
+func (s *storeService) UpdateProductStock(id uint, stock int) (*models.StoreProduct, error) {
+	if stock < 0 {
+		return nil, errors.New("stock cannot be negative")
+	}
+	return s.repo.UpdateProductStock(id, stock)
+}
+
+func (s *storeService) UpdateProductActive(id uint, isActive bool) (*models.StoreProduct, error) {
+	return s.repo.UpdateProductActive(id, isActive)
 }
 
 func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOrder, error) {
@@ -110,7 +175,10 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 	order.Items = make([]models.StoreOrderItem, 0, len(req.Items))
 	for _, item := range req.Items {
 		if strings.TrimSpace(item.Name) == "" || item.Quantity <= 0 {
-			return nil, errors.New("each order item must include name and quantity > 0")
+			return nil, errors.New("each order item must include quantity > 0")
+		}
+		if item.ProductID == nil {
+			return nil, errors.New("productId is required for each order item")
 		}
 		order.Items = append(order.Items, models.StoreOrderItem{
 			ProductID:     item.ProductID,
@@ -130,6 +198,32 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 
 func (s *storeService) GetOrder(orderID string) (*models.StoreOrder, error) {
 	return s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+}
+
+func (s *storeService) ListOrders(page, limit int, status string) ([]models.StoreOrder, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return s.repo.ListOrders((page-1)*limit, limit, strings.TrimSpace(status))
+}
+
+func (s *storeService) UpdateOrderStatus(orderID, status string) (*models.StoreOrder, error) {
+	normalized := strings.TrimSpace(strings.ToLower(status))
+	switch normalized {
+	case "pending", "processing", "shipped", "delivered", "cancelled":
+	default:
+		return nil, errors.New("invalid order status")
+	}
+	if strings.TrimSpace(orderID) == "" {
+		return nil, errors.New("orderId is required")
+	}
+	return s.repo.UpdateOrderStatus(strings.TrimSpace(orderID), normalized)
 }
 
 func (s *storeService) seedDefaultProducts() error {
@@ -194,4 +288,98 @@ func strPtrOrNil(v string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizeStoreProductPayload(req UpsertStoreProductRequest, base *models.StoreProduct) (*models.StoreProduct, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, errors.New("name is required")
+	}
+	if strings.TrimSpace(req.Category) == "" {
+		return nil, errors.New("category is required")
+	}
+	if strings.TrimSpace(req.Price) == "" {
+		return nil, errors.New("price is required")
+	}
+	if parseCurrency(req.Price) <= 0 {
+		return nil, errors.New("price must be a valid positive amount")
+	}
+	if strings.TrimSpace(req.Image) == "" {
+		return nil, errors.New("image is required")
+	}
+	if strings.TrimSpace(req.Description) == "" {
+		return nil, errors.New("description is required")
+	}
+	if req.Stock < 0 {
+		return nil, errors.New("stock cannot be negative")
+	}
+
+	sizes, _ := json.Marshal(normalizeStringList(req.Sizes))
+	colors, _ := json.Marshal(normalizeStringList(req.Colors))
+	tags, _ := json.Marshal(normalizeStringList(req.Tags))
+
+	item := &models.StoreProduct{
+		Name:          strings.TrimSpace(req.Name),
+		Category:      strings.TrimSpace(strings.ToLower(req.Category)),
+		Price:         strings.TrimSpace(req.Price),
+		OriginalPrice: strPtrOrNil(ptrValue(req.OriginalPrice)),
+		Image:         strings.TrimSpace(req.Image),
+		Description:   strings.TrimSpace(req.Description),
+		Sizes:         sizes,
+		Colors:        colors,
+		Tags:          tags,
+		Stock:         req.Stock,
+		IsActive:      true,
+	}
+	if base != nil {
+		item.ID = base.ID
+		item.CreatedAt = base.CreatedAt
+		item.IsActive = base.IsActive
+	}
+	if req.IsActive != nil {
+		item.IsActive = *req.IsActive
+	}
+	return item, nil
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, v := range values {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func ptrValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func parseCurrency(raw string) float64 {
+	clean := strings.TrimSpace(raw)
+	clean = strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || r == '.' {
+			return r
+		}
+		return -1
+	}, clean)
+	if clean == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(clean, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
