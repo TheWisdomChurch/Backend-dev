@@ -760,6 +760,15 @@ func setupRouter(
 	admin.GET("/members/birthdays/month/:month", memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", memberHandler.BirthdaysToday)
 	admin.POST("/members/birthdays/send-today", memberHandler.SendBirthdaysToday)
+
+	// Store admin
+	admin.GET("/store/products", storeHandler.ListProductsAdmin)
+	admin.POST("/store/products", storeHandler.CreateProduct)
+	admin.PUT("/store/products/:id", storeHandler.UpdateProduct)
+	admin.PATCH("/store/products/:id/stock", storeHandler.UpdateProductStock)
+	admin.PATCH("/store/products/:id/active", storeHandler.UpdateProductActive)
+	admin.GET("/store/orders", storeHandler.ListOrdersAdmin)
+	admin.PATCH("/store/orders/:orderId/status", storeHandler.UpdateOrderStatus)
 	admin.POST("/members/notify", memberHandler.SendAnnouncement)
 
 	// Leadership admin

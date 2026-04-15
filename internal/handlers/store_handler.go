@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -214,8 +215,11 @@ func mapOrderResponse(order *models.StoreOrder) gin.H {
 
 func parseProductID(raw string) (uint, error) {
 	id64, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
-	if err != nil || id64 == 0 {
+	if err != nil {
 		return 0, err
+	}
+	if id64 == 0 {
+		return 0, errors.New("id must be greater than zero")
 	}
 	return uint(id64), nil
 }
