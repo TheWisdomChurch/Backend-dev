@@ -52,4 +52,3 @@ func (h *GivingHandler) ListOptions(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Giving options loaded", options)
 }
-
