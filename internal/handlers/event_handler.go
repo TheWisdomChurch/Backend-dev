@@ -72,7 +72,7 @@ func (h *EventHandler) List(c *gin.Context) {
 	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 	offset := (page - 1) * limit
 
-	statusFilter := strings.TrimSpace(c.Query("status")) // upcoming|happening|past
+	statusFilter := normalizeIncomingEventStatus(strings.TrimSpace(c.Query("status"))) // upcoming|happening|past (+ aliases)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -93,6 +93,7 @@ func (h *EventHandler) List(c *gin.Context) {
 			continue
 		}
 		if statusFilter == "" || string(items[i].Status) == statusFilter {
+			normalizeOutgoingEventStatus(&items[i])
 			filtered = append(filtered, items[i])
 		}
 	}
@@ -121,6 +122,13 @@ func (h *EventHandler) Get(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
 		return
 	}
+	role := normalizedRole(c)
+	allowPending := isAdminOrSuper(role)
+	if !allowPending && !item.IsApproved {
+		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
+		return
+	}
+	normalizeOutgoingEventStatus(item)
 	utils.SuccessResponse(c, http.StatusOK, "Event retrieved", item)
 }
 
@@ -133,7 +141,7 @@ func (h *EventHandler) Create(c *gin.Context) {
 	req.Status = deriveStatus(req.Date, req.Time, time.Now().UTC())
 	role := normalizedRole(c)
 	approver := h.currentUser(c)
-	if isAdminOrSuper(role) && approver != nil {
+	if role == "super_admin" && approver != nil {
 		req.IsApproved = true
 		req.ApprovedByID = &approver.ID
 		name := strings.TrimSpace(strings.Join([]string{approver.FirstName, approver.LastName}, " "))
@@ -207,6 +215,7 @@ func (h *EventHandler) Create(c *gin.Context) {
 		}
 	}
 
+	normalizeOutgoingEventStatus(&req)
 	utils.SuccessResponse(c, http.StatusCreated, "Event created", req)
 }
 
@@ -248,6 +257,7 @@ func (h *EventHandler) Update(c *gin.Context) {
 		return
 	}
 
+	normalizeOutgoingEventStatus(existing)
 	utils.SuccessResponse(c, http.StatusOK, "Event updated", existing)
 }
 
@@ -302,6 +312,7 @@ func (h *EventHandler) Approve(c *gin.Context) {
 		})
 	}
 
+	normalizeOutgoingEventStatus(existing)
 	utils.SuccessResponse(c, http.StatusOK, "Event approved", existing)
 }
 
@@ -430,6 +441,29 @@ func deriveStatus(dateStr, timeStr string, now time.Time) models.EventStatus {
 		return models.EventStatusUpcoming
 	default:
 		return models.EventStatusPast
+	}
+}
+
+func normalizeIncomingEventStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ongoing":
+		return "happening"
+	case "completed":
+		return "past"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func normalizeOutgoingEventStatus(event *models.Event) {
+	if event == nil {
+		return
+	}
+	switch event.Status {
+	case models.EventStatusHappening:
+		event.Status = models.EventStatus("ongoing")
+	case models.EventStatusPast:
+		event.Status = models.EventStatus("completed")
 	}
 }
 

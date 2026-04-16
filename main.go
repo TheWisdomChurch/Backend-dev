@@ -1102,7 +1102,13 @@ func main() {
 	formHandler := handlers.NewFormHandler(formService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
-	workforceHandler := handlers.NewWorkforceHandler(workforceService, adminNotificationService)
+	workforceHandler := handlers.NewWorkforceHandler(
+		workforceService,
+		adminNotificationService,
+		emailSender,
+		emailTemplateRepo,
+		branding,
+	)
 	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader)
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
@@ -1111,7 +1117,13 @@ func main() {
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
 	siteContentHandler := handlers.NewSiteContentHandler(db)
-	engagementHandler := handlers.NewEngagementHandler(db, adminNotificationService)
+	engagementHandler := handlers.NewEngagementHandler(
+		db,
+		adminNotificationService,
+		emailSender,
+		emailTemplateRepo,
+		branding,
+	)
 
 	// -------------------------------------------------------------------------
 	// Background jobs
