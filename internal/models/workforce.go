@@ -12,15 +12,15 @@ const (
 )
 
 type WorkforceMember struct {
-	ID         string          `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	FirstName  string          `gorm:"size:100;not null" json:"firstName"`
-	LastName   string          `gorm:"size:100;not null" json:"lastName"`
-	Email      string          `gorm:"size:255;index" json:"email"`
-	Phone      string          `gorm:"size:50" json:"phone"`
-	Department string          `gorm:"size:120;index;not null" json:"department"`
-	SourceChannel string       `gorm:"size:120;index;not null;default:'frontend:web:workforce'" json:"sourceChannel"`
-	Status     WorkforceStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
-	Notes      *string         `gorm:"type:text" json:"notes,omitempty"`
+	ID            string          `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	FirstName     string          `gorm:"size:100;not null" json:"firstName"`
+	LastName      string          `gorm:"size:100;not null" json:"lastName"`
+	Email         string          `gorm:"size:255;index" json:"email"`
+	Phone         string          `gorm:"size:50" json:"phone"`
+	Department    string          `gorm:"size:120;index;not null" json:"department"`
+	SourceChannel string          `gorm:"size:120;index;not null;default:'frontend:web:workforce'" json:"sourceChannel"`
+	Status        WorkforceStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
+	Notes         *string         `gorm:"type:text" json:"notes,omitempty"`
 
 	// Birthday components (MM/DD). Year is not stored.
 	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
@@ -35,14 +35,14 @@ func (WorkforceMember) TableName() string {
 }
 
 type CreateWorkforceRequest struct {
-	FirstName  string          `json:"firstName" binding:"required"`
-	LastName   string          `json:"lastName" binding:"required"`
-	Email      string          `json:"email" binding:"omitempty,email"`
-	Phone      string          `json:"phone"`
-	Department string          `json:"department" binding:"required"`
-	SourceChannel string       `json:"sourceChannel"`
-	Status     WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
-	Notes      *string         `json:"notes,omitempty"`
+	FirstName     string          `json:"firstName" binding:"required"`
+	LastName      string          `json:"lastName" binding:"required"`
+	Email         string          `json:"email" binding:"omitempty,email"`
+	Phone         string          `json:"phone"`
+	Department    string          `json:"department" binding:"required"`
+	SourceChannel string          `json:"sourceChannel"`
+	Status        WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
+	Notes         *string         `json:"notes,omitempty"`
 
 	// birthday in MM/DD (month/day) components
 	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
@@ -66,12 +66,12 @@ type UpdateWorkforceRequest struct {
 }
 
 type WorkforceStatsResponse struct {
-	Total           int64             `json:"total"`
-	ByStatus        map[string]int64  `json:"byStatus"`
-	ByDepartment    map[string]int64  `json:"byDepartment"`
-	BySource        map[string]int64  `json:"bySource"`
-	FrontendByDepartment map[string]int64 `json:"frontendByDepartment"`
-	ByDeptAndStatus []WorkforceBucket `json:"byDeptAndStatus"`
+	Total                int64             `json:"total"`
+	ByStatus             map[string]int64  `json:"byStatus"`
+	ByDepartment         map[string]int64  `json:"byDepartment"`
+	BySource             map[string]int64  `json:"bySource"`
+	FrontendByDepartment map[string]int64  `json:"frontendByDepartment"`
+	ByDeptAndStatus      []WorkforceBucket `json:"byDeptAndStatus"`
 }
 
 type WorkforceBucket struct {
