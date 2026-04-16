@@ -531,6 +531,8 @@ func setupRouter(
 	sermonHandler *handlers.SermonHandler,
 	storeHandler *handlers.StoreHandler,
 	givingHandler *handlers.GivingHandler,
+	siteContentHandler *handlers.SiteContentHandler,
+	engagementHandler *handlers.EngagementHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -641,6 +643,10 @@ func setupRouter(
 	api.POST("/store/orders", storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
 	api.GET("/giving/options", givingHandler.ListOptions)
+	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
+	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
+	api.GET("/content/homepage-ad", siteContentHandler.GetHomepageAd)
+	api.GET("/content/confession-popup", siteContentHandler.GetConfessionPopup)
 
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
@@ -677,6 +683,12 @@ func setupRouter(
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 	admin.GET("/analytics/insights", analyticsHandler.GetDecisionInsights)
+	admin.GET("/content/homepage-ad", siteContentHandler.GetAdminHomepageAd)
+	admin.PUT("/content/homepage-ad", siteContentHandler.UpdateAdminHomepageAd)
+	admin.GET("/content/confession-popup", siteContentHandler.GetAdminConfessionPopup)
+	admin.PUT("/content/confession-popup", siteContentHandler.UpdateAdminConfessionPopup)
+	admin.GET("/pastoral-care/requests", engagementHandler.ListPastoralCareRequests)
+	admin.GET("/giving/intents", engagementHandler.ListGivingIntents)
 
 	// Forms
 	// Forms
@@ -1098,6 +1110,8 @@ func main() {
 	sermonHandler := handlers.NewSermonHandler(sermonService)
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
+	siteContentHandler := handlers.NewSiteContentHandler(db)
+	engagementHandler := handlers.NewEngagementHandler(db, adminNotificationService)
 
 	// -------------------------------------------------------------------------
 	// Background jobs
@@ -1155,6 +1169,8 @@ func main() {
 		sermonHandler,
 		storeHandler,
 		givingHandler,
+		siteContentHandler,
+		engagementHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
