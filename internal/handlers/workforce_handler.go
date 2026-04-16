@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"fmt"
+	htmltemplate "html/template"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,7 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
@@ -18,10 +23,25 @@ import (
 type WorkforceHandler struct {
 	svc       service.WorkforceService
 	notifySvc service.AdminNotificationService
+	sender    service.EmailSender
+	tplRepo   repository.EmailTemplateRepository
+	branding  email.Branding
 }
 
-func NewWorkforceHandler(svc service.WorkforceService, notifySvc service.AdminNotificationService) *WorkforceHandler {
-	return &WorkforceHandler{svc: svc, notifySvc: notifySvc}
+func NewWorkforceHandler(
+	svc service.WorkforceService,
+	notifySvc service.AdminNotificationService,
+	sender service.EmailSender,
+	tplRepo repository.EmailTemplateRepository,
+	branding email.Branding,
+) *WorkforceHandler {
+	return &WorkforceHandler{
+		svc:       svc,
+		notifySvc: notifySvc,
+		sender:    sender,
+		tplRepo:   tplRepo,
+		branding:  branding,
+	}
 }
 
 func (h *WorkforceHandler) List(c *gin.Context) {
@@ -51,6 +71,9 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "admin:web:workforce"
+	}
 
 	member, err := h.svc.Create(&req)
 	if err != nil {
@@ -65,6 +88,9 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
 		return
+	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "frontend:web:workforce:new"
 	}
 
 	member, err := h.svc.CreateApplication(&req)
@@ -88,6 +114,7 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 			Roles:      []string{"admin", "super_admin"},
 		})
 	}
+	h.sendWorkforceConfirmation(*member, "workforce_application_confirmation", "Pending Review")
 
 	utils.SuccessResponse(c, http.StatusCreated, "Application submitted", member)
 }
@@ -96,6 +123,9 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
 		return
+	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "frontend:web:workforce:serving"
 	}
 
 	member, err := h.svc.RegisterExisting(&req)
@@ -119,6 +149,7 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 			Roles:      []string{"admin", "super_admin"},
 		})
 	}
+	h.sendWorkforceConfirmation(*member, "workforce_serving_confirmation", "Serving")
 
 	utils.SuccessResponse(c, http.StatusCreated, "Workforce profile submitted", member)
 }
@@ -207,4 +238,72 @@ func (h *WorkforceHandler) SendBirthdaysToday(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
+}
+
+func (h *WorkforceHandler) sendWorkforceConfirmation(member models.WorkforceMember, templateKey string, statusLabel string) {
+	if h.sender == nil {
+		return
+	}
+
+	addr := strings.TrimSpace(member.Email)
+	if addr == "" {
+		return
+	}
+
+	recipient := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	subject := "Workforce registration received"
+	data := map[string]any{
+		"Branding":      h.branding,
+		"RecipientName": recipient,
+		"ReferenceID":   member.ID,
+		"Department":    member.Department,
+		"StatusLabel":   statusLabel,
+		"Member":        member,
+	}
+
+	body, subjectOverride := h.renderActiveTemplateByKey(templateKey, data)
+	if subjectOverride != "" {
+		subject = subjectOverride
+	}
+	if strings.TrimSpace(body) == "" {
+		body = email.RenderWorkforceConfirmationEmail(email.WorkforceConfirmationTemplateData{
+			Branding:      h.branding,
+			RecipientName: recipient,
+			ReferenceID:   member.ID,
+			Department:    member.Department,
+			StatusLabel:   statusLabel,
+		})
+	}
+
+	if err := h.sender.SendHTML(addr, subject, body); err != nil {
+		log.Printf("⚠️ failed to send workforce confirmation to %s: %v", addr, err)
+	}
+}
+
+func (h *WorkforceHandler) renderActiveTemplateByKey(templateKey string, data any) (body string, subject string) {
+	if h.tplRepo == nil {
+		return "", ""
+	}
+	tpl, err := h.tplRepo.GetActiveByKey(strings.TrimSpace(templateKey))
+	if err != nil || tpl == nil || strings.TrimSpace(tpl.HTMLBody) == "" {
+		return "", ""
+	}
+
+	compiled, err := htmltemplate.New("workforce").Option("missingkey=zero").Parse(tpl.HTMLBody)
+	if err != nil {
+		log.Printf("⚠️ failed to parse email template %s: %v", templateKey, err)
+		return "", ""
+	}
+
+	var buf bytes.Buffer
+	if err := compiled.Execute(&buf, data); err != nil {
+		log.Printf("⚠️ failed to render email template %s: %v", templateKey, err)
+		return "", ""
+	}
+
+	var subjectOut string
+	if tpl.Subject != nil {
+		subjectOut = strings.TrimSpace(*tpl.Subject)
+	}
+	return buf.String(), subjectOut
 }
