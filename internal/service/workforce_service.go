@@ -92,10 +92,14 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 		Email:         strings.TrimSpace(req.Email),
 		Phone:         strings.TrimSpace(req.Phone),
 		Department:    strings.TrimSpace(req.Department),
+		SourceChannel: strings.TrimSpace(req.SourceChannel),
 		Status:        status,
 		Notes:         req.Notes,
 		BirthdayMonth: month,
 		BirthdayDay:   day,
+	}
+	if member.SourceChannel == "" {
+		member.SourceChannel = "frontend:web:workforce"
 	}
 
 	if err := s.repo.Create(member); err != nil {

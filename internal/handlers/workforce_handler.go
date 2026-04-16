@@ -51,6 +51,9 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "admin:web:workforce"
+	}
 
 	member, err := h.svc.Create(&req)
 	if err != nil {
@@ -65,6 +68,9 @@ func (h *WorkforceHandler) Apply(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
 		return
+	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "frontend:web:workforce:new"
 	}
 
 	member, err := h.svc.CreateApplication(&req)
@@ -96,6 +102,9 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
 		return
+	}
+	if strings.TrimSpace(req.SourceChannel) == "" {
+		req.SourceChannel = "frontend:web:workforce:serving"
 	}
 
 	member, err := h.svc.RegisterExisting(&req)

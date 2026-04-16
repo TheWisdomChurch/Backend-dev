@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS public.workforce_members (
   email character varying(255),
   phone character varying(50),
   department character varying(120) NOT NULL,
+  source_channel character varying(120) NOT NULL DEFAULT 'frontend:web:workforce',
   status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
   notes text,
   birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
@@ -696,6 +697,9 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_subscriber_id
 
 CREATE INDEX IF NOT EXISTS idx_workforce_bday_month_day
   ON public.workforce_members (birthday_month, birthday_day);
+
+CREATE INDEX IF NOT EXISTS idx_workforce_source_channel
+  ON public.workforce_members (source_channel);
 
 CREATE INDEX IF NOT EXISTS idx_members_birthday_month_day
   ON public.members (birthday_month, birthday_day);
