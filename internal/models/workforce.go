@@ -18,6 +18,7 @@ type WorkforceMember struct {
 	Email      string          `gorm:"size:255;index" json:"email"`
 	Phone      string          `gorm:"size:50" json:"phone"`
 	Department string          `gorm:"size:120;index;not null" json:"department"`
+	SourceChannel string       `gorm:"size:120;index;not null;default:'frontend:web:workforce'" json:"sourceChannel"`
 	Status     WorkforceStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
 	Notes      *string         `gorm:"type:text" json:"notes,omitempty"`
 
@@ -39,6 +40,7 @@ type CreateWorkforceRequest struct {
 	Email      string          `json:"email" binding:"omitempty,email"`
 	Phone      string          `json:"phone"`
 	Department string          `json:"department" binding:"required"`
+	SourceChannel string       `json:"sourceChannel"`
 	Status     WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes      *string         `json:"notes,omitempty"`
 
@@ -67,6 +69,8 @@ type WorkforceStatsResponse struct {
 	Total           int64             `json:"total"`
 	ByStatus        map[string]int64  `json:"byStatus"`
 	ByDepartment    map[string]int64  `json:"byDepartment"`
+	BySource        map[string]int64  `json:"bySource"`
+	FrontendByDepartment map[string]int64 `json:"frontendByDepartment"`
 	ByDeptAndStatus []WorkforceBucket `json:"byDeptAndStatus"`
 }
 

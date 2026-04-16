@@ -30,6 +30,7 @@ DROP INDEX IF EXISTS public.idx_leadership_email;
 DROP INDEX IF EXISTS public.idx_leadership_status;
 DROP INDEX IF EXISTS public.idx_leadership_role_status;
 DROP INDEX IF EXISTS public.idx_workforce_bday_month_day;
+DROP INDEX IF EXISTS public.idx_workforce_source_channel;
 DROP INDEX IF EXISTS public.idx_notification_deliveries_subscriber_id;
 DROP INDEX IF EXISTS public.idx_notification_deliveries_notification_id;
 DROP INDEX IF EXISTS public.idx_notifications_event_id;
