@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	htmltemplate "html/template"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,7 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
@@ -20,10 +25,25 @@ import (
 type EngagementHandler struct {
 	db        *database.Database
 	notifySvc service.AdminNotificationService
+	sender    service.EmailSender
+	tplRepo   repository.EmailTemplateRepository
+	branding  email.Branding
 }
 
-func NewEngagementHandler(db *database.Database, notifySvc service.AdminNotificationService) *EngagementHandler {
-	return &EngagementHandler{db: db, notifySvc: notifySvc}
+func NewEngagementHandler(
+	db *database.Database,
+	notifySvc service.AdminNotificationService,
+	sender service.EmailSender,
+	tplRepo repository.EmailTemplateRepository,
+	branding email.Branding,
+) *EngagementHandler {
+	return &EngagementHandler{
+		db:        db,
+		notifySvc: notifySvc,
+		sender:    sender,
+		tplRepo:   tplRepo,
+		branding:  branding,
+	}
 }
 
 type CreatePastoralCareRequest struct {
@@ -96,6 +116,7 @@ func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 			Roles:      []string{"admin", "super_admin"},
 		})
 	}
+	h.sendPastoralConfirmation(row)
 
 	utils.SuccessResponse(c, http.StatusCreated, "Pastoral care request submitted", row)
 }
@@ -142,6 +163,7 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 			Roles:      []string{"admin", "super_admin"},
 		})
 	}
+	h.sendGivingConfirmation(row)
 
 	utils.SuccessResponse(c, http.StatusCreated, "Giving intent captured", row)
 }
@@ -216,4 +238,126 @@ func (h *EngagementHandler) ListGivingIntents(c *gin.Context) {
 
 func engagementContextWithTimeout() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Second)
+}
+
+func (h *EngagementHandler) sendPastoralConfirmation(row models.PastoralCareRequest) {
+	if h.sender == nil {
+		return
+	}
+
+	addr := strings.TrimSpace(row.Email)
+	if addr == "" {
+		return
+	}
+
+	recipient := strings.TrimSpace(strings.Join([]string{row.FirstName, row.LastName}, " "))
+	subject := "Pastoral care request received"
+	data := map[string]any{
+		"Branding":      h.branding,
+		"RecipientName": recipient,
+		"ReferenceID":   row.ID,
+		"EventType":     row.EventType,
+		"EventDate":     row.EventDate,
+		"Request":       row,
+	}
+
+	body, subjectOverride := h.renderActiveTemplateByKey("pastoral_care_request_confirmation", data)
+	if subjectOverride != "" {
+		subject = subjectOverride
+	}
+	if strings.TrimSpace(body) == "" {
+		body = email.RenderPastoralCareConfirmationEmail(email.PastoralCareConfirmationTemplateData{
+			Branding:      h.branding,
+			RecipientName: recipient,
+			ReferenceID:   row.ID,
+			EventType:     row.EventType,
+			EventDate:     row.EventDate,
+		})
+	}
+
+	if err := h.sender.SendHTML(addr, subject, body); err != nil {
+		log.Printf("⚠️ failed to send pastoral care confirmation to %s: %v", addr, err)
+	}
+}
+
+func (h *EngagementHandler) sendGivingConfirmation(row models.GivingIntent) {
+	if h.sender == nil {
+		return
+	}
+
+	// Giving intent endpoint currently does not require recipient email. If metadata.email exists, use it.
+	addr := extractMetadataEmail(row.Metadata)
+	if addr == "" {
+		return
+	}
+
+	subject := "Giving request received"
+	data := map[string]any{
+		"Branding":      h.branding,
+		"RecipientName": "there",
+		"ReferenceID":   row.ID,
+		"Title":         row.Title,
+		"Intent":        row,
+	}
+
+	body, subjectOverride := h.renderActiveTemplateByKey("giving_intent_confirmation", data)
+	if subjectOverride != "" {
+		subject = subjectOverride
+	}
+	if strings.TrimSpace(body) == "" {
+		body = email.RenderGivingIntentConfirmationEmail(email.GivingIntentConfirmationTemplateData{
+			Branding:      h.branding,
+			RecipientName: "there",
+			ReferenceID:   row.ID,
+			Title:         row.Title,
+		})
+	}
+
+	if err := h.sender.SendHTML(addr, subject, body); err != nil {
+		log.Printf("⚠️ failed to send giving confirmation to %s: %v", addr, err)
+	}
+}
+
+func (h *EngagementHandler) renderActiveTemplateByKey(templateKey string, data any) (body string, subject string) {
+	if h.tplRepo == nil {
+		return "", ""
+	}
+	tpl, err := h.tplRepo.GetActiveByKey(strings.TrimSpace(templateKey))
+	if err != nil || tpl == nil || strings.TrimSpace(tpl.HTMLBody) == "" {
+		return "", ""
+	}
+
+	compiled, err := htmltemplate.New("engagement").Option("missingkey=zero").Parse(tpl.HTMLBody)
+	if err != nil {
+		log.Printf("⚠️ failed to parse email template %s: %v", templateKey, err)
+		return "", ""
+	}
+
+	var buf bytes.Buffer
+	if err := compiled.Execute(&buf, data); err != nil {
+		log.Printf("⚠️ failed to render email template %s: %v", templateKey, err)
+		return "", ""
+	}
+
+	var subjectOut string
+	if tpl.Subject != nil {
+		subjectOut = strings.TrimSpace(*tpl.Subject)
+	}
+	return buf.String(), subjectOut
+}
+
+func extractMetadataEmail(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return ""
+	}
+	if v, ok := meta["email"]; ok {
+		if s, ok := v.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }
