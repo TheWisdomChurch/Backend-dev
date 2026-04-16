@@ -134,12 +134,12 @@ func (r *workforceRepository) Stats() (*models.WorkforceStatsResponse, error) {
 		Scan(&buckets).Error
 
 	return &models.WorkforceStatsResponse{
-		Total:           total,
-		ByStatus:        byStatus,
-		ByDepartment:    byDepartment,
-		BySource:        bySource,
+		Total:                total,
+		ByStatus:             byStatus,
+		ByDepartment:         byDepartment,
+		BySource:             bySource,
 		FrontendByDepartment: frontendByDepartment,
-		ByDeptAndStatus: buckets,
+		ByDeptAndStatus:      buckets,
 	}, nil
 }
 
