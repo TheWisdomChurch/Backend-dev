@@ -144,6 +144,9 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.StoreProduct{},
 		&models.StoreOrder{},
 		&models.StoreOrderItem{},
+		&models.SiteContent{},
+		&models.PastoralCareRequest{},
+		&models.GivingIntent{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate: %w", err)

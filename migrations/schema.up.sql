@@ -185,6 +185,51 @@ CREATE TABLE IF NOT EXISTS public.notification_deliveries (
 );
 
 -- =========================
+-- CONTENT + ENGAGEMENT INTAKE
+-- =========================
+
+CREATE TABLE IF NOT EXISTS public.site_contents (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  key character varying(120) NOT NULL,
+  payload jsonb NOT NULL,
+  updated_by character varying(255),
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  CONSTRAINT site_contents_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.pastoral_care_requests (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title character varying(40) NOT NULL,
+  first_name character varying(120) NOT NULL,
+  last_name character varying(120) NOT NULL,
+  phone character varying(60) NOT NULL,
+  email character varying(255) NOT NULL,
+  address character varying(500) NOT NULL,
+  event_date character varying(20) NOT NULL,
+  event_type character varying(120) NOT NULL,
+  church_role character varying(120) NOT NULL,
+  custom_role character varying(120),
+  comments text,
+  source_channel character varying(120) NOT NULL DEFAULT 'frontend:web:pastoral-care',
+  metadata jsonb,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  CONSTRAINT pastoral_care_requests_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS public.giving_intents (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  title character varying(200) NOT NULL,
+  description text,
+  source_channel character varying(120) NOT NULL DEFAULT 'frontend:web:online-giving',
+  metadata jsonb,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  CONSTRAINT giving_intents_pkey PRIMARY KEY (id)
+);
+
+-- =========================
 -- WORKFORCE / MEMBERS
 -- =========================
 
@@ -602,6 +647,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_email_unique
   ON public.subscribers (email)
   WHERE deleted_at IS NULL;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_site_contents_key_unique
+  ON public.site_contents (key);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_forms_slug_unique
   ON public.forms (slug)
   WHERE slug IS NOT NULL AND deleted_at IS NULL;
@@ -663,6 +711,12 @@ CREATE INDEX IF NOT EXISTS idx_leadership_email
 
 CREATE INDEX IF NOT EXISTS idx_leadership_anniversary_month_day
   ON public.leadership_members (anniversary_month, anniversary_day);
+
+CREATE INDEX IF NOT EXISTS idx_pastoral_care_requests_created_at
+  ON public.pastoral_care_requests (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_giving_intents_created_at
+  ON public.giving_intents (created_at);
 
 CREATE INDEX IF NOT EXISTS idx_forms_event_id
   ON public.forms (event_id);
