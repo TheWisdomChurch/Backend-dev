@@ -27,8 +27,7 @@ type emailTemplateService struct {
 
 func NewEmailTemplateService(sender EmailSender, branding email.Branding) EmailTemplateService {
 	var store *email.TemplateStore
-	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" ||
-		strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" {
 		if ts, err := email.NewTemplateStoreFromEnv(); err == nil {
 			store = ts
 		}

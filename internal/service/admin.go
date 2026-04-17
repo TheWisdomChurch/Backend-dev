@@ -3,6 +3,7 @@ package service
 
 type AdminService interface {
 	GetDashboardStats() (interface{}, error)
+	GetSecurityOverview() (interface{}, error)
 	GetPendingTestimonials() (interface{}, error)
 	GetAllUsers() (interface{}, error)
 	GetUserByID(userID string) (interface{}, error)

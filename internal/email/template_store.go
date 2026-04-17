@@ -18,7 +18,7 @@ import (
 )
 
 type TemplateStore struct {
-	BaseURL        string        // e.g. https://churchasset.fra1.digitaloceanspaces.com/email_template
+	BaseURL        string
 	AllowedHosts   []string      // SSRF protection
 	TTL            time.Duration // cache TTL
 	MaxTemplateKB  int64         // templates size limit in KB
@@ -38,10 +38,10 @@ type cachedPair struct {
 var errTemplateNotFound = errors.New("template not found")
 
 func NewTemplateStoreFromEnv() (*TemplateStore, error) {
-	base := strings.TrimRight(firstEnv("S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"), "/")
-	path := strings.Trim(firstEnv("S3_EMAIL_TEMPLATE_PATH", "SPACES_EMAIL_TEMPLATE_PATH"), "/")
+	base := strings.TrimRight(firstEnv("S3_PUBLIC_BASE_URL"), "/")
+	path := strings.Trim(firstEnv("S3_EMAIL_TEMPLATE_PATH"), "/")
 	if base == "" {
-		base = deriveSpacesPublicBaseURL()
+		base = deriveS3PublicBaseURL()
 	}
 	if base == "" {
 		return nil, fmt.Errorf("S3_PUBLIC_BASE_URL is required for template fetch")
@@ -96,10 +96,10 @@ func NewTemplateStoreFromEnv() (*TemplateStore, error) {
 	}, nil
 }
 
-func deriveSpacesPublicBaseURL() string {
-	bucket := firstEnv("S3_BUCKET", "SPACES_BUCKET")
-	endpoint := firstEnv("S3_ENDPOINT", "SPACES_ENDPOINT")
-	region := firstEnv("S3_REGION", "SPACES_REGION")
+func deriveS3PublicBaseURL() string {
+	bucket := firstEnv("S3_BUCKET")
+	endpoint := firstEnv("S3_ENDPOINT")
+	region := firstEnv("S3_REGION")
 	if bucket == "" {
 		return ""
 	}
@@ -123,10 +123,6 @@ func deriveSpacesPublicBaseURL() string {
 				return scheme + "://" + host
 			}
 		}
-	}
-
-	if region != "" {
-		return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, region)
 	}
 
 	return ""

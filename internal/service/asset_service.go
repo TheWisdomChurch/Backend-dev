@@ -207,7 +207,7 @@ func resolveUploaderPublicBaseURL(uploader AssetUploader) string {
 			}
 		}
 	}
-	for _, key := range []string{"S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"} {
+	for _, key := range []string{"S3_PUBLIC_BASE_URL"} {
 		if base := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/"); base != "" {
 			return base
 		}
@@ -223,7 +223,7 @@ func resolveUploaderBucket(uploader AssetUploader) string {
 			}
 		}
 	}
-	for _, key := range []string{"S3_BUCKET", "SPACES_BUCKET"} {
+	for _, key := range []string{"S3_BUCKET"} {
 		if bucket := strings.TrimSpace(os.Getenv(key)); bucket != "" {
 			return bucket
 		}

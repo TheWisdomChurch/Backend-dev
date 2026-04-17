@@ -111,8 +111,7 @@ func NewFormService(
 	publicBaseURL string,
 ) FormService {
 	var tplStore *email.TemplateStore
-	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" ||
-		strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" {
 		if ts, err := email.NewTemplateStoreFromEnv(); err == nil {
 			tplStore = ts
 		}
