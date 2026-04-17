@@ -19,4 +19,3 @@ type ContactMessage struct {
 func (ContactMessage) TableName() string {
 	return "contact_messages"
 }
-
