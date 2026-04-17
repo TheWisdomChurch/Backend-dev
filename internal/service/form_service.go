@@ -135,6 +135,7 @@ func NewFormService(
 		workforceSvc:    workforceSvc,
 		memberSvc:       memberSvc,
 		leadershipSvc:   leadershipSvc,
+		testimonialSvc:  testimonialSvc,
 		sender:          sender,
 		branding:        branding,
 		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
