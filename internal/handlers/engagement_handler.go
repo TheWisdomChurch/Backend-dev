@@ -68,6 +68,17 @@ type CreateGivingIntentRequest struct {
 	Metadata      map[string]interface{} `json:"metadata"`
 }
 
+type CreateContactMessageRequest struct {
+	FirstName     string                 `json:"firstName" binding:"required"`
+	LastName      string                 `json:"lastName" binding:"required"`
+	Email         string                 `json:"email" binding:"required,email"`
+	Phone         string                 `json:"phone"`
+	Topic         string                 `json:"topic"`
+	Message       string                 `json:"message" binding:"required"`
+	SourceChannel string                 `json:"sourceChannel"`
+	Metadata      map[string]interface{} `json:"metadata"`
+}
+
 func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 	var req CreatePastoralCareRequest
 	if !validation.BindJSON(c, &req) {
@@ -168,6 +179,54 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Giving intent captured", row)
 }
 
+func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
+	var req CreateContactMessageRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+
+	source := strings.TrimSpace(req.SourceChannel)
+	if source == "" {
+		source = "frontend:web:contact"
+	}
+
+	row := models.ContactMessage{
+		FirstName:     strings.TrimSpace(req.FirstName),
+		LastName:      strings.TrimSpace(req.LastName),
+		Email:         strings.TrimSpace(req.Email),
+		Phone:         strings.TrimSpace(req.Phone),
+		Topic:         strings.TrimSpace(req.Topic),
+		Message:       strings.TrimSpace(req.Message),
+		SourceChannel: source,
+		Metadata:      req.Metadata,
+	}
+
+	ctx, cancel := engagementContextWithTimeout()
+	defer cancel()
+	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit contact message")
+		return
+	}
+
+	if h.notifySvc != nil {
+		fullName := strings.TrimSpace(strings.Join([]string{row.FirstName, row.LastName}, " "))
+		title := "New contact message"
+		message := fmt.Sprintf("%s sent a contact message (%s).", fullName, row.Topic)
+		entityType := "contact_message"
+		entityID := row.ID
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "contact_message",
+			Title:      title,
+			Message:    message,
+			EntityType: &entityType,
+			EntityID:   &entityID,
+			Roles:      []string{"admin", "super_admin"},
+		})
+	}
+
+	utils.SuccessResponse(c, http.StatusCreated, "Contact message submitted", row)
+}
+
 func (h *EngagementHandler) ListPastoralCareRequests(c *gin.Context) {
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
@@ -228,6 +287,40 @@ func (h *EngagementHandler) ListGivingIntents(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Giving intents loaded", gin.H{
+		"data":       items,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
+func (h *EngagementHandler) ListContactMessages(c *gin.Context) {
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
+	offset := (page - 1) * limit
+
+	ctx, cancel := engagementContextWithTimeout()
+	defer cancel()
+
+	var total int64
+	if err := h.db.WithContext(ctx).Model(&models.ContactMessage{}).Count(&total).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
+		return
+	}
+
+	var items []models.ContactMessage
+	if err := h.db.WithContext(ctx).
+		Model(&models.ContactMessage{}).
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&items).Error; err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Contact messages loaded", gin.H{
 		"data":       items,
 		"total":      total,
 		"page":       page,

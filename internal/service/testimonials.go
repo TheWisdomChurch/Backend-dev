@@ -218,7 +218,7 @@ func (s *testimonialService) ApproveTestimonial(id uuid.UUID, approver *models.U
 	return testimonial, nil
 }
 
-// maybeUploadImage uploads a base64/dataURL image to Spaces and returns the public URL pointer.
+// maybeUploadImage uploads a base64/dataURL image to S3-compatible storage and returns the public URL pointer.
 // If input is nil or already a URL (http/https), it is returned as-is.
 func (s *testimonialService) maybeUploadImage(image *string) (*string, error) {
 	if image == nil || s.uploader == nil {
