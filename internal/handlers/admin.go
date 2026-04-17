@@ -29,6 +29,15 @@ func (h *AdminHandler) GetDashboardStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Dashboard stats retrieved", stats)
 }
 
+func (h *AdminHandler) GetSecurityOverview(c *gin.Context) {
+	stats, err := h.svc.GetSecurityOverview()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load security overview")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Security overview retrieved", stats)
+}
+
 func (h *AdminHandler) GetPendingTestimonials(c *gin.Context) {
 	items, err := h.svc.GetPendingTestimonials()
 	if err != nil {

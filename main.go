@@ -693,6 +693,7 @@ func setupRouter(
 	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"))
 
 	admin.GET("/dashboard", adminHandler.GetDashboardStats)
+	admin.GET("/security/overview", adminHandler.GetSecurityOverview)
 	admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
 
 	admin.GET("/users", adminHandler.ListUsers)
@@ -700,7 +701,6 @@ func setupRouter(
 	admin.POST("/users", adminHandler.CreateUser)
 	admin.PATCH("/users/:id", adminHandler.UpdateUser)
 	admin.DELETE("/users/:id", adminHandler.DeleteUser)
-	admin.POST("/users/:id/approve", adminHandler.ApproveUser)
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 	admin.GET("/analytics/insights", analyticsHandler.GetDecisionInsights)
@@ -818,6 +818,7 @@ func setupRouter(
 	// Super-admin
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
+	superAdmin.POST("/users/:id/approve", adminHandler.ApproveUser)
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
 	superAdmin.POST("/leadership/:id/approve", leadershipHandler.Approve)
 	superAdmin.POST("/leadership/:id/decline", leadershipHandler.Decline)
@@ -874,10 +875,10 @@ func main() {
 	ensureCORSDefaults(cfg)
 
 	// -------------------------------------------------------------------------
-	// Asset uploader (S3-compatible: Supabase, Spaces, etc.)
+	// Asset uploader (S3-compatible)
 	// -------------------------------------------------------------------------
 	var assetUploader service.AssetUploader
-	if uploader, err := service.NewSpacesUploaderFromEnv(); err != nil {
+	if uploader, err := service.NewS3UploaderFromEnv(); err != nil {
 		logger.Printf("⚠️ Storage uploader not initialized: %v", err)
 	} else if uploader != nil {
 		assetUploader = uploader
@@ -971,8 +972,8 @@ func main() {
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
 	if templateAssetBaseURL == "" {
-		base := strings.TrimRight(firstNonEmptyEnv("S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"), "/")
-		path := strings.Trim(firstNonEmptyEnv("S3_EMAIL_TEMPLATE_PATH", "SPACES_EMAIL_TEMPLATE_PATH"), "/")
+		base := strings.TrimRight(firstNonEmptyEnv("S3_PUBLIC_BASE_URL"), "/")
+		path := strings.Trim(firstNonEmptyEnv("S3_EMAIL_TEMPLATE_PATH"), "/")
 		if base != "" && path != "" {
 			templateAssetBaseURL = base + "/" + path
 		} else if base != "" {
