@@ -124,7 +124,8 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 
 	// Template store (optional; only used when calling SendTemplateReceiptWithPDF)
 	var ts *TemplateStore
-	if strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" ||
+		strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
 		if store, err := NewTemplateStoreFromEnv(); err == nil {
 			ts = store
 		}
