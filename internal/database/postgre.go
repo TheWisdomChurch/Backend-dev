@@ -147,6 +147,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.SiteContent{},
 		&models.PastoralCareRequest{},
 		&models.GivingIntent{},
+		&models.ContactMessage{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to auto-migrate: %w", err)
