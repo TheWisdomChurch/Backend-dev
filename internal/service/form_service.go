@@ -83,14 +83,15 @@ type formService struct {
 	// So keep it as a pointer and nil-check works.
 	eventRepo *repository.EventRepository
 
-	sequenceRepo  *repository.RegistrationSequenceRepository
-	reminderRepo  repository.FormCalendarReminderRepository
-	templateRepo  repository.EmailTemplateRepository
-	workforceSvc  WorkforceService
-	memberSvc     MemberService
-	leadershipSvc LeadershipService
-	sender        EmailSender
-	branding      email.Branding
+	sequenceRepo   *repository.RegistrationSequenceRepository
+	reminderRepo   repository.FormCalendarReminderRepository
+	templateRepo   repository.EmailTemplateRepository
+	workforceSvc   WorkforceService
+	memberSvc      MemberService
+	leadershipSvc  LeadershipService
+	testimonialSvc TestimonialService
+	sender         EmailSender
+	branding       email.Branding
 
 	publicBaseURL   string
 	tplStore        *email.TemplateStore
@@ -106,6 +107,7 @@ func NewFormService(
 	workforceSvc WorkforceService,
 	memberSvc MemberService,
 	leadershipSvc LeadershipService,
+	testimonialSvc TestimonialService,
 	sender EmailSender,
 	branding email.Branding,
 	publicBaseURL string,
@@ -133,6 +135,7 @@ func NewFormService(
 		workforceSvc:    workforceSvc,
 		memberSvc:       memberSvc,
 		leadershipSvc:   leadershipSvc,
+		testimonialSvc:  testimonialSvc,
 		sender:          sender,
 		branding:        branding,
 		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
@@ -1452,10 +1455,10 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		switch target {
 		case "", "none":
 			s.SubmissionTarget = nil
-		case "workforce", "workforce_new", "workforce_serving", "member", "leadership":
+		case "workforce", "workforce_new", "workforce_serving", "member", "leadership", "testimonial":
 			s.SubmissionTarget = &target
 		default:
-			return nil, fmt.Errorf("submissionTarget must be workforce, workforce_new, workforce_serving, member, or leadership")
+			return nil, fmt.Errorf("submissionTarget must be workforce, workforce_new, workforce_serving, member, leadership, or testimonial")
 		}
 	}
 	if s.SubmissionDepartment, err = normalizeText("submissionDepartment", s.SubmissionDepartment, 120); err != nil {
@@ -4663,6 +4666,16 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		}
 		_, err = s.leadershipSvc.Apply(req)
 		return err
+	case "testimonial":
+		if s.testimonialSvc == nil {
+			return errors.New("testimonial service not configured")
+		}
+		req, err := buildTestimonialRequest(values)
+		if err != nil {
+			return err
+		}
+		_, err = s.testimonialSvc.CreateTestimonial(req)
+		return err
 	default:
 		return nil
 	}
@@ -4814,6 +4827,47 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 	if strings.TrimSpace(anniversary) != "" {
 		clean := strings.TrimSpace(anniversary)
 		req.Anniversary = &clean
+	}
+
+	return req, nil
+}
+
+func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRequest, error) {
+	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
+	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
+	if first == "" || last == "" {
+		full := valueAsString(values, "fullName", "full_name", "name")
+		if full != "" {
+			f, l := splitName(full)
+			if first == "" {
+				first = f
+			}
+			if last == "" {
+				last = l
+			}
+		}
+	}
+	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" {
+		return nil, errors.New("missing required testimonial fields")
+	}
+
+	testimony := strings.TrimSpace(valueAsString(values, "testimony", "testimonyText", "message", "content", "story", "note", "notes"))
+	if testimony == "" {
+		return nil, errors.New("missing required testimonial fields")
+	}
+
+	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))
+	isAnonymousRaw := strings.ToLower(strings.TrimSpace(valueAsString(values, "isAnonymous", "anonymous")))
+	isAnonymous := isAnonymousRaw == "true" || isAnonymousRaw == "1" || isAnonymousRaw == "yes"
+
+	req := &models.CreateTestimonialRequest{
+		FirstName:   strings.TrimSpace(first),
+		LastName:    strings.TrimSpace(last),
+		Testimony:   testimony,
+		IsAnonymous: isAnonymous,
+	}
+	if imageURL != "" {
+		req.ImageURL = &imageURL
 	}
 
 	return req, nil

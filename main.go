@@ -1072,6 +1072,7 @@ func main() {
 		workforceService,
 		memberService,
 		leadershipService,
+		testimonialService,
 		emailSender,
 		branding,
 		publicBaseURL,
