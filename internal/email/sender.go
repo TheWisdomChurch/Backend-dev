@@ -124,8 +124,7 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 
 	// Template store (optional; only used when calling SendTemplateReceiptWithPDF)
 	var ts *TemplateStore
-	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" ||
-		strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")) != "" {
+	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" {
 		if store, err := NewTemplateStoreFromEnv(); err == nil {
 			ts = store
 		}
@@ -252,7 +251,7 @@ func (s *Sender) SendMultipartWithAttachment(
 	})
 }
 
-// SendTemplateReceiptWithPDF fetches templates from Spaces, enforces size limits (in TemplateStore),
+// SendTemplateReceiptWithPDF fetches templates from S3, enforces size limits (in TemplateStore),
 // optionally embeds images <= MaxInlineImgMB, and attaches the encrypted PDF.
 func (s *Sender) SendTemplateReceiptWithPDF(
 	ctx context.Context,
@@ -264,7 +263,7 @@ func (s *Sender) SendTemplateReceiptWithPDF(
 	encryptedPDF []byte,
 ) error {
 	if s.tplStore == nil {
-		return fmt.Errorf("template store not configured: check SPACES_PUBLIC_BASE_URL and SPACES_EMAIL_TEMPLATE_PATH")
+		return fmt.Errorf("template store not configured: check S3_PUBLIC_BASE_URL and S3_EMAIL_TEMPLATE_PATH")
 	}
 
 	textBody, htmlBody, rawHTML, err := s.tplStore.Render(ctx, templateKey, data)
