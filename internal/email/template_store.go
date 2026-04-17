@@ -38,13 +38,13 @@ type cachedPair struct {
 var errTemplateNotFound = errors.New("template not found")
 
 func NewTemplateStoreFromEnv() (*TemplateStore, error) {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
-	path := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_EMAIL_TEMPLATE_PATH")), "/")
+	base := strings.TrimRight(firstEnv("S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"), "/")
+	path := strings.Trim(firstEnv("S3_EMAIL_TEMPLATE_PATH", "SPACES_EMAIL_TEMPLATE_PATH"), "/")
 	if base == "" {
 		base = deriveSpacesPublicBaseURL()
 	}
 	if base == "" {
-		return nil, fmt.Errorf("SPACES_PUBLIC_BASE_URL is required for template fetch")
+		return nil, fmt.Errorf("S3_PUBLIC_BASE_URL is required for template fetch")
 	}
 
 	baseURL := base
@@ -97,9 +97,9 @@ func NewTemplateStoreFromEnv() (*TemplateStore, error) {
 }
 
 func deriveSpacesPublicBaseURL() string {
-	bucket := strings.TrimSpace(os.Getenv("SPACES_BUCKET"))
-	endpoint := strings.TrimSpace(os.Getenv("SPACES_ENDPOINT"))
-	region := strings.TrimSpace(os.Getenv("SPACES_REGION"))
+	bucket := firstEnv("S3_BUCKET", "SPACES_BUCKET")
+	endpoint := firstEnv("S3_ENDPOINT", "SPACES_ENDPOINT")
+	region := firstEnv("S3_REGION", "SPACES_REGION")
 	if bucket == "" {
 		return ""
 	}
@@ -129,6 +129,16 @@ func deriveSpacesPublicBaseURL() string {
 		return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, region)
 	}
 
+	return ""
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val != "" {
+			return val
+		}
+	}
 	return ""
 }
 
