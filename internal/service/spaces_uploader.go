@@ -19,32 +19,40 @@ import (
 	"github.com/google/uuid"
 )
 
-// SpacesUploader implements AssetUploader using S3-compatible storage (DigitalOcean Spaces).
-type SpacesUploader struct {
+// S3Uploader implements AssetUploader using S3-compatible object storage.
+type S3Uploader struct {
 	bucket        string
 	basePath      string
 	publicBaseURL string
 	publicRead    bool
+	provider      string
 	client        *s3.Client
 }
 
-// NewSpacesUploaderFromEnv builds an uploader from SPACES_* env vars.
-// Returns (nil, nil) when no Spaces configuration is present.
-func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
-	bucket := strings.TrimSpace(os.Getenv("SPACES_BUCKET"))
-	accessKey := strings.TrimSpace(os.Getenv("SPACES_ACCESS_KEY"))
-	secretKey := strings.TrimSpace(os.Getenv("SPACES_SECRET_KEY"))
-	endpoint := strings.TrimSpace(os.Getenv("SPACES_ENDPOINT"))
-	region := strings.TrimSpace(os.Getenv("SPACES_REGION"))
-	publicBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
-	basePath := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_BASE_PATH")), "/")
+// NewS3UploaderFromEnv builds an uploader from S3_* env vars.
+// Returns (nil, nil) when no storage configuration is present.
+func NewS3UploaderFromEnv() (*S3Uploader, error) {
+	bucket := firstEnv("S3_BUCKET")
+	accessKey := firstEnv("S3_ACCESS_KEY")
+	secretKey := firstEnv("S3_SECRET_KEY")
+	endpoint := firstEnv("S3_ENDPOINT")
+	region := firstEnv("S3_REGION")
+	publicBaseURL := strings.TrimRight(
+		firstEnv("S3_PUBLIC_BASE_URL"),
+		"/",
+	)
+	basePath := strings.Trim(firstEnv("S3_BASE_PATH"), "/")
+	provider := strings.ToLower(firstEnv("S3_PROVIDER", "STORAGE_PROVIDER"))
+	if provider == "" {
+		provider = "s3"
+	}
 
 	if bucket == "" && accessKey == "" && secretKey == "" && endpoint == "" && publicBaseURL == "" && region == "" {
 		return nil, nil
 	}
 
 	if bucket == "" || accessKey == "" || secretKey == "" {
-		return nil, errors.New("spaces config incomplete: require SPACES_BUCKET, SPACES_ACCESS_KEY, SPACES_SECRET_KEY")
+		return nil, errors.New("storage config incomplete: require S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY")
 	}
 
 	if region == "" {
@@ -56,10 +64,10 @@ func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
 		publicBaseURL = derivePublicBaseURL(bucket, endpoint, region)
 	}
 	if publicBaseURL == "" {
-		return nil, errors.New("SPACES_PUBLIC_BASE_URL is required to build public URLs")
+		return nil, errors.New("S3_PUBLIC_BASE_URL is required to build public URLs")
 	}
 
-	publicRead := parseBoolEnv("SPACES_PUBLIC_READ", true)
+	publicRead := parseBoolEnv("S3_PUBLIC_READ", true)
 
 	loadOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
@@ -82,7 +90,7 @@ func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
 
 	cfg, err := config.LoadDefaultConfig(context.Background(), loadOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("spaces config load failed: %w", err)
+		return nil, fmt.Errorf("s3 config load failed: %w", err)
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
@@ -91,16 +99,17 @@ func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
 		}
 	})
 
-	return &SpacesUploader{
+	return &S3Uploader{
 		bucket:        bucket,
 		basePath:      basePath,
 		publicBaseURL: publicBaseURL,
 		publicRead:    publicRead,
+		provider:      provider,
 		client:        client,
 	}, nil
 }
 
-func (s *SpacesUploader) Upload(ctx context.Context, objectKey string, contentType string, r io.Reader) (string, error) {
+func (s *S3Uploader) Upload(ctx context.Context, objectKey string, contentType string, r io.Reader) (string, error) {
 	if s == nil || s.client == nil {
 		return "", errors.New("uploader not configured")
 	}
@@ -129,7 +138,7 @@ func (s *SpacesUploader) Upload(ctx context.Context, objectKey string, contentTy
 }
 
 // PresignPut creates a pre-signed PUT URL for direct uploads.
-func (s *SpacesUploader) PresignPut(ctx context.Context, objectKey string, contentType string, expires time.Duration) (string, error) {
+func (s *S3Uploader) PresignPut(ctx context.Context, objectKey string, contentType string, expires time.Duration) (string, error) {
 	if s == nil || s.client == nil {
 		return "", errors.New("uploader not configured")
 	}
@@ -160,7 +169,7 @@ func (s *SpacesUploader) PresignPut(ctx context.Context, objectKey string, conte
 	return out.URL, nil
 }
 
-func (s *SpacesUploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {
+func (s *S3Uploader) BuildEventAssetKey(eventID, kind, ext string) (string, error) {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return "", errors.New("eventID is required")
@@ -178,7 +187,7 @@ func (s *SpacesUploader) BuildEventAssetKey(eventID, kind, ext string) (string, 
 	return s.withBasePath(key), nil
 }
 
-func (s *SpacesUploader) BuildTestimonialImageKey(ext string) (string, error) {
+func (s *S3Uploader) BuildTestimonialImageKey(ext string) (string, error) {
 	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
 	if ext == "" {
 		return "", errors.New("ext is required")
@@ -187,7 +196,7 @@ func (s *SpacesUploader) BuildTestimonialImageKey(ext string) (string, error) {
 	return s.withBasePath(key), nil
 }
 
-func (s *SpacesUploader) BuildGenericAssetKey(folder, ext string) (string, error) {
+func (s *S3Uploader) BuildGenericAssetKey(folder, ext string) (string, error) {
 	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
 	if ext == "" {
 		return "", errors.New("ext is required")
@@ -200,7 +209,7 @@ func (s *SpacesUploader) BuildGenericAssetKey(folder, ext string) (string, error
 	return s.withBasePath(key), nil
 }
 
-func (s *SpacesUploader) withBasePath(key string) string {
+func (s *S3Uploader) withBasePath(key string) string {
 	if s == nil {
 		return key
 	}
@@ -209,6 +218,31 @@ func (s *SpacesUploader) withBasePath(key string) string {
 		return k
 	}
 	return path.Join(s.basePath, k)
+}
+
+func (s *S3Uploader) PublicBaseURL() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(s.publicBaseURL), "/")
+}
+
+func (s *S3Uploader) Bucket() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.bucket)
+}
+
+func (s *S3Uploader) ProviderName() string {
+	if s == nil {
+		return "s3"
+	}
+	provider := strings.TrimSpace(s.provider)
+	if provider == "" {
+		return "s3"
+	}
+	return provider
 }
 
 func sanitizeFolder(folder string) (string, error) {
@@ -265,10 +299,6 @@ func derivePublicBaseURL(bucket, endpoint, region string) string {
 		}
 	}
 
-	if strings.TrimSpace(region) != "" {
-		return fmt.Sprintf("https://%s.%s.digitaloceanspaces.com", bucket, strings.TrimSpace(region))
-	}
-
 	return ""
 }
 
@@ -285,4 +315,14 @@ func parseBoolEnv(key string, defaultValue bool) bool {
 	default:
 		return defaultValue
 	}
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val != "" {
+			return val
+		}
+	}
+	return ""
 }
