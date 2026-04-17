@@ -99,7 +99,6 @@ func NewTemplateStoreFromEnv() (*TemplateStore, error) {
 func deriveS3PublicBaseURL() string {
 	bucket := firstEnv("S3_BUCKET")
 	endpoint := firstEnv("S3_ENDPOINT")
-	region := firstEnv("S3_REGION")
 	if bucket == "" {
 		return ""
 	}
