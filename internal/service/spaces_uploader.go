@@ -19,32 +19,42 @@ import (
 	"github.com/google/uuid"
 )
 
-// SpacesUploader implements AssetUploader using S3-compatible storage (DigitalOcean Spaces).
+// SpacesUploader implements AssetUploader using S3-compatible object storage
+// (Supabase S3, DigitalOcean Spaces, and similar providers).
 type SpacesUploader struct {
 	bucket        string
 	basePath      string
 	publicBaseURL string
 	publicRead    bool
+	provider      string
 	client        *s3.Client
 }
 
-// NewSpacesUploaderFromEnv builds an uploader from SPACES_* env vars.
-// Returns (nil, nil) when no Spaces configuration is present.
+// NewSpacesUploaderFromEnv builds an uploader from S3_* env vars
+// with SPACES_* kept as backward-compatible fallbacks.
+// Returns (nil, nil) when no storage configuration is present.
 func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
-	bucket := strings.TrimSpace(os.Getenv("SPACES_BUCKET"))
-	accessKey := strings.TrimSpace(os.Getenv("SPACES_ACCESS_KEY"))
-	secretKey := strings.TrimSpace(os.Getenv("SPACES_SECRET_KEY"))
-	endpoint := strings.TrimSpace(os.Getenv("SPACES_ENDPOINT"))
-	region := strings.TrimSpace(os.Getenv("SPACES_REGION"))
-	publicBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
-	basePath := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_BASE_PATH")), "/")
+	bucket := firstEnv("S3_BUCKET", "SPACES_BUCKET")
+	accessKey := firstEnv("S3_ACCESS_KEY", "SPACES_ACCESS_KEY")
+	secretKey := firstEnv("S3_SECRET_KEY", "SPACES_SECRET_KEY")
+	endpoint := firstEnv("S3_ENDPOINT", "SPACES_ENDPOINT")
+	region := firstEnv("S3_REGION", "SPACES_REGION")
+	publicBaseURL := strings.TrimRight(
+		firstEnv("S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"),
+		"/",
+	)
+	basePath := strings.Trim(firstEnv("S3_BASE_PATH", "SPACES_BASE_PATH"), "/")
+	provider := strings.ToLower(firstEnv("S3_PROVIDER", "STORAGE_PROVIDER"))
+	if provider == "" {
+		provider = "s3"
+	}
 
 	if bucket == "" && accessKey == "" && secretKey == "" && endpoint == "" && publicBaseURL == "" && region == "" {
 		return nil, nil
 	}
 
 	if bucket == "" || accessKey == "" || secretKey == "" {
-		return nil, errors.New("spaces config incomplete: require SPACES_BUCKET, SPACES_ACCESS_KEY, SPACES_SECRET_KEY")
+		return nil, errors.New("storage config incomplete: require S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY")
 	}
 
 	if region == "" {
@@ -56,10 +66,10 @@ func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
 		publicBaseURL = derivePublicBaseURL(bucket, endpoint, region)
 	}
 	if publicBaseURL == "" {
-		return nil, errors.New("SPACES_PUBLIC_BASE_URL is required to build public URLs")
+		return nil, errors.New("S3_PUBLIC_BASE_URL is required to build public URLs")
 	}
 
-	publicRead := parseBoolEnv("SPACES_PUBLIC_READ", true)
+	publicRead := parseBoolEnvWithFallback([]string{"S3_PUBLIC_READ", "SPACES_PUBLIC_READ"}, true)
 
 	loadOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
@@ -96,6 +106,7 @@ func NewSpacesUploaderFromEnv() (*SpacesUploader, error) {
 		basePath:      basePath,
 		publicBaseURL: publicBaseURL,
 		publicRead:    publicRead,
+		provider:      provider,
 		client:        client,
 	}, nil
 }
@@ -211,6 +222,31 @@ func (s *SpacesUploader) withBasePath(key string) string {
 	return path.Join(s.basePath, k)
 }
 
+func (s *SpacesUploader) PublicBaseURL() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(s.publicBaseURL), "/")
+}
+
+func (s *SpacesUploader) Bucket() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.bucket)
+}
+
+func (s *SpacesUploader) ProviderName() string {
+	if s == nil {
+		return "s3"
+	}
+	provider := strings.TrimSpace(s.provider)
+	if provider == "" {
+		return "s3"
+	}
+	return provider
+}
+
 func sanitizeFolder(folder string) (string, error) {
 	f := strings.Trim(strings.TrimSpace(folder), "/")
 	if f == "" {
@@ -285,4 +321,32 @@ func parseBoolEnv(key string, defaultValue bool) bool {
 	default:
 		return defaultValue
 	}
+}
+
+func parseBoolEnvWithFallback(keys []string, defaultValue bool) bool {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		switch strings.ToLower(val) {
+		case "1", "true", "t", "yes", "y", "on":
+			return true
+		case "0", "false", "f", "no", "n", "off":
+			return false
+		default:
+			return defaultValue
+		}
+	}
+	return defaultValue
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val != "" {
+			return val
+		}
+	}
+	return ""
 }

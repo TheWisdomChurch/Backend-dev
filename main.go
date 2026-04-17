@@ -852,7 +852,7 @@ func main() {
 	ensureCORSDefaults(cfg)
 
 	// -------------------------------------------------------------------------
-	// Asset uploader (DigitalOcean Spaces / S3)
+	// Asset uploader (S3-compatible: Supabase, Spaces, etc.)
 	// -------------------------------------------------------------------------
 	var assetUploader service.AssetUploader
 	if uploader, err := service.NewSpacesUploaderFromEnv(); err != nil {

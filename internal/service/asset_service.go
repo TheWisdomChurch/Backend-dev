@@ -86,7 +86,7 @@ func (s *assetService) PresignUpload(req *models.PresignAssetRequest, createdBy 
 		return nil, err
 	}
 
-	publicBase := resolveSpacesPublicBaseURL(s.uploader)
+	publicBase := resolveUploaderPublicBaseURL(s.uploader)
 	if publicBase == "" {
 		return nil, errors.New("public url base not configured")
 	}
@@ -99,8 +99,8 @@ func (s *assetService) PresignUpload(req *models.PresignAssetRequest, createdBy 
 		OwnerType:   nilIfEmpty(ownerType),
 		OwnerID:     nilIfEmpty(ownerID),
 		Kind:        nilIfEmpty(kind),
-		Provider:    "spaces",
-		Bucket:      strings.TrimSpace(os.Getenv("SPACES_BUCKET")),
+		Provider:    resolveUploaderProvider(s.uploader),
+		Bucket:      resolveUploaderBucket(s.uploader),
 		ObjectKey:   objectKey,
 		PublicURL:   publicURL,
 		ContentType: nilIfEmpty(ct),
@@ -199,20 +199,52 @@ func extFromContentType(ct string) (string, error) {
 	}
 }
 
-func resolveSpacesPublicBaseURL(uploader AssetUploader) string {
+func resolveUploaderPublicBaseURL(uploader AssetUploader) string {
 	if uploader != nil {
-		if spaces, ok := uploader.(*SpacesUploader); ok {
-			if base := strings.TrimRight(strings.TrimSpace(spaces.publicBaseURL), "/"); base != "" {
-				return base
-			}
-		}
 		if provider, ok := uploader.(interface{ PublicBaseURL() string }); ok {
 			if base := strings.TrimRight(strings.TrimSpace(provider.PublicBaseURL()), "/"); base != "" {
 				return base
 			}
 		}
 	}
-	return strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
+	for _, key := range []string{"S3_PUBLIC_BASE_URL", "SPACES_PUBLIC_BASE_URL"} {
+		if base := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/"); base != "" {
+			return base
+		}
+	}
+	return ""
+}
+
+func resolveUploaderBucket(uploader AssetUploader) string {
+	if uploader != nil {
+		if provider, ok := uploader.(interface{ Bucket() string }); ok {
+			if bucket := strings.TrimSpace(provider.Bucket()); bucket != "" {
+				return bucket
+			}
+		}
+	}
+	for _, key := range []string{"S3_BUCKET", "SPACES_BUCKET"} {
+		if bucket := strings.TrimSpace(os.Getenv(key)); bucket != "" {
+			return bucket
+		}
+	}
+	return ""
+}
+
+func resolveUploaderProvider(uploader AssetUploader) string {
+	if uploader != nil {
+		if provider, ok := uploader.(interface{ ProviderName() string }); ok {
+			if name := strings.TrimSpace(provider.ProviderName()); name != "" {
+				return name
+			}
+		}
+	}
+	for _, key := range []string{"S3_PROVIDER", "STORAGE_PROVIDER"} {
+		if name := strings.TrimSpace(os.Getenv(key)); name != "" {
+			return strings.ToLower(name)
+		}
+	}
+	return "s3"
 }
 
 func nilIfEmpty(v string) *string {
