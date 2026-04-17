@@ -20,7 +20,7 @@ import (
 
 type EventHandler struct {
 	repo        *repository.EventRepository
-	spaces      service.AssetUploader
+	storage     service.AssetUploader
 	userRepo    repository.UserRepository
 	approvalSvc service.ApprovalService
 	notifySvc   service.AdminNotificationService
@@ -28,14 +28,14 @@ type EventHandler struct {
 
 func NewEventHandler(
 	repo *repository.EventRepository,
-	spaces service.AssetUploader,
+	storage service.AssetUploader,
 	userRepo repository.UserRepository,
 	approvalSvc service.ApprovalService,
 	notifySvc service.AdminNotificationService,
 ) *EventHandler {
 	return &EventHandler{
 		repo:        repo,
-		spaces:      spaces,
+		storage:     storage,
 		userRepo:    userRepo,
 		approvalSvc: approvalSvc,
 		notifySvc:   notifySvc,
@@ -333,7 +333,7 @@ func (h *EventHandler) UploadImage(c *gin.Context)  { h.uploadEventAsset(c, "ima
 func (h *EventHandler) UploadBanner(c *gin.Context) { h.uploadEventAsset(c, "banner") }
 
 func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
-	if h.spaces == nil {
+	if h.storage == nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Storage uploader not configured")
 		return
 	}
@@ -366,7 +366,7 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		return
 	}
 
-	objectKey, err := h.spaces.BuildEventAssetKey(eventID, kind, ext)
+	objectKey, err := h.storage.BuildEventAssetKey(eventID, kind, ext)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
 		return
@@ -375,7 +375,7 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 
-	cdnURL, err := h.spaces.Upload(ctx, objectKey, ct, src)
+	cdnURL, err := h.storage.Upload(ctx, objectKey, ct, src)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
 		return
