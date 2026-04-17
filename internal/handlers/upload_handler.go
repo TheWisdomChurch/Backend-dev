@@ -12,15 +12,15 @@ import (
 )
 
 type UploadHandler struct {
-	spaces service.AssetUploader
+	storage service.AssetUploader
 }
 
-func NewUploadHandler(spaces service.AssetUploader) *UploadHandler {
-	return &UploadHandler{spaces: spaces}
+func NewUploadHandler(storage service.AssetUploader) *UploadHandler {
+	return &UploadHandler{storage: storage}
 }
 
 func (h *UploadHandler) UploadImage(c *gin.Context) {
-	if h.spaces == nil {
+	if h.storage == nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Storage uploader not configured")
 		return
 	}
@@ -53,7 +53,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 
 	folder := c.DefaultPostForm("folder", "uploads")
 
-	objectKey, err := h.spaces.BuildGenericAssetKey(folder, ext)
+	objectKey, err := h.storage.BuildGenericAssetKey(folder, ext)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
 		return
@@ -62,7 +62,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
 	defer cancel()
 
-	cdnURL, err := h.spaces.Upload(ctx, objectKey, ct, src)
+	cdnURL, err := h.storage.Upload(ctx, objectKey, ct, src)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
 		return
