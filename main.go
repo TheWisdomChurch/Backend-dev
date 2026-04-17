@@ -59,20 +59,24 @@ func hasAnyEnv(keys ...string) bool {
 	return false
 }
 
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func ensureCORSDefaults(cfg *config.Config) {
 	if cfg == nil {
-		return
-	}
-
-	// If CORS_ALLOW_ORIGIN is explicitly set, respect it.
-	if v, ok := os.LookupEnv("CORS_ALLOW_ORIGIN"); ok && strings.TrimSpace(v) != "" {
 		return
 	}
 
 	// Otherwise, ensure app URLs are allowed (useful for production).
 	existing := make(map[string]struct{}, len(cfg.CORS.AllowedOrigins))
 	for _, o := range cfg.CORS.AllowedOrigins {
-		o = strings.TrimSpace(o)
+		o = normalizeCORSOrigin(o)
 		if o == "" {
 			continue
 		}
@@ -80,8 +84,10 @@ func ensureCORSDefaults(cfg *config.Config) {
 	}
 
 	candidates := []string{
-		strings.TrimSpace(cfg.App.FrontendURL),
-		strings.TrimSpace(cfg.App.AdminPortalURL),
+		normalizeCORSOrigin(cfg.App.FrontendURL),
+		normalizeCORSOrigin(cfg.App.AdminPortalURL),
+		"https://wisdomchurchhq.org",
+		"https://www.wisdomchurchhq.org",
 	}
 	for _, c := range candidates {
 		if c == "" {
@@ -97,6 +103,20 @@ func ensureCORSDefaults(cfg *config.Config) {
 	if len(cfg.CORS.AllowedOrigins) == 0 {
 		cfg.CORS.AllowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
 	}
+}
+
+func normalizeCORSOrigin(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	if strings.Contains(value, "://") {
+		return ""
+	}
+	return "https://" + value
 }
 
 type chainedEmailSender struct {
@@ -645,6 +665,7 @@ func setupRouter(
 	api.GET("/giving/options", givingHandler.ListOptions)
 	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
+	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
 	api.GET("/content/homepage-ad", siteContentHandler.GetHomepageAd)
 	api.GET("/content/confession-popup", siteContentHandler.GetConfessionPopup)
 
@@ -672,6 +693,7 @@ func setupRouter(
 	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"))
 
 	admin.GET("/dashboard", adminHandler.GetDashboardStats)
+	admin.GET("/security/overview", adminHandler.GetSecurityOverview)
 	admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
 
 	admin.GET("/users", adminHandler.ListUsers)
@@ -679,7 +701,6 @@ func setupRouter(
 	admin.POST("/users", adminHandler.CreateUser)
 	admin.PATCH("/users/:id", adminHandler.UpdateUser)
 	admin.DELETE("/users/:id", adminHandler.DeleteUser)
-	admin.POST("/users/:id/approve", adminHandler.ApproveUser)
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 	admin.GET("/analytics/insights", analyticsHandler.GetDecisionInsights)
@@ -689,6 +710,7 @@ func setupRouter(
 	admin.PUT("/content/confession-popup", siteContentHandler.UpdateAdminConfessionPopup)
 	admin.GET("/pastoral-care/requests", engagementHandler.ListPastoralCareRequests)
 	admin.GET("/giving/intents", engagementHandler.ListGivingIntents)
+	admin.GET("/contact/messages", engagementHandler.ListContactMessages)
 
 	// Forms
 	// Forms
@@ -796,6 +818,7 @@ func setupRouter(
 	// Super-admin
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
+	superAdmin.POST("/users/:id/approve", adminHandler.ApproveUser)
 	superAdmin.POST("/workforce/:id/approve", workforceHandler.Approve)
 	superAdmin.POST("/leadership/:id/approve", leadershipHandler.Approve)
 	superAdmin.POST("/leadership/:id/decline", leadershipHandler.Decline)
@@ -852,14 +875,14 @@ func main() {
 	ensureCORSDefaults(cfg)
 
 	// -------------------------------------------------------------------------
-	// Asset uploader (DigitalOcean Spaces / S3)
+	// Asset uploader (S3-compatible)
 	// -------------------------------------------------------------------------
 	var assetUploader service.AssetUploader
-	if uploader, err := service.NewSpacesUploaderFromEnv(); err != nil {
+	if uploader, err := service.NewS3UploaderFromEnv(); err != nil {
 		logger.Printf("⚠️ Storage uploader not initialized: %v", err)
 	} else if uploader != nil {
 		assetUploader = uploader
-		logger.Println("✅ Storage uploader initialized (Spaces)")
+		logger.Println("✅ Storage uploader initialized (S3-compatible)")
 	}
 
 	// Database
@@ -949,8 +972,8 @@ func main() {
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
 	if templateAssetBaseURL == "" {
-		base := strings.TrimRight(strings.TrimSpace(os.Getenv("SPACES_PUBLIC_BASE_URL")), "/")
-		path := strings.Trim(strings.TrimSpace(os.Getenv("SPACES_EMAIL_TEMPLATE_PATH")), "/")
+		base := strings.TrimRight(firstNonEmptyEnv("S3_PUBLIC_BASE_URL"), "/")
+		path := strings.Trim(firstNonEmptyEnv("S3_EMAIL_TEMPLATE_PATH"), "/")
 		if base != "" && path != "" {
 			templateAssetBaseURL = base + "/" + path
 		} else if base != "" {

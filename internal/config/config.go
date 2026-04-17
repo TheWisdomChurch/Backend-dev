@@ -22,42 +22,6 @@ type Config struct {
 	JWT       JWTConfig       `json:"jwt"`
 	Auth      AuthConfig      `json:"auth"`
 	App       AppConfig       `json:"app"`
-
-	// BunnyCDN / Bunny Storage config (OPTIONAL)
-	Bunny BunnyConfig `json:"bunny"`
-}
-
-/* ========================================================================== */
-/*  BunnyCDN                                                                 */
-/* ========================================================================== */
-
-type BunnyConfig struct {
-	StorageZone   string `json:"storage_zone" env:"BUNNYCDN_STORAGE_ZONE"`
-	StorageKey    string `json:"-" env:"BUNNYCDN_STORAGE_KEY"`
-	StorageRegion string `json:"storage_region" env:"BUNNYCDN_STORAGE_REGION"`
-	PullZone      string `json:"pull_zone" env:"BUNNYCDN_PULL_ZONE"`
-	BasePath      string `json:"base_path" env:"BUNNYCDN_BASE_PATH"`
-}
-
-func (b BunnyConfig) Enabled() bool {
-	return strings.TrimSpace(b.StorageZone) != "" &&
-		strings.TrimSpace(b.StorageKey) != "" &&
-		strings.TrimSpace(b.PullZone) != ""
-}
-
-func (b BunnyConfig) Validate() error {
-	zone := strings.TrimSpace(b.StorageZone)
-	key := strings.TrimSpace(b.StorageKey)
-	pull := strings.TrimRight(strings.TrimSpace(b.PullZone), "/")
-
-	// If none of the core fields are set, treat as disabled.
-	if zone == "" && key == "" && pull == "" {
-		return nil
-	}
-	if zone == "" || key == "" || pull == "" {
-		return fmt.Errorf("BunnyCDN config incomplete: require BUNNYCDN_STORAGE_ZONE, BUNNYCDN_STORAGE_KEY, BUNNYCDN_PULL_ZONE (and optionally BUNNYCDN_STORAGE_REGION)")
-	}
-	return nil
 }
 
 /* ========================================================================== */
@@ -339,13 +303,6 @@ func Load() (*Config, error) {
 			FormCleanupInterval:       getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
 			EmailTemplateAssetBaseURL: strings.TrimRight(getEnv("APP_EMAIL_TEMPLATE_ASSET_BASE_URL", ""), "/"),
 		},
-		Bunny: BunnyConfig{
-			StorageZone:   getEnv("BUNNYCDN_STORAGE_ZONE", ""),
-			StorageKey:    getEnv("BUNNYCDN_STORAGE_KEY", ""),
-			StorageRegion: getEnv("BUNNYCDN_STORAGE_REGION", "de"),
-			PullZone:      strings.TrimRight(getEnv("BUNNYCDN_PULL_ZONE", ""), "/"),
-			BasePath:      strings.Trim(strings.TrimSpace(getEnv("BUNNYCDN_BASE_PATH", "uploads")), "/"),
-		},
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -469,9 +426,6 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	if err := cfg.Bunny.Validate(); err != nil {
-		return err
-	}
 	return nil
 }
 

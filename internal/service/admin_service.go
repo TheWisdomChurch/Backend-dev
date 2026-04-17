@@ -4,6 +4,7 @@ package service
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -127,6 +128,71 @@ func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
 		"pending_approvals":  0,
 		"total_users":        0,
 		"recent_activity":    []map[string]interface{}{},
+	}, nil
+}
+
+func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
+	if s.userRepo == nil {
+		return map[string]interface{}{}, nil
+	}
+
+	users, err := s.userRepo.FindAll()
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		totalUsers            int
+		activeUsers           int
+		adminUsers            int
+		pendingAdminApprovals int
+		totpEnabledUsers      int
+	)
+
+	for _, user := range users {
+		totalUsers++
+		if user.IsActive {
+			activeUsers++
+		}
+		if user.Role == "admin" {
+			adminUsers++
+			if !user.AdminApproved {
+				pendingAdminApprovals++
+			}
+		}
+		if user.TOTPEnabled {
+			totpEnabledUsers++
+		}
+	}
+
+	pendingRequests := 0
+	if s.approvalSvc != nil {
+		items, listErr := s.approvalSvc.ListRequests(
+			nil,
+			[]models.ApprovalRequestStatus{models.ApprovalStatusPending},
+			nil,
+			nil,
+			200,
+		)
+		if listErr == nil {
+			pendingRequests = len(items)
+		}
+	}
+
+	securityScore := 0
+	if totalUsers > 0 {
+		securityScore = int(float64(totpEnabledUsers) / float64(totalUsers) * 100)
+	}
+
+	return map[string]interface{}{
+		"generatedAt":            time.Now().UTC(),
+		"totalUsers":             totalUsers,
+		"activeUsers":            activeUsers,
+		"adminUsers":             adminUsers,
+		"pendingAdminApprovals":  pendingAdminApprovals,
+		"pendingApprovalRequests": pendingRequests,
+		"totpEnabledUsers":       totpEnabledUsers,
+		"securityScore":          securityScore,
 	}, nil
 }
 
