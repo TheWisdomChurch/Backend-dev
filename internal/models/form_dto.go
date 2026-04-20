@@ -93,8 +93,8 @@ type FormSettingsDTO struct {
 	CampaignEmailTemplateURL *string `json:"campaignEmailTemplateUrl,omitempty"`
 	CampaignEmailSubject     *string `json:"campaignEmailSubject,omitempty"`
 
-	// Submission routing (optional): send submissions into workforce/members tables.
-	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|workforce_new|workforce_serving|member
+	// Submission routing (optional): route form submissions into backend workflows.
+	SubmissionTarget     *string `json:"submissionTarget,omitempty"`     // workforce|workforce_new|workforce_serving|member|leadership|testimonial
 	SubmissionDepartment *string `json:"submissionDepartment,omitempty"` // default department for workforce
 
 	Design *FormDesignSettingsDTO `json:"design,omitempty"`
