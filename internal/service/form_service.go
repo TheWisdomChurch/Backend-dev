@@ -4857,6 +4857,7 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	}
 
 	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))
+	imageAssetID := strings.TrimSpace(valueAsString(values, "imageAssetId", "image_asset_id", "assetId", "asset_id"))
 	isAnonymousRaw := strings.ToLower(strings.TrimSpace(valueAsString(values, "isAnonymous", "anonymous")))
 	isAnonymous := isAnonymousRaw == "true" || isAnonymousRaw == "1" || isAnonymousRaw == "yes"
 
@@ -4868,6 +4869,9 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	}
 	if imageURL != "" {
 		req.ImageURL = &imageURL
+	}
+	if imageAssetID != "" {
+		req.ImageAssetID = &imageAssetID
 	}
 
 	return req, nil
