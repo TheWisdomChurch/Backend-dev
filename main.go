@@ -1009,6 +1009,7 @@ func main() {
 
 	testimonialService := service.NewTestimonialService(
 		testimonialRepo,
+		assetRepo,
 		assetUploader,
 		approvalService,
 		adminNotificationService,
