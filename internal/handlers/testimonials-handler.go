@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,10 @@ func (h *TestimonialHandler) CreateTestimonial(c *gin.Context) {
 
 	testimonial, err := h.svc.CreateTestimonial(&req)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidTestimonialInput) || errors.Is(err, service.ErrInvalidTestimonialImage) {
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to create testimonial")
 		return
 	}
@@ -114,6 +119,10 @@ func (h *TestimonialHandler) UpdateTestimonial(c *gin.Context) {
 
 	testimonial, err := h.svc.UpdateTestimonial(id, &req)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidTestimonialInput) || errors.Is(err, service.ErrInvalidTestimonialImage) {
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to update testimonial")
 		return
 	}
