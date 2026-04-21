@@ -36,6 +36,8 @@ var slugDashCollapseRe = regexp.MustCompile(`-+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^\+[1-9]\d{7,14}$`)
+var ddDashRe = regexp.MustCompile(`^(\d{2})-(\d{2})$`)
+var ddSlashRe = regexp.MustCompile(`^(\d{2})/(\d{2})$`)
 var templateKeyRe = regexp.MustCompile(`^[A-Za-z0-9/_-]+$`)
 var dataImageRe = regexp.MustCompile(`^data:image\/(?:png|jpe?g|webp);base64,`)
 var ErrFormExpired = errors.New("form expired")
@@ -1537,7 +1539,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.DateFormat != nil {
 		df := strings.TrimSpace(*s.DateFormat)
 		switch df {
-		case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm":
+		case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm", "dd-mm":
 			s.DateFormat = &df
 		case "":
 			s.DateFormat = nil
@@ -1673,7 +1675,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		if d.DateFormat != nil {
 			df := strings.TrimSpace(*d.DateFormat)
 			switch df {
-			case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm":
+			case "yyyy-mm-dd", "mm/dd/yyyy", "dd/mm/yyyy", "dd/mm", "dd-mm":
 				d.DateFormat = &df
 			case "":
 				d.DateFormat = nil
@@ -2487,8 +2489,8 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 					return nil, fmt.Errorf("field '%s' must be a valid phone number", f.Key)
 				}
 			case models.FieldDate:
-				if _, err := time.Parse("2006-01-02", sv); err != nil {
-					return nil, fmt.Errorf("field '%s' must be a valid date (YYYY-MM-DD)", f.Key)
+				if _, err := normalizePublicFormDateValue(sv); err != nil {
+					return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM)", f.Key)
 				}
 			}
 
@@ -2530,6 +2532,59 @@ func applyStringRules(key, value string, rules *models.FormFieldValidation) erro
 
 func countWords(s string) int {
 	return len(strings.Fields(s))
+}
+
+func normalizePublicFormDateValue(value string) (string, error) {
+	val := strings.TrimSpace(value)
+	if val == "" {
+		return "", errors.New("date is empty")
+	}
+
+	// Preferred user-facing format (no year): DD-MM.
+	if m := ddDashRe.FindStringSubmatch(val); len(m) == 3 {
+		day, _ := strconv.Atoi(m[1])
+		month, _ := strconv.Atoi(m[2])
+		if month < 1 || month > 12 {
+			return "", errors.New("month out of range")
+		}
+		maxDay := daysInMonth(month)
+		if day < 1 || day > maxDay {
+			return "", errors.New("day out of range")
+		}
+		return fmt.Sprintf("%02d-%02d", day, month), nil
+	}
+
+	// Backward-compatible: DD/MM.
+	if m := ddSlashRe.FindStringSubmatch(val); len(m) == 3 {
+		day, _ := strconv.Atoi(m[1])
+		month, _ := strconv.Atoi(m[2])
+		if month < 1 || month > 12 {
+			return "", errors.New("month out of range")
+		}
+		maxDay := daysInMonth(month)
+		if day < 1 || day > maxDay {
+			return "", errors.New("day out of range")
+		}
+		return fmt.Sprintf("%02d-%02d", day, month), nil
+	}
+
+	// Backward-compatible: YYYY-MM-DD (legacy clients).
+	if t, err := time.Parse("2006-01-02", val); err == nil {
+		return fmt.Sprintf("%02d-%02d", t.Day(), int(t.Month())), nil
+	}
+
+	return "", errors.New("invalid date format")
+}
+
+func daysInMonth(month int) int {
+	switch month {
+	case 2:
+		return 29
+	case 4, 6, 9, 11:
+		return 30
+	default:
+		return 31
+	}
 }
 
 func validateImageFieldValue(value string) error {
