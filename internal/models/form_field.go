@@ -20,6 +20,7 @@ const (
 	FieldRadio    FormFieldType = "radio"
 	FieldNumber   FormFieldType = "number"
 	FieldDate     FormFieldType = "date"
+	FieldImage    FormFieldType = "image"
 )
 
 // FormFieldValidation defines optional server-side validation rules for a field.
@@ -41,8 +42,8 @@ type FormFieldVisibility struct {
 // FormFieldCondition defines a single visibility rule.
 type FormFieldCondition struct {
 	FieldKey string `json:"fieldKey"`
-	Operator string `json:"operator"`        // equals|not_equals|in|not_in
-	Value    any    `json:"value,omitempty"` // for equals/not_equals
+	Operator string `json:"operator"`         // equals|not_equals|in|not_in
+	Value    any    `json:"value,omitempty"`  // for equals/not_equals
 	Values   []any  `json:"values,omitempty"` // for in/not_in
 }
 
