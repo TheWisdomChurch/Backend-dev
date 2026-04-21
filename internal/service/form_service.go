@@ -2489,9 +2489,11 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 					return nil, fmt.Errorf("field '%s' must be a valid phone number", f.Key)
 				}
 			case models.FieldDate:
-				if _, err := normalizePublicFormDateValue(sv); err != nil {
+				normalizedDate, err := normalizePublicFormDateValue(sv)
+				if err != nil {
 					return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM)", f.Key)
 				}
+				sv = normalizedDate
 			}
 
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
