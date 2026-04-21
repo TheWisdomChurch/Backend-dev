@@ -35,8 +35,9 @@ var slugInvalidRe = regexp.MustCompile(`[^a-z0-9\-]+`)
 var slugDashCollapseRe = regexp.MustCompile(`-+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
-var phoneRe = regexp.MustCompile(`^[0-9()+\-\s]{7,20}$`)
+var phoneRe = regexp.MustCompile(`^\+[1-9]\d{7,14}$`)
 var templateKeyRe = regexp.MustCompile(`^[A-Za-z0-9/_-]+$`)
+var dataImageRe = regexp.MustCompile(`^data:image\/(?:png|jpe?g|webp);base64,`)
 var ErrFormExpired = errors.New("form expired")
 var ErrFormClosed = errors.New("registration closed")
 var ErrFormReportAccessDenied = errors.New("invalid report link")
@@ -2446,6 +2447,23 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 				return nil, err
 			}
 
+		case models.FieldImage:
+			sv, ok := valueToString(v)
+			if !ok {
+				return nil, fmt.Errorf("field '%s' must be image content", f.Key)
+			}
+			sv = strings.TrimSpace(sv)
+			if sv == "" {
+				if f.Required {
+					return nil, fmt.Errorf("field '%s' is required", f.Key)
+				}
+				continue
+			}
+			if err := validateImageFieldValue(sv); err != nil {
+				return nil, fmt.Errorf("field '%s' %s", f.Key, err.Error())
+			}
+			clean[f.Key] = sv
+
 		default: // text, textarea, email, tel, date
 			sv, ok := valueToString(v)
 			if !ok {
@@ -2512,6 +2530,38 @@ func applyStringRules(key, value string, rules *models.FormFieldValidation) erro
 
 func countWords(s string) int {
 	return len(strings.Fields(s))
+}
+
+func validateImageFieldValue(value string) error {
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		u, err := url.Parse(value)
+		if err != nil || strings.TrimSpace(u.Host) == "" {
+			return errors.New("must contain a valid image URL")
+		}
+		return nil
+	}
+
+	if !dataImageRe.MatchString(lower) {
+		return errors.New("must be a valid image (JPEG, PNG, or WebP)")
+	}
+
+	comma := strings.Index(value, ",")
+	if comma < 0 || comma+1 >= len(value) {
+		return errors.New("contains invalid image data")
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(value[comma+1:])
+	if err != nil {
+		return errors.New("contains invalid image data")
+	}
+
+	const maxBytes = 8 * 1024 * 1024
+	if len(decoded) > maxBytes {
+		return errors.New("must be 8MB or smaller")
+	}
+
+	return nil
 }
 
 func firstToken(s string) string {
@@ -4876,6 +4926,9 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	testimony := strings.TrimSpace(valueAsString(values, "testimony", "testimonyText", "message", "content", "story", "note", "notes"))
 	if testimony == "" {
 		return nil, errors.New("missing required testimonial fields")
+	}
+	if countWords(testimony) > 400 {
+		return nil, errors.New("testimony must be at most 400 words")
 	}
 
 	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))
