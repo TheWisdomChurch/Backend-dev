@@ -1914,7 +1914,8 @@ func isValidFieldType(t string) bool {
 		string(models.FieldCheckbox),
 		string(models.FieldRadio),
 		string(models.FieldNumber),
-		string(models.FieldDate):
+		string(models.FieldDate),
+		string(models.FieldImage):
 		return true
 	default:
 		return false
@@ -2062,7 +2063,8 @@ func isStringFieldType(t string) bool {
 		string(models.FieldTextarea),
 		string(models.FieldSelect),
 		string(models.FieldRadio),
-		string(models.FieldDate):
+		string(models.FieldDate),
+		string(models.FieldImage):
 		return true
 	default:
 		return false
@@ -2855,9 +2857,23 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		formTitle = strings.TrimSpace(event.Title)
 	}
 
+	isTestimonial := false
+	if settings != nil && settings.SubmissionTarget != nil {
+		isTestimonial = strings.EqualFold(strings.TrimSpace(*settings.SubmissionTarget), "testimonial")
+	}
+	if !isTestimonial && settings != nil && settings.FormType != nil {
+		isTestimonial = strings.EqualFold(strings.TrimSpace(*settings.FormType), "testimonial")
+	}
+
 	subject := "Registration received"
 	if formTitle != "" {
 		subject = fmt.Sprintf("Registration received: %s", formTitle)
+	}
+	if isTestimonial {
+		subject = "Testimony received"
+		if formTitle != "" {
+			subject = fmt.Sprintf("Testimony received: %s", formTitle)
+		}
 	}
 	if settings != nil && settings.ResponseEmailSubject != nil {
 		if s := strings.TrimSpace(*settings.ResponseEmailSubject); s != "" {
@@ -2919,6 +2935,12 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			code,
 			submissionID,
 		)
+	}
+	if isTestimonial {
+		calendarOptInURL = ""
+		googleCalendarURL = ""
+		calendarICSURL = ""
+		code = ""
 	}
 
 	hero := ""
