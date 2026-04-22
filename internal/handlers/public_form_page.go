@@ -271,6 +271,8 @@ const publicFormPageHTML = `<!DOCTYPE html>
     .field-label { font-size: 14px; font-weight: 700; color: var(--ink); }
     .required { color: var(--danger); }
     .field-control { width: 100%; border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px 16px; font: inherit; background: #fff; color: var(--ink); }
+    select.field-control { appearance: none; background-image: linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%); background-position: calc(100% - 20px) calc(1em + 1px), calc(100% - 14px) calc(1em + 1px); background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; padding-right: 42px; }
+    select.field-control option { color: #0f172a; background: #ffffff; }
     .textarea { min-height: 120px; resize: vertical; }
     .choice-group { display: grid; gap: 12px; }
     .choice { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--soft); }
@@ -382,18 +384,34 @@ const publicFormPageHTML = `<!DOCTYPE html>
       return input.value;
     }
 
+    function normalizeComparable(value) {
+      if (typeof value === 'string') return value.trim().toLowerCase();
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value).toLowerCase();
+      return '';
+    }
+
+    function compareValue(source, target) {
+      if (Array.isArray(source)) {
+        return source.some((item) => compareValue(item, target));
+      }
+      if (Array.isArray(target)) {
+        return target.some((item) => compareValue(source, item));
+      }
+      return normalizeComparable(source) === normalizeComparable(target);
+    }
+
     function evaluateRule(rule, values) {
       const value = values[rule.fieldKey];
       if (value === undefined || value === null) return false;
       switch ((rule.operator || '').toLowerCase()) {
         case 'equals':
-          return String(value) === String(rule.value);
+          return compareValue(value, rule.value);
         case 'not_equals':
-          return String(value) !== String(rule.value);
+          return !compareValue(value, rule.value);
         case 'in':
-          return Array.isArray(rule.values) && rule.values.map(String).includes(String(value));
+          return Array.isArray(rule.values) && rule.values.some((item) => compareValue(value, item));
         case 'not_in':
-          return Array.isArray(rule.values) && !rule.values.map(String).includes(String(value));
+          return Array.isArray(rule.values) && !rule.values.some((item) => compareValue(value, item));
         default:
           return false;
       }
