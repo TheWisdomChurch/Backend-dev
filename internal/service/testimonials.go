@@ -116,7 +116,7 @@ func (s *testimonialService) CreateTestimonial(req *models.CreateTestimonialRequ
 				TicketCode: &req.TicketCode,
 				EntityType: func() *string { t := "testimonial"; return &t }(),
 				EntityID:   &entityID,
-				Roles:      []string{"admin", "super_admin"},
+				Roles:      []string{"super_admin"},
 			})
 		}
 	}
