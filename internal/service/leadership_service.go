@@ -22,6 +22,11 @@ type LeadershipService interface {
 	Decline(id string) (*models.LeadershipMember, error)
 	Delete(id string) error
 
+	BirthdayStats() (*models.BirthdayStatsResponse, error)
+	BirthdaysByMonth(month int) ([]models.LeadershipMember, error)
+	BirthdaysToday(now time.Time) ([]models.LeadershipMember, error)
+	SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error)
+
 	AnniversaryStats() (*models.BirthdayStatsResponse, error)
 	AnniversariesByMonth(month int) ([]models.LeadershipMember, error)
 	AnniversariesToday(now time.Time) ([]models.LeadershipMember, error)
@@ -182,6 +187,105 @@ func (s *leadershipService) Decline(id string) (*models.LeadershipMember, error)
 
 func (s *leadershipService) Delete(id string) error {
 	return s.repo.Delete(id)
+}
+
+func (s *leadershipService) BirthdayStats() (*models.BirthdayStatsResponse, error) {
+	counts, total, err := s.repo.BirthdayCountsByMonth(string(models.LeadershipStatusApproved))
+	if err != nil {
+		return nil, err
+	}
+	months := make([]models.BirthdayMonthCount, 0, 12)
+	for m := 1; m <= 12; m++ {
+		months = append(months, models.BirthdayMonthCount{Month: m, Count: counts[m]})
+	}
+	return &models.BirthdayStatsResponse{
+		Total:   total,
+		ByMonth: months,
+	}, nil
+}
+
+func (s *leadershipService) BirthdaysByMonth(month int) ([]models.LeadershipMember, error) {
+	if month < 1 || month > 12 {
+		return nil, errors.New("month must be 1-12")
+	}
+	return s.repo.ListByBirthdayMonth(month, string(models.LeadershipStatusApproved))
+}
+
+func (s *leadershipService) BirthdaysToday(now time.Time) ([]models.LeadershipMember, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return s.repo.ListByBirthdayMonthDay(int(now.Month()), now.Day(), string(models.LeadershipStatusApproved))
+}
+
+func (s *leadershipService) SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error) {
+	if s.sender == nil {
+		return nil, errors.New("email sender is not configured")
+	}
+	if month < 1 || month > 12 {
+		return nil, errors.New("month must be 1-12")
+	}
+	if day < 1 || day > 31 {
+		return nil, errors.New("day must be 1-31")
+	}
+
+	members, err := s.repo.ListByBirthdayMonthDay(month, day, string(models.LeadershipStatusApproved))
+	if err != nil {
+		return nil, err
+	}
+
+	appName := strings.TrimSpace(s.branding.AppName)
+	if appName == "" {
+		appName = "Wisdom House"
+	}
+
+	dateLabel := fmt.Sprintf("%02d/%02d", day, month)
+	subject := fmt.Sprintf("Happy Birthday from %s", appName)
+	heroURL := email.TemplateAssetURL(s.branding, "birthday", "hero.png")
+
+	result := &models.BirthdaySendResult{Targeted: len(members)}
+
+	var tplStore *email.TemplateStore
+	if store, err := email.NewTemplateStoreFromEnv(); err == nil {
+		tplStore = store
+	}
+
+	for i := range members {
+		addr := strings.TrimSpace(members[i].Email)
+		if addr == "" {
+			result.Skipped++
+			continue
+		}
+
+		fullName := strings.TrimSpace(strings.Join([]string{members[i].FirstName, members[i].LastName}, " "))
+		data := email.BirthdayTemplateData{
+			Branding:      s.branding,
+			RecipientName: fullName,
+			BirthdayDate:  dateLabel,
+			HeroImageURL:  heroURL,
+		}
+
+		body := ""
+		if tplStore != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			_, htmlOut, _, err := tplStore.RenderWithData(ctx, "birthday", data)
+			cancel()
+			if err == nil && strings.TrimSpace(htmlOut) != "" {
+				body = htmlOut
+			}
+		}
+		if strings.TrimSpace(body) == "" {
+			body = email.RenderBirthdayEmail(data)
+		}
+
+		if err := s.sender.SendHTML(addr, subject, body); err != nil {
+			result.Skipped++
+			continue
+		}
+		result.Sent++
+	}
+
+	return result, nil
 }
 
 func (s *leadershipService) AnniversaryStats() (*models.BirthdayStatsResponse, error) {
