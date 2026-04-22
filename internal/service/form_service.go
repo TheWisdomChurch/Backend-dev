@@ -4958,7 +4958,10 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		}
 		req, err := buildTestimonialRequest(values)
 		if err != nil {
-			return err
+			req = buildLenientTestimonialRequest(values)
+			if req == nil {
+				return err
+			}
 		}
 		_, err = s.testimonialSvc.CreateTestimonial(req)
 		return err
@@ -5265,6 +5268,79 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	}
 
 	return req, nil
+}
+
+func buildLenientTestimonialRequest(values map[string]any) *models.CreateTestimonialRequest {
+	first := strings.TrimSpace(valueAsString(values, "firstName", "first_name", "fullName", "full_name", "name"))
+	last := strings.TrimSpace(valueAsString(values, "lastName", "last_name"))
+
+	if first == "" {
+		first = "Church"
+	}
+	if last == "" {
+		last = "Member"
+	}
+
+	testimony := strings.TrimSpace(valueAsString(
+		values,
+		"testimony",
+		"testimonyText",
+		"testimony_text",
+		"message",
+		"content",
+		"description",
+		"story",
+		"note",
+		"notes",
+	))
+
+	if testimony == "" {
+		for key, raw := range values {
+			lowerKey := strings.ToLower(strings.TrimSpace(key))
+			if strings.Contains(lowerKey, "email") ||
+				strings.Contains(lowerKey, "phone") ||
+				strings.Contains(lowerKey, "name") ||
+				strings.Contains(lowerKey, "consent") ||
+				strings.Contains(lowerKey, "anonymous") ||
+				strings.Contains(lowerKey, "role") {
+				continue
+			}
+			candidate := strings.TrimSpace(fmt.Sprint(raw))
+			if candidate != "" {
+				testimony = candidate
+				break
+			}
+		}
+	}
+
+	if testimony == "" {
+		return nil
+	}
+
+	if countWords(testimony) > 400 {
+		testimony = truncateWords(testimony, 400)
+	}
+
+	isAnonymousRaw := strings.ToLower(strings.TrimSpace(valueAsString(values, "isAnonymous", "anonymous")))
+	isAnonymous := isAnonymousRaw == "true" || isAnonymousRaw == "1" || isAnonymousRaw == "yes"
+
+	req := &models.CreateTestimonialRequest{
+		FirstName:   first,
+		LastName:    last,
+		Testimony:   testimony,
+		IsAnonymous: isAnonymous,
+	}
+
+	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))
+	if imageURL != "" {
+		req.ImageURL = &imageURL
+	}
+	imageAssetID := strings.TrimSpace(valueAsString(values, "imageAssetId", "image_asset_id", "assetId", "asset_id"))
+	if imageAssetID != "" {
+		req.ImageAssetID = &imageAssetID
+	}
+
+	return req
 }
 
 func truncateWords(value string, maxWords int) string {
