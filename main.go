@@ -555,7 +555,7 @@ func startBirthdayScheduler(
 				logger.Printf("🎂 Leadership birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
 			}
 
-			result, err := leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
+			result, err = leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
 			if err != nil {
 				if logger != nil {
 					logger.Printf("⚠️ Leadership anniversary send failed: %v", err)
