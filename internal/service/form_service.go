@@ -713,7 +713,15 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	}
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
-		log.Printf("⚠️ submission target sync failed: %v", err)
+		target := resolveSubmissionTarget(settings)
+		log.Printf(
+			"⚠️ submission target sync failed (formID=%s slug=%s submissionID=%s target=%s): %v",
+			strings.TrimSpace(form.ID),
+			strings.TrimSpace(valueOrEmpty(form.Slug)),
+			strings.TrimSpace(sub.ID),
+			target,
+			err,
+		)
 	}
 
 	return nil
@@ -4824,11 +4832,31 @@ func stripHTMLToText(raw string) string {
 	return strings.TrimSpace(strings.Join(clean, "\n"))
 }
 
+func resolveSubmissionTarget(settings *models.FormSettingsDTO) string {
+	if settings == nil {
+		return ""
+	}
+	if settings.SubmissionTarget != nil {
+		if target := strings.ToLower(strings.TrimSpace(*settings.SubmissionTarget)); target != "" {
+			return target
+		}
+	}
+	if settings.FormType != nil {
+		switch strings.ToLower(strings.TrimSpace(*settings.FormType)) {
+		case "testimonial", "member", "leadership":
+			return strings.ToLower(strings.TrimSpace(*settings.FormType))
+		case "workforce":
+			return "workforce"
+		}
+	}
+	return ""
+}
+
 func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {
-	if settings == nil || settings.SubmissionTarget == nil {
+	target := resolveSubmissionTarget(settings)
+	if target == "" {
 		return nil
 	}
-	target := strings.ToLower(strings.TrimSpace(*settings.SubmissionTarget))
 	switch target {
 	case "workforce":
 		fallthrough
@@ -5053,11 +5081,26 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 			}
 		}
 	}
+	if strings.TrimSpace(first) != "" && strings.TrimSpace(last) == "" {
+		last = "Member"
+	}
 	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" {
 		return nil, errors.New("missing required testimonial fields")
 	}
 
-	testimony := strings.TrimSpace(valueAsString(values, "testimony", "testimonyText", "message", "content", "story", "note", "notes"))
+	testimony := strings.TrimSpace(valueAsString(
+		values,
+		"testimony",
+		"testimonyText",
+		"testimony_text",
+		"yourTestimony",
+		"your_testimony",
+		"message",
+		"content",
+		"story",
+		"note",
+		"notes",
+	))
 	if testimony == "" {
 		return nil, errors.New("missing required testimonial fields")
 	}
