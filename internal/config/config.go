@@ -114,6 +114,9 @@ type AuthConfig struct {
 	SessionIdleTimeout           time.Duration `json:"session_idle_timeout" env:"AUTH_SESSION_IDLE_TIMEOUT"`
 	RememberedSessionIdleTimeout time.Duration `json:"remembered_session_idle_timeout" env:"AUTH_REMEMBERED_SESSION_IDLE_TIMEOUT"`
 	RememberMeTTL                time.Duration `json:"remember_me_ttl" env:"AUTH_REMEMBER_ME_TTL"`
+	CSRFCookieTTL                time.Duration `json:"csrf_cookie_ttl" env:"AUTH_CSRF_COOKIE_TTL"`
+	CSRFCookieName               string        `json:"csrf_cookie_name" env:"AUTH_CSRF_COOKIE_NAME"`
+	CSRFHeaderName               string        `json:"csrf_header_name" env:"AUTH_CSRF_HEADER_NAME"`
 	SecretKey                    string        `json:"-" env:"AUTH_SECRET_KEY"`
 	MFAIssuer                    string        `json:"mfa_issuer" env:"AUTH_MFA_ISSUER"`
 	GoogleClientID               string        `json:"-" env:"AUTH_GOOGLE_CLIENT_ID"`
@@ -268,9 +271,9 @@ func Load() (*Config, error) {
 		CORS: CORSConfig{
 			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
 			AllowedMethods:   splitEnv("CORS_ALLOW_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}),
-			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"}),
+			AllowedHeaders:   splitEnv("CORS_ALLOW_HEADERS", []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-CSRF-Token", "X-Request-ID"}),
 			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
-			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count"}),
+			ExposedHeaders:   splitEnv("CORS_EXPOSED_HEADERS", []string{"Content-Length", "Content-Range", "X-Total-Count", "X-CSRF-Token", "X-Request-ID"}),
 			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
 		},
 		JWT: JWTConfig{
@@ -281,6 +284,9 @@ func Load() (*Config, error) {
 			SessionIdleTimeout:           getEnvAsDuration("AUTH_SESSION_IDLE_TIMEOUT", 30*time.Minute),
 			RememberedSessionIdleTimeout: getEnvAsDuration("AUTH_REMEMBERED_SESSION_IDLE_TIMEOUT", 7*24*time.Hour),
 			RememberMeTTL:                getEnvAsDuration("AUTH_REMEMBER_ME_TTL", 30*24*time.Hour),
+			CSRFCookieTTL:                getEnvAsDuration("AUTH_CSRF_COOKIE_TTL", 12*time.Hour),
+			CSRFCookieName:               getEnv("AUTH_CSRF_COOKIE_NAME", "csrf_secret"),
+			CSRFHeaderName:               getEnv("AUTH_CSRF_HEADER_NAME", "X-CSRF-Token"),
 			SecretKey:                    getEnv("AUTH_SECRET_KEY", ""),
 			MFAIssuer:                    getEnv("AUTH_MFA_ISSUER", getEnv("APP_NAME", "Wisdom House Backend")),
 			GoogleClientID:               getEnv("AUTH_GOOGLE_CLIENT_ID", ""),
@@ -357,6 +363,15 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Auth.RememberMeTTL <= 0 {
 		return fmt.Errorf("AUTH_REMEMBER_ME_TTL must be greater than 0")
+	}
+	if cfg.Auth.CSRFCookieTTL <= 0 {
+		return fmt.Errorf("AUTH_CSRF_COOKIE_TTL must be greater than 0")
+	}
+	if strings.TrimSpace(cfg.Auth.CSRFCookieName) == "" {
+		return fmt.Errorf("AUTH_CSRF_COOKIE_NAME is required")
+	}
+	if strings.TrimSpace(cfg.Auth.CSRFHeaderName) == "" {
+		return fmt.Errorf("AUTH_CSRF_HEADER_NAME is required")
 	}
 	if cfg.Server.RequestBodyMax <= 0 {
 		return fmt.Errorf("SERVER_REQUEST_BODY_MAX_BYTES must be greater than 0")

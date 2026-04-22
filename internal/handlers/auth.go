@@ -133,6 +133,9 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   user.ID,
+			Issuer:    middleware.JWTIssuer,
+			Audience:  []string{middleware.JWTAudience},
 		},
 	}
 
@@ -235,6 +238,7 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 		HttpOnly: true,
 		SameSite: sameSite,
 	})
+	middleware.ClearCSRFCookie(c, secure, "")
 }
 
 func (h *AuthHandler) loginMetadata(c *gin.Context) service.LoginMetadata {
@@ -896,6 +900,25 @@ func (h *AuthHandler) SetPreferredMFAMethod(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "MFA preference updated", profile)
+}
+
+func (h *AuthHandler) GetCSRFToken(c *gin.Context) {
+	token, _ := c.Get("csrf_token")
+	tokenStr, _ := token.(string)
+	headerName, _ := c.Get("csrf_header")
+	headerStr, _ := headerName.(string)
+	if strings.TrimSpace(headerStr) == "" {
+		headerStr = middleware.DefaultCSRFHeaderName
+	}
+	if strings.TrimSpace(tokenStr) == "" {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to issue CSRF token")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "CSRF token issued", gin.H{
+		"token":  tokenStr,
+		"header": headerStr,
+	})
 }
 
 /* ============================================================================
