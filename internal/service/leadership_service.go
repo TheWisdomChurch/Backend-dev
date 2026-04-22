@@ -346,7 +346,7 @@ func (s *leadershipService) notifyNewApplication(member *models.LeadershipMember
 		Message:    message,
 		EntityType: &entityType,
 		EntityID:   &entityID,
-		Roles:      []string{"admin", "super_admin"},
+		Roles:      []string{"super_admin"},
 	})
 }
 
