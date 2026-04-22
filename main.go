@@ -582,6 +582,7 @@ func (noopEmailSender) DisabledReason() string {
 
 func setupRouter(
 	cfg *config.Config,
+	userRepo repository.UserRepository,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
@@ -638,6 +639,7 @@ func setupRouter(
 	api := router.Group("/api/v1")
 
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
+	sessionFreshnessGuard := middleware.SessionFreshnessMiddleware(userRepo)
 	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
 	csrfProtector := middleware.NewCSRFProtector(middleware.CSRFOptions{
 		SecretKey:  cfg.Auth.SecretKey,
@@ -673,7 +675,7 @@ func setupRouter(
 	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
 
 	authProtected := auth.Group("")
-	authProtected.Use(authGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
+	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
 	authProtected.GET("/me", authHandler.GetCurrentUser)
 	authProtected.GET("/csrf-token", authHandler.GetCSRFToken)
 	authProtected.PATCH("/profile", authHandler.UpdateProfile)
@@ -751,7 +753,7 @@ func setupRouter(
 
 	// ADMIN
 	admin := api.Group("/admin")
-	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"), csrfProtector.Middleware(), middleware.AuditLogger("admin"))
+	admin.Use(authGuard, sessionFreshnessGuard, sessionGuard, middleware.RoleMiddleware("admin"), csrfProtector.Middleware(), middleware.AuditLogger("admin"))
 
 	admin.GET("/dashboard", adminHandler.GetDashboardStats)
 	admin.GET("/security/overview", adminHandler.GetSecurityOverview)
@@ -1246,6 +1248,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	router := setupRouter(
 		cfg,
+		userRepo,
 		testimonialHandler,
 		authHandler,
 		adminHandler,
