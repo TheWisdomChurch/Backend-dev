@@ -683,6 +683,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		}
 
 		// Any other error is internal (email provider / DB / etc.)
+		fmt.Printf("password reset start failed for %s: %v\n", req.Email, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start password reset process")
 		return
 	}
