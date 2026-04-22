@@ -1497,10 +1497,10 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		switch formType {
 		case "":
 			s.FormType = nil
-		case "registration", "event", "membership", "workforce", "leadership", "application", "contact", "general":
+		case "registration", "event", "membership", "workforce", "leadership", "testimonial", "application", "contact", "general":
 			s.FormType = &formType
 		default:
-			return nil, fmt.Errorf("formType must be one of: registration, event, membership, workforce, leadership, application, contact, general")
+			return nil, fmt.Errorf("formType must be one of: registration, event, membership, workforce, leadership, testimonial, application, contact, general")
 		}
 	}
 	if s.IntroTitle, err = normalizeText("introTitle", s.IntroTitle, 200); err != nil {
@@ -5164,8 +5164,29 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	if strings.TrimSpace(first) != "" && strings.TrimSpace(last) == "" {
 		last = "Member"
 	}
-	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" {
-		return nil, errors.New("missing required testimonial fields")
+	if strings.TrimSpace(first) == "" {
+		emailValue := strings.TrimSpace(valueAsString(values, "email", "contactEmail"))
+		if emailValue != "" {
+			local := emailValue
+			if at := strings.Index(local, "@"); at > 0 {
+				local = local[:at]
+			}
+			local = strings.TrimSpace(strings.ReplaceAll(local, ".", " "))
+			if local != "" {
+				token := strings.Fields(local)[0]
+				runes := []rune(strings.ToLower(token))
+				if len(runes) > 0 {
+					runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+					first = string(runes)
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(first) == "" {
+		first = "Church"
+	}
+	if strings.TrimSpace(last) == "" {
+		last = "Member"
 	}
 
 	testimony := strings.TrimSpace(valueAsString(
@@ -5177,6 +5198,7 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 		"your_testimony",
 		"message",
 		"content",
+		"description",
 		"story",
 		"note",
 		"notes",
@@ -5209,9 +5231,6 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 			if candidate == "" || emailRe.MatchString(candidate) {
 				continue
 			}
-			if countWords(candidate) < 8 {
-				continue
-			}
 			if len(candidate) > len(longest) {
 				longest = candidate
 			}
@@ -5224,7 +5243,7 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 		return nil, errors.New("missing required testimonial fields")
 	}
 	if countWords(testimony) > 400 {
-		return nil, errors.New("testimony must be at most 400 words")
+		testimony = truncateWords(testimony, 400)
 	}
 
 	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))
@@ -5246,6 +5265,17 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	}
 
 	return req, nil
+}
+
+func truncateWords(value string, maxWords int) string {
+	if maxWords <= 0 {
+		return strings.TrimSpace(value)
+	}
+	words := strings.Fields(value)
+	if len(words) <= maxWords {
+		return strings.TrimSpace(value)
+	}
+	return strings.TrimSpace(strings.Join(words[:maxWords], " "))
 }
 
 func valueAsString(values map[string]any, keys ...string) string {
