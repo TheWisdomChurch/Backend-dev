@@ -682,6 +682,27 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	if email == nil || strings.TrimSpace(*email) == "" {
 		return errors.New("an email address is required so we can send your confirmation")
 	}
+	if name != nil && strings.TrimSpace(*name) != "" {
+		if _, exists := cleanValues["fullName"]; !exists {
+			cleanValues["fullName"] = strings.TrimSpace(*name)
+		}
+		if _, exists := cleanValues["name"]; !exists {
+			cleanValues["name"] = strings.TrimSpace(*name)
+		}
+	}
+	if _, exists := cleanValues["email"]; !exists {
+		cleanValues["email"] = strings.TrimSpace(*email)
+	}
+	if phone != nil && strings.TrimSpace(*phone) != "" {
+		if _, exists := cleanValues["phone"]; !exists {
+			cleanValues["phone"] = strings.TrimSpace(*phone)
+		}
+	}
+	if addr != nil && strings.TrimSpace(*addr) != "" {
+		if _, exists := cleanValues["address"]; !exists {
+			cleanValues["address"] = strings.TrimSpace(*addr)
+		}
+	}
 
 	var regCode *string
 	if s.sequenceRepo != nil {
@@ -706,7 +727,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
-		target := resolveSubmissionTarget(settings)
+		target := resolveSubmissionTargetForForm(form, settings)
 		log.Printf(
 			"⚠️ submission target sync failed (formID=%s slug=%s submissionID=%s target=%s): %v",
 			strings.TrimSpace(form.ID),
@@ -4853,8 +4874,38 @@ func resolveSubmissionTarget(settings *models.FormSettingsDTO) string {
 	return ""
 }
 
+func resolveSubmissionTargetForForm(form *models.Form, settings *models.FormSettingsDTO) string {
+	if target := resolveSubmissionTarget(settings); target != "" {
+		return target
+	}
+	if form == nil {
+		return ""
+	}
+
+	slug := strings.ToLower(strings.TrimSpace(valueOrEmpty(form.Slug)))
+	title := strings.ToLower(strings.TrimSpace(form.Title))
+	surface := strings.TrimSpace(slug + " " + title)
+	if surface == "" {
+		return ""
+	}
+
+	if strings.Contains(surface, "testimony") || strings.Contains(surface, "testimonial") {
+		return "testimonial"
+	}
+	if strings.Contains(surface, "leadership") {
+		return "leadership"
+	}
+	if strings.Contains(surface, "membership") || strings.Contains(surface, "member") {
+		return "member"
+	}
+	if strings.Contains(surface, "workforce") || strings.Contains(surface, "worker") {
+		return "workforce"
+	}
+	return ""
+}
+
 func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {
-	target := resolveSubmissionTarget(settings)
+	target := resolveSubmissionTargetForForm(form, settings)
 	if target == "" {
 		return nil
 	}
@@ -5012,6 +5063,20 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
 	if first == "" || last == "" {
 		full := valueAsString(values, "fullName", "full_name", "name")
+		if full == "" {
+			for key, raw := range values {
+				lowerKey := strings.ToLower(strings.TrimSpace(key))
+				if !strings.Contains(lowerKey, "name") {
+					continue
+				}
+				candidate := strings.TrimSpace(fmt.Sprint(raw))
+				if candidate == "" || emailRe.MatchString(candidate) {
+					continue
+				}
+				full = candidate
+				break
+			}
+		}
 		if full != "" {
 			f, l := splitName(full)
 			if first == "" {
@@ -5072,6 +5137,20 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
 	if first == "" || last == "" {
 		full := valueAsString(values, "fullName", "full_name", "name")
+		if full == "" {
+			for key, raw := range values {
+				lowerKey := strings.ToLower(strings.TrimSpace(key))
+				if !strings.Contains(lowerKey, "name") {
+					continue
+				}
+				candidate := strings.TrimSpace(fmt.Sprint(raw))
+				if candidate == "" || emailRe.MatchString(candidate) {
+					continue
+				}
+				full = candidate
+				break
+			}
+		}
 		if full != "" {
 			f, l := splitName(full)
 			if first == "" {
@@ -5102,6 +5181,45 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 		"note",
 		"notes",
 	))
+	if testimony == "" {
+		for key, raw := range values {
+			lowerKey := strings.ToLower(strings.TrimSpace(key))
+			if strings.Contains(lowerKey, "testimony") || strings.Contains(lowerKey, "testimony_text") || strings.Contains(lowerKey, "story") {
+				candidate := strings.TrimSpace(fmt.Sprint(raw))
+				if candidate != "" {
+					testimony = candidate
+					break
+				}
+			}
+		}
+	}
+	if testimony == "" {
+		longest := ""
+		for key, raw := range values {
+			lowerKey := strings.ToLower(strings.TrimSpace(key))
+			if strings.Contains(lowerKey, "email") ||
+				strings.Contains(lowerKey, "phone") ||
+				strings.Contains(lowerKey, "name") ||
+				strings.Contains(lowerKey, "consent") ||
+				strings.Contains(lowerKey, "anonymous") ||
+				strings.Contains(lowerKey, "role") {
+				continue
+			}
+			candidate := strings.TrimSpace(fmt.Sprint(raw))
+			if candidate == "" || emailRe.MatchString(candidate) {
+				continue
+			}
+			if countWords(candidate) < 8 {
+				continue
+			}
+			if len(candidate) > len(longest) {
+				longest = candidate
+			}
+		}
+		if longest != "" {
+			testimony = longest
+		}
+	}
 	if testimony == "" {
 		return nil, errors.New("missing required testimonial fields")
 	}

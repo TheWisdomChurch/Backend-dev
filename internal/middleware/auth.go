@@ -110,6 +110,7 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		c.Set("remember_me", claims.RememberMe)
 		c.Set("session_idle_timeout_seconds", claims.SessionIdleTimeoutSeconds)
 		c.Set("auth_method", claims.AuthMethod)
+		c.Set("auth_claims", claims)
 		c.Next()
 	}
 }
@@ -124,6 +125,7 @@ func OptionalAuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			c.Set("remember_me", claims.RememberMe)
 			c.Set("session_idle_timeout_seconds", claims.SessionIdleTimeoutSeconds)
 			c.Set("auth_method", claims.AuthMethod)
+			c.Set("auth_claims", claims)
 		}
 		c.Next()
 	}
