@@ -10,6 +10,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const (
+	JWTIssuer   = "wisdom-house-backend"
+	JWTAudience = "wisdom-house-clients"
+)
+
 type AccessClaims struct {
 	UserID                    string `json:"user_id"`
 	Email                     string `json:"email"`
@@ -49,15 +54,21 @@ func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 	}
 
 	claims := &AccessClaims{}
-	token, err := jwt.ParseWithClaims(cookie, claims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		if jwtSecret == "" {
-			return nil, fmt.Errorf("jwt secret not configured")
-		}
-		return []byte(jwtSecret), nil
-	})
+	token, err := jwt.ParseWithClaims(
+		cookie,
+		claims,
+		func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			if jwtSecret == "" {
+				return nil, fmt.Errorf("jwt secret not configured")
+			}
+			return []byte(jwtSecret), nil
+		},
+		jwt.WithIssuer(JWTIssuer),
+		jwt.WithAudience(JWTAudience),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -72,8 +83,14 @@ func parseCookieToken(c *gin.Context, jwtSecret string) (*AccessClaims, error) {
 	if claims.NotBefore != nil && now.Before(claims.NotBefore.Time) {
 		return nil, fmt.Errorf("token not active yet")
 	}
+	if claims.IssuedAt != nil && claims.IssuedAt.Time.After(now.Add(5*time.Minute)) {
+		return nil, fmt.Errorf("token issued in the future")
+	}
 	if err := claims.Validate(); err != nil {
 		return nil, err
+	}
+	if claims.Subject != "" && claims.Subject != claims.UserID {
+		return nil, fmt.Errorf("token subject mismatch")
 	}
 
 	return claims, nil
