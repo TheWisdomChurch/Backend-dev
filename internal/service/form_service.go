@@ -679,6 +679,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	// Extract common fields into columns for analytics
 	name, email, phone, addr := extractCommonFields(fields, cleanValues)
+	if email == nil || strings.TrimSpace(*email) == "" {
+		return errors.New("an email address is required so we can send your confirmation")
+	}
 
 	var regCode *string
 	if s.sequenceRepo != nil {
@@ -701,9 +704,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return err
 	}
 
-	if email != nil {
-		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
-	}
+	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
 		target := resolveSubmissionTarget(settings)
 		log.Printf(
