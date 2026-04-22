@@ -2278,14 +2278,33 @@ func valueEquals(a any, b any) bool {
 		return false
 	}
 
-	switch av := a.(type) {
-	case bool:
-		if bv, ok := b.(bool); ok {
+	if list, ok := toAnySlice(a); ok {
+		for _, item := range list {
+			if valueEquals(item, b) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if list, ok := toAnySlice(b); ok {
+		for _, item := range list {
+			if valueEquals(a, item) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if av, ok := toBoolValue(a); ok {
+		if bv, ok := toBoolValue(b); ok {
 			return av == bv
 		}
-	case string:
+	}
+
+	if as, ok := a.(string); ok {
 		if bs, ok := b.(string); ok {
-			return strings.TrimSpace(av) == strings.TrimSpace(bs)
+			return strings.EqualFold(strings.TrimSpace(as), strings.TrimSpace(bs))
 		}
 	}
 
@@ -2302,12 +2321,70 @@ func valueIn(val any, list []any) bool {
 	if len(list) == 0 {
 		return false
 	}
+
+	if values, ok := toAnySlice(val); ok {
+		for _, item := range values {
+			if valueIn(item, list) {
+				return true
+			}
+		}
+		return false
+	}
+
 	for _, v := range list {
 		if valueEquals(val, v) {
 			return true
 		}
 	}
 	return false
+}
+
+func toAnySlice(value any) ([]any, bool) {
+	switch list := value.(type) {
+	case []any:
+		return list, true
+	case []string:
+		out := make([]any, len(list))
+		for i, item := range list {
+			out[i] = item
+		}
+		return out, true
+	case []bool:
+		out := make([]any, len(list))
+		for i, item := range list {
+			out[i] = item
+		}
+		return out, true
+	case []float64:
+		out := make([]any, len(list))
+		for i, item := range list {
+			out[i] = item
+		}
+		return out, true
+	case []int:
+		out := make([]any, len(list))
+		for i, item := range list {
+			out[i] = item
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func toBoolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(typed)))
+		if err != nil {
+			return false, false
+		}
+		return parsed, true
+	default:
+		return false, false
+	}
 }
 
 /* =========================
