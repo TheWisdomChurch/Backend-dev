@@ -38,18 +38,12 @@ type Sender struct {
 func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (*Sender, error) {
 	h := strings.TrimSpace(host)
 	if h == "" {
-		h = strings.TrimSpace(os.Getenv("SMTP_HOST"))
-		if h == "" {
-			h = strings.TrimSpace(os.Getenv("APP_SMTP_HOST"))
-		}
+		h = firstNonEmptyEnv("SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
 	}
 
 	p := strings.TrimSpace(port)
 	if p == "" {
-		p = strings.TrimSpace(os.Getenv("SMTP_PORT"))
-		if p == "" {
-			p = strings.TrimSpace(os.Getenv("APP_SMTP_PORT"))
-		}
+		p = firstNonEmptyEnv("SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
 	}
 	if p == "" {
 		p = "25"
@@ -57,32 +51,29 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 
 	u := strings.TrimSpace(user)
 	if u == "" {
-		u = strings.TrimSpace(os.Getenv("SMTP_USER"))
-		if u == "" {
-			u = strings.TrimSpace(os.Getenv("APP_SMTP_USER"))
-		}
+		u = firstNonEmptyEnv("SMTP_USER", "APP_SMTP_USER", "SMTP_USERNAME", "MAIL_USERNAME")
 	}
 
 	pw := strings.TrimSpace(pass)
 	if pw == "" {
-		pw = strings.TrimSpace(os.Getenv("SMTP_PASS"))
-		if pw == "" {
-			pw = strings.TrimSpace(os.Getenv("APP_SMTP_PASS"))
-		}
+		pw = firstNonEmptyEnv("SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
 	}
 
 	f := strings.TrimSpace(from)
 	if f == "" {
-		f = strings.TrimSpace(os.Getenv("SMTP_FROM"))
+		f = strings.TrimSpace(firstNonEmptyEnv("SMTP_FROM", "MAIL_FROM"))
 		if f == "" {
-			fromEmail := strings.TrimSpace(os.Getenv("APP_SMTP_FROM_EMAIL"))
-			fromName := strings.TrimSpace(os.Getenv("APP_SMTP_FROM_NAME"))
+			fromEmail := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
+			fromName := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
 			switch {
 			case fromEmail != "" && fromName != "":
 				f = fmt.Sprintf("%s <%s>", fromName, fromEmail)
 			case fromEmail != "":
 				f = fromEmail
 			}
+		}
+		if f == "" {
+			f = strings.TrimSpace(os.Getenv("APP_SUPPORT_EMAIL"))
 		}
 	}
 
@@ -92,6 +83,10 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 			requireTLS = parsed
 		}
 	} else if raw := strings.TrimSpace(os.Getenv("APP_SMTP_TLS")); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			requireTLS = parsed
+		}
+	} else if raw := strings.TrimSpace(os.Getenv("MAIL_TLS")); raw != "" {
 		if parsed, err := strconv.ParseBool(raw); err == nil {
 			requireTLS = parsed
 		}
@@ -529,4 +524,13 @@ func filenameFromURL(u *url.URL) string {
 	}
 	base := path.Base(p)
 	return strings.TrimSpace(base)
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
 }

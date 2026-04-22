@@ -127,6 +127,59 @@ type chainedEmailSender struct {
 	logger       *log.Logger
 }
 
+type observedEmailSender struct {
+	inner  service.EmailSender
+	logger *log.Logger
+}
+
+func (s observedEmailSender) SendHTML(to, subject, body string) error {
+	if s.inner == nil {
+		return nil
+	}
+	err := s.inner.SendHTML(to, subject, body)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("❌ Email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	}
+	return err
+}
+
+func (s observedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	if s.inner == nil {
+		return nil
+	}
+	if multipart, ok := s.inner.(interface {
+		SendHTMLText(to, subject, htmlBody, textBody string) error
+	}); ok {
+		err := multipart.SendHTMLText(to, subject, htmlBody, textBody)
+		if err != nil && s.logger != nil {
+			s.logger.Printf("❌ Multipart email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+		}
+		return err
+	}
+	err := s.inner.SendHTML(to, subject, htmlBody)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("❌ HTML email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	}
+	return err
+}
+
+func maskEmail(raw string) string {
+	email := strings.TrimSpace(strings.ToLower(raw))
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return "invalid-email"
+	}
+	local := parts[0]
+	domain := parts[1]
+	if local == "" {
+		return "***@" + domain
+	}
+	if len(local) <= 2 {
+		return local[:1] + "***@" + domain
+	}
+	return local[:2] + "***@" + domain
+}
+
 func (s chainedEmailSender) SendHTML(to, subject, body string) error {
 	if s.primary == nil {
 		if s.fallback != nil {
@@ -976,6 +1029,7 @@ func main() {
 		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
 		emailSender = initEmailSender(cfg, logger)
+		emailSender = observedEmailSender{inner: emailSender, logger: logger}
 	}
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
