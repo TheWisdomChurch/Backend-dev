@@ -359,7 +359,10 @@ func (s *authServiceImpl) RequestPasswordReset(email, actionURL string) (*models
 
 	user, err := s.userRepo.FindByEmail(emailAddr)
 	if err != nil {
-		return nil, errors.New("user not found")
+		return nil, ErrUserNotFound
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
 	}
 
 	if !user.IsActive {
