@@ -5050,6 +5050,9 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 		LastName:  strings.TrimSpace(last),
 		Email:     strings.TrimSpace(emailAddr),
 	}
+	// Form-created member records remain inactive until reviewed in admin.
+	isActive := false
+	req.IsActive = &isActive
 	if phone != "" {
 		p := strings.TrimSpace(phone)
 		req.Phone = &p
