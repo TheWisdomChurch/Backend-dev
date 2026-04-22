@@ -586,6 +586,13 @@ func setupRouter(
 
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
 	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
+	csrfProtector := middleware.NewCSRFProtector(middleware.CSRFOptions{
+		SecretKey:  cfg.Auth.SecretKey,
+		Secure:     secure,
+		CookieName: cfg.Auth.CSRFCookieName,
+		HeaderName: cfg.Auth.CSRFHeaderName,
+		CookieTTL:  cfg.Auth.CSRFCookieTTL,
+	})
 
 	// AUTH
 	auth := api.Group("/auth")
@@ -613,8 +620,9 @@ func setupRouter(
 	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
 
 	authProtected := auth.Group("")
-	authProtected.Use(authGuard, sessionGuard)
+	authProtected.Use(authGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
 	authProtected.GET("/me", authHandler.GetCurrentUser)
+	authProtected.GET("/csrf-token", authHandler.GetCSRFToken)
 	authProtected.PATCH("/profile", authHandler.UpdateProfile)
 	authProtected.POST("/change-password", authHandler.ChangePassword)
 	authProtected.DELETE("/account", authHandler.DeleteAccount)
@@ -690,7 +698,7 @@ func setupRouter(
 
 	// ADMIN
 	admin := api.Group("/admin")
-	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"))
+	admin.Use(authGuard, sessionGuard, middleware.RoleMiddleware("admin"), csrfProtector.Middleware(), middleware.AuditLogger("admin"))
 
 	admin.GET("/dashboard", adminHandler.GetDashboardStats)
 	admin.GET("/security/overview", adminHandler.GetSecurityOverview)
