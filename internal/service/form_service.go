@@ -679,6 +679,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	// Extract common fields into columns for analytics
 	name, email, phone, addr := extractCommonFields(fields, cleanValues)
+	if email == nil || strings.TrimSpace(*email) == "" {
+		return errors.New("an email address is required so we can send your confirmation")
+	}
 
 	var regCode *string
 	if s.sequenceRepo != nil {
@@ -701,17 +704,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return err
 	}
 
-	responseEmailEnabled := true
-	if settings != nil && settings.ResponseEmailEnabled != nil {
-		responseEmailEnabled = *settings.ResponseEmailEnabled
-	}
-
-	if regCode != nil && email != nil && s.sender != nil && !responseEmailEnabled {
-		s.sendRegistrationCodeEmail(form, *email, name, *regCode)
-	}
-	if email != nil {
-		s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
-	}
+	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
 		target := resolveSubmissionTarget(settings)
 		log.Printf(
@@ -1319,6 +1312,9 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.Capacity != nil && *s.Capacity < 0 {
 		return nil, errors.New("capacity cannot be negative")
 	}
+	// Response emails are mandatory for all forms.
+	forcedResponseEmail := true
+	s.ResponseEmailEnabled = &forcedResponseEmail
 	if s.ClosesAt != nil && strings.TrimSpace(*s.ClosesAt) != "" {
 		normalized, err := normalizeFlexibleTime(*s.ClosesAt)
 		if err != nil {
@@ -1819,6 +1815,7 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 	seenKey := map[string]bool{}
 	normalized := make([]normalizedField, 0, len(fields))
 	out := make([]models.FormField, 0, len(fields))
+	hasEmailCaptureField := false
 
 	for i, f := range fields {
 		label := strings.TrimSpace(f.Label)
@@ -1842,6 +1839,11 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 
 		if !isValidFieldType(typ) {
 			return nil, fmt.Errorf("field[%d]: invalid type '%s'", i, typ)
+		}
+		if typ == string(models.FieldEmail) ||
+			strings.Contains(key, "email") ||
+			strings.Contains(strings.ToLower(label), "email") {
+			hasEmailCaptureField = true
 		}
 
 		normalized = append(normalized, normalizedField{
@@ -1910,6 +1912,9 @@ func buildAndValidateFields(formID string, fields []models.FormFieldDTO, draftOK
 			Visibility: visibilityJSON,
 			Order:      f.Order,
 		})
+	}
+	if !draftOK && !hasEmailCaptureField {
+		return nil, errors.New("published forms must include an email field so confirmation emails can be delivered")
 	}
 
 	return out, nil
@@ -3018,10 +3023,6 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 
 	addr := strings.TrimSpace(emailAddr)
 	if addr == "" {
-		return
-	}
-
-	if settings != nil && settings.ResponseEmailEnabled != nil && !*settings.ResponseEmailEnabled {
 		return
 	}
 
