@@ -151,36 +151,24 @@ func Load() (*Config, error) {
 	env := strings.ToLower(strings.TrimSpace(getEnv("ENVIRONMENT", "development")))
 
 	// -------------------------------------------------------------------------
-	// SMTP: support both legacy SMTP_* and new APP_SMTP_* (local Postfix relay)
+	// SMTP: support legacy SMTP_*, APP_SMTP_* and common MAIL_* aliases.
 	// -------------------------------------------------------------------------
-	smtpHost := getEnv("SMTP_HOST", "")
-	if smtpHost == "" {
-		smtpHost = getEnv("APP_SMTP_HOST", "")
-	}
+	smtpHost := firstNonEmptyEnv("SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
 
-	smtpPort := getEnv("SMTP_PORT", "")
-	if smtpPort == "" {
-		smtpPort = getEnv("APP_SMTP_PORT", "")
-	}
+	smtpPort := firstNonEmptyEnv("SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
 	if smtpPort == "" {
 		// Default to 25 (local MTA). You can override with APP_SMTP_PORT / SMTP_PORT.
 		smtpPort = "25"
 	}
 
-	smtpUser := getEnv("SMTP_USER", "")
-	if smtpUser == "" {
-		smtpUser = getEnv("APP_SMTP_USER", "")
-	}
+	smtpUser := firstNonEmptyEnv("SMTP_USER", "APP_SMTP_USER", "SMTP_USERNAME", "MAIL_USERNAME")
 
-	smtpPass := getEnv("SMTP_PASS", "")
-	if smtpPass == "" {
-		smtpPass = getEnv("APP_SMTP_PASS", "")
-	}
+	smtpPass := firstNonEmptyEnv("SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
 
-	smtpFrom := getEnv("SMTP_FROM", "")
+	smtpFrom := firstNonEmptyEnv("SMTP_FROM", "MAIL_FROM")
 	if smtpFrom == "" {
-		fromEmail := strings.TrimSpace(getEnv("APP_SMTP_FROM_EMAIL", ""))
-		fromName := strings.TrimSpace(getEnv("APP_SMTP_FROM_NAME", ""))
+		fromEmail := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
+		fromName := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
 		switch {
 		case fromEmail != "" && fromName != "":
 			smtpFrom = fmt.Sprintf("%s <%s>", fromName, fromEmail)
@@ -188,11 +176,17 @@ func Load() (*Config, error) {
 			smtpFrom = fromEmail
 		}
 	}
+	if smtpFrom == "" {
+		smtpFrom = strings.TrimSpace(getEnv("APP_SUPPORT_EMAIL", ""))
+	}
 
-	// TLS: prefer explicit SMTP_TLS; otherwise APP_SMTP_TLS; default false for local relay
+	// TLS: prefer explicit SMTP_TLS; then APP_SMTP_TLS; then MAIL_TLS.
 	smtpTLS := getEnvAsBool("SMTP_TLS", false)
 	if os.Getenv("SMTP_TLS") == "" {
 		smtpTLS = getEnvAsBool("APP_SMTP_TLS", smtpTLS)
+		if os.Getenv("APP_SMTP_TLS") == "" {
+			smtpTLS = getEnvAsBool("MAIL_TLS", smtpTLS)
+		}
 	}
 
 	serverPort := strings.TrimSpace(getEnv("SERVER_PORT", ""))
@@ -439,6 +433,9 @@ func validateConfig(cfg *Config) error {
 				return fmt.Errorf("SMTP_USER and SMTP_PASS are required when SMTP_HOST is not local (e.g. Brevo, Gmail)")
 			}
 		}
+		if strings.TrimSpace(cfg.SMTP.From) == "" && strings.TrimSpace(cfg.SMTP.User) == "" {
+			return fmt.Errorf("SMTP_FROM (or APP_SUPPORT_EMAIL) is required when SMTP_USER is empty")
+		}
 	}
 
 	return nil
@@ -503,6 +500,15 @@ func splitEnv(key string, defaultValue []string) []string {
 		return result
 	}
 	return defaultValue
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func redactPostgresURL(raw string) string {
