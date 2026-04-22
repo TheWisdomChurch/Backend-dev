@@ -200,6 +200,54 @@ func (h *LeadershipHandler) Delete(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Leadership member deleted", nil)
 }
 
+func (h *LeadershipHandler) BirthdayStats(c *gin.Context) {
+	stats, err := h.svc.BirthdayStats()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load birthday stats")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Birthday stats retrieved", stats)
+}
+
+func (h *LeadershipHandler) BirthdaysByMonth(c *gin.Context) {
+	raw := strings.TrimSpace(c.Param("month"))
+	month, err := strconv.Atoi(raw)
+	if err != nil || month < 1 || month > 12 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+		return
+	}
+	items, err := h.svc.BirthdaysByMonth(month)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Birthdays retrieved", gin.H{
+		"month": month,
+		"data":  items,
+	})
+}
+
+func (h *LeadershipHandler) BirthdaysToday(c *gin.Context) {
+	items, err := h.svc.BirthdaysToday(time.Now())
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load today's birthdays")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Today's birthdays retrieved", gin.H{
+		"data": items,
+	})
+}
+
+func (h *LeadershipHandler) SendBirthdaysToday(c *gin.Context) {
+	now := time.Now()
+	result, err := h.svc.SendBirthdayGreetings(int(now.Month()), now.Day())
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
+}
+
 func (h *LeadershipHandler) AnniversaryStats(c *gin.Context) {
 	stats, err := h.svc.AnniversaryStats()
 	if err != nil {

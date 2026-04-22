@@ -31,6 +31,9 @@ type publicFormPageData struct {
 	SubmitURL      string
 	SubmitLabel    string
 	SuccessMessage string
+	SubmissionType string
+	IsLeadership   bool
+	HomeURL        string
 }
 
 func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
@@ -54,6 +57,7 @@ func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
 	}
 
 	settings := decodeFormSettings(payload.Form.Settings)
+	submissionType := resolveFormSubmissionType(payload.Form, settings)
 	data := publicFormPageData{
 		Form:           payload.Form,
 		Settings:       settings,
@@ -61,6 +65,9 @@ func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
 		SubmitURL:      "/api/v1/forms/" + slug + "/submissions",
 		SubmitLabel:    "Submit Registration",
 		SuccessMessage: "Registration submitted successfully.",
+		SubmissionType: submissionType,
+		IsLeadership:   submissionType == "leadership",
+		HomeURL:        "/",
 	}
 	if settings != nil && settings.SuccessMessage != nil && strings.TrimSpace(*settings.SuccessMessage) != "" {
 		data.SuccessMessage = strings.TrimSpace(*settings.SuccessMessage)
@@ -219,6 +226,46 @@ func sectionLayoutClass(value *string) string {
 	}
 }
 
+func resolveFormSubmissionType(form *models.Form, settings *models.FormSettingsDTO) string {
+	if settings != nil && settings.SubmissionTarget != nil {
+		target := strings.ToLower(strings.TrimSpace(*settings.SubmissionTarget))
+		if target != "" {
+			return target
+		}
+	}
+
+	if settings != nil && settings.FormType != nil {
+		formType := strings.ToLower(strings.TrimSpace(*settings.FormType))
+		switch formType {
+		case "leadership", "workforce", "testimonial", "event", "registration", "application", "contact", "general":
+			return formType
+		case "membership":
+			return "member"
+		}
+	}
+
+	if form != nil {
+		title := strings.ToLower(strings.TrimSpace(form.Title))
+		slug := ""
+		if form.Slug != nil {
+			slug = strings.ToLower(strings.TrimSpace(*form.Slug))
+		}
+
+		switch {
+		case strings.Contains(title, "leadership"), strings.Contains(slug, "leadership"):
+			return "leadership"
+		case strings.Contains(title, "testimon"), strings.Contains(slug, "testimon"):
+			return "testimonial"
+		case strings.Contains(title, "member"), strings.Contains(title, "membership"), strings.Contains(slug, "member"):
+			return "member"
+		case strings.Contains(title, "workforce"), strings.Contains(slug, "workforce"):
+			return "workforce"
+		}
+	}
+
+	return "general"
+}
+
 func (h *FormHandler) renderPublicFormPageError(c *gin.Context, status int, title, message string) {
 	html := "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
 		"<title>" + template.HTMLEscapeString(title) + "</title>" +
@@ -286,8 +333,31 @@ const publicFormPageHTML = `<!DOCTYPE html>
     .status.error { display: block; background: #fef3f2; color: var(--danger); border: 1px solid #fecdca; }
     .status.success { display: block; background: #ecfdf3; color: var(--success); border: 1px solid #abefc6; }
     .hidden-field { display: none !important; }
+    .success-overlay { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(2, 8, 23, 0.65); backdrop-filter: blur(4px); }
+    .success-overlay.open { display: flex; }
+    .success-modal { width: min(560px, 100%); border-radius: 24px; border: 1px solid #cbd5e1; background: #fff; box-shadow: 0 30px 70px rgba(15, 23, 42, 0.35); overflow: hidden; }
+    .success-head { padding: 24px; background: linear-gradient(130deg, #0f4c81 0%, #0b2f50 100%); color: #fff; }
+    .success-head h3 { margin: 0; font-size: 26px; line-height: 1.2; }
+    .success-head p { margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); }
+    .success-body { padding: 20px 24px 24px; display: grid; gap: 14px; }
+    .lead-card { border: 1px solid #cbd5e1; border-radius: 18px; background: linear-gradient(180deg, #f8fafc, #eef4fb); padding: 16px; display: grid; grid-template-columns: 88px 1fr; gap: 14px; align-items: center; }
+    .lead-avatar { width: 88px; height: 88px; border-radius: 999px; overflow: hidden; border: 2px solid #dbe3ef; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; color: #1e293b; text-transform: uppercase; }
+    .lead-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .lead-meta p { margin: 0; }
+    .lead-name { font-size: 20px; font-weight: 800; color: #0f172a; }
+    .lead-role { margin-top: 4px; font-size: 14px; color: #334155; font-weight: 700; }
+    .prompt-box { border-radius: 14px; border: 1px solid #dbe3ef; background: #f8fafc; padding: 12px 14px; color: #334155; }
+    .success-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+    .link-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 12px 20px; text-decoration: none; font-weight: 700; background: var(--brand); color: #fff; }
+    .ghost-btn { border: 1px solid #cbd5e1; background: #fff; color: #0f172a; }
     @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
-    @media (max-width: 720px) { .section-grid, .section-split { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) {
+      .section-grid, .section-split { grid-template-columns: 1fr; }
+      .lead-card { grid-template-columns: 1fr; text-align: center; }
+      .lead-avatar { margin: 0 auto; }
+      .success-actions { justify-content: stretch; }
+      .success-actions .link-btn { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -357,12 +427,50 @@ const publicFormPageHTML = `<!DOCTYPE html>
     </section>
   </div>
 
+  <div id="success-overlay" class="success-overlay" aria-hidden="true">
+    <div class="success-modal" role="dialog" aria-modal="true" aria-labelledby="success-title">
+      <div class="success-head">
+        <h3 id="success-title">Submission Received</h3>
+        <p>Thank you for completing the form. Your entry has been recorded successfully.</p>
+      </div>
+      <div class="success-body">
+        <div id="lead-card" class="lead-card" style="display:none;">
+          <div id="lead-avatar" class="lead-avatar">WC</div>
+          <div class="lead-meta">
+            <p id="lead-name" class="lead-name">Leadership Applicant</p>
+            <p id="lead-role" class="lead-role">Leadership</p>
+          </div>
+        </div>
+        <div class="prompt-box" id="success-prompt">
+          Return back to homepage to continue exploring Wisdom Church resources.
+        </div>
+        <div class="success-actions">
+          <button id="success-close" type="button" class="link-btn ghost-btn">Close</button>
+          <a id="home-link" class="link-btn" href="{{.HomeURL}}">Return to homepage</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const formElement = document.getElementById('public-form');
     const statusElement = document.getElementById('form-status');
     const submitButton = document.getElementById('submit-button');
+    const successOverlay = document.getElementById('success-overlay');
+    const successCloseButton = document.getElementById('success-close');
+    const successHomeLink = document.getElementById('home-link');
+    const leadCard = document.getElementById('lead-card');
+    const leadAvatar = document.getElementById('lead-avatar');
+    const leadName = document.getElementById('lead-name');
+    const leadRole = document.getElementById('lead-role');
+    const successPrompt = document.getElementById('success-prompt');
     const submitUrl = {{printf "%q" .SubmitURL}};
     const successMessage = {{printf "%q" .SuccessMessage}};
+    const submissionType = {{printf "%q" .SubmissionType}};
+    const homeUrl = {{printf "%q" .HomeURL}};
+    if (successHomeLink && homeUrl) {
+      successHomeLink.setAttribute('href', homeUrl);
+    }
 
     function getFieldValue(fieldKey) {
       const checkboxes = Array.from(formElement.querySelectorAll('input[type="checkbox"][name="' + fieldKey + '"]'));
@@ -470,6 +578,63 @@ const publicFormPageHTML = `<!DOCTYPE html>
       formElement.querySelectorAll('[data-field-key]').forEach((field) => setFieldError(field, ''));
     }
 
+    function firstValue(values, keys) {
+      for (const key of keys) {
+        if (!(key in values)) continue;
+        const value = values[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+      return '';
+    }
+
+    function initials(name) {
+      const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return 'WC';
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    function buildLeadershipCard(values) {
+      const name = firstValue(values, ['full_name', 'fullName', 'name']) ||
+        [firstValue(values, ['first_name', 'firstName', 'firstname']), firstValue(values, ['last_name', 'lastName', 'lastname'])].filter(Boolean).join(' ');
+      const role = firstValue(values, ['role', 'leadershipRole', 'leadership_role', 'leadershipCategory']) || 'Leadership Applicant';
+      const image = firstValue(values, ['imageUrl', 'image_url', 'image', 'photo', 'profileImage', 'profile_image']);
+      return { name: name || 'Leadership Applicant', role, image };
+    }
+
+    function closeSuccessOverlay() {
+      if (!successOverlay) return;
+      successOverlay.classList.remove('open');
+      successOverlay.setAttribute('aria-hidden', 'true');
+    }
+
+    function openSuccessOverlay(values) {
+      if (!successOverlay) {
+        setStatus('success', successMessage);
+        return;
+      }
+
+      if (submissionType === 'leadership' && leadCard && leadAvatar && leadName && leadRole) {
+        const card = buildLeadershipCard(values || {});
+        leadName.textContent = card.name;
+        leadRole.textContent = card.role || 'Leadership Applicant';
+        if (card.image && /^https?:\/\//i.test(card.image)) {
+          leadAvatar.innerHTML = '<img src="' + card.image.replace(/"/g, '&quot;') + '" alt="Leadership profile image" />';
+        } else {
+          leadAvatar.textContent = initials(card.name);
+        }
+        leadCard.style.display = 'grid';
+        if (successPrompt) {
+          successPrompt.textContent = 'Thank you for completing the Bio Data. Return back to homepage to continue.';
+        }
+      } else if (leadCard) {
+        leadCard.style.display = 'none';
+      }
+
+      successOverlay.classList.add('open');
+      successOverlay.setAttribute('aria-hidden', 'false');
+    }
+
     function validateField(field) {
       if (field.classList.contains('hidden-field')) {
         setFieldError(field, '');
@@ -518,6 +683,14 @@ const publicFormPageHTML = `<!DOCTYPE html>
     formElement.addEventListener('input', clearFieldErrors);
     formElement.addEventListener('change', clearFieldErrors);
     updateVisibility();
+    if (successCloseButton) {
+      successCloseButton.addEventListener('click', closeSuccessOverlay);
+    }
+    if (successOverlay) {
+      successOverlay.addEventListener('click', (event) => {
+        if (event.target === successOverlay) closeSuccessOverlay();
+      });
+    }
 
     formElement.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -541,10 +714,12 @@ const publicFormPageHTML = `<!DOCTYPE html>
           throw new Error(body.message || 'Unable to submit the form.');
         }
 
+        const submittedValues = collectValues();
         formElement.reset();
         clearFieldErrors();
         updateVisibility();
         setStatus('success', successMessage);
+        openSuccessOverlay(submittedValues);
       } catch (error) {
         const match = String(error && error.message || '').match(/field '([^']+)'/i);
         if (match) {

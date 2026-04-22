@@ -546,6 +546,15 @@ func startBirthdayScheduler(
 		}
 
 		if leadershipSvc != nil {
+			result, err := leadershipSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
+			if err != nil {
+				if logger != nil {
+					logger.Printf("⚠️ Leadership birthday send failed: %v", err)
+				}
+			} else if logger != nil {
+				logger.Printf("🎂 Leadership birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+			}
+
 			result, err := leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
 			if err != nil {
 				if logger != nil {
@@ -873,6 +882,10 @@ func setupRouter(
 	admin.POST("/leadership", leadershipHandler.Create)
 	admin.PUT("/leadership/:id", leadershipHandler.Update)
 	admin.DELETE("/leadership/:id", leadershipHandler.Delete)
+	admin.GET("/leadership/birthdays/stats", leadershipHandler.BirthdayStats)
+	admin.GET("/leadership/birthdays/month/:month", leadershipHandler.BirthdaysByMonth)
+	admin.GET("/leadership/birthdays/today", leadershipHandler.BirthdaysToday)
+	admin.POST("/leadership/birthdays/send-today", leadershipHandler.SendBirthdaysToday)
 	admin.GET("/leadership/anniversaries/stats", leadershipHandler.AnniversaryStats)
 	admin.GET("/leadership/anniversaries/month/:month", leadershipHandler.AnniversariesByMonth)
 	admin.GET("/leadership/anniversaries/today", leadershipHandler.AnniversariesToday)
