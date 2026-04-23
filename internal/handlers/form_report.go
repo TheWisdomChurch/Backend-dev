@@ -17,9 +17,8 @@ import (
 )
 
 func (h *FormHandler) GetAdminFormReportLink(c *gin.Context) {
-	formID := strings.TrimSpace(c.Param("id"))
-	if formID == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "missing form id")
+	formID, ok := formIDParam(c)
+	if !ok {
 		return
 	}
 
@@ -29,7 +28,7 @@ func (h *FormHandler) GetAdminFormReportLink(c *gin.Context) {
 			utils.ErrorResponse(c, http.StatusNotFound, "form not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		utils.ErrorResponse(c, formServiceStatus(err), formServiceMessage(err, "Failed to generate report link"))
 		return
 	}
 
