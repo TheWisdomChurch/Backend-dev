@@ -68,8 +68,10 @@ func isAdminOrSuper(role string) bool {
 }
 
 func (h *EventHandler) List(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	if !ok {
+		return
+	}
 	offset := (page - 1) * limit
 
 	statusFilter := normalizeIncomingEventStatus(strings.TrimSpace(c.Query("status"))) // upcoming|happening|past (+ aliases)
@@ -112,7 +114,10 @@ func (h *EventHandler) List(c *gin.Context) {
 }
 
 func (h *EventHandler) Get(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -220,7 +225,10 @@ func (h *EventHandler) Create(c *gin.Context) {
 }
 
 func (h *EventHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
 
 	var req models.Event
 	if !validation.BindJSON(c, &req) {
@@ -262,7 +270,10 @@ func (h *EventHandler) Update(c *gin.Context) {
 }
 
 func (h *EventHandler) Approve(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -317,7 +328,10 @@ func (h *EventHandler) Approve(c *gin.Context) {
 }
 
 func (h *EventHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -338,7 +352,10 @@ func (h *EventHandler) uploadEventAsset(c *gin.Context, kind string) {
 		return
 	}
 
-	eventID := c.Param("id")
+	eventID, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
 
 	fh, err := c.FormFile("file")
 	if err != nil {

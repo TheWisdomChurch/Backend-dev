@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -55,9 +53,8 @@ func (h *StoreHandler) CreateProduct(c *gin.Context) {
 }
 
 func (h *StoreHandler) UpdateProduct(c *gin.Context) {
-	id, err := parseProductID(c.Param("id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+	id, ok := parseUintPathParam(c, "id", "product id")
+	if !ok {
 		return
 	}
 	var req service.UpsertStoreProductRequest
@@ -73,9 +70,8 @@ func (h *StoreHandler) UpdateProduct(c *gin.Context) {
 }
 
 func (h *StoreHandler) UpdateProductStock(c *gin.Context) {
-	id, err := parseProductID(c.Param("id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+	id, ok := parseUintPathParam(c, "id", "product id")
+	if !ok {
 		return
 	}
 	var req struct {
@@ -93,9 +89,8 @@ func (h *StoreHandler) UpdateProductStock(c *gin.Context) {
 }
 
 func (h *StoreHandler) UpdateProductActive(c *gin.Context) {
-	id, err := parseProductID(c.Param("id"))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid product id")
+	id, ok := parseUintPathParam(c, "id", "product id")
+	if !ok {
 		return
 	}
 	var req struct {
@@ -128,9 +123,8 @@ func (h *StoreHandler) CreateOrder(c *gin.Context) {
 }
 
 func (h *StoreHandler) GetOrder(c *gin.Context) {
-	orderID := c.Param("orderId")
-	if orderID == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "orderId is required")
+	orderID, ok := parseRequiredPathParam(c, "orderId", "order id")
+	if !ok {
 		return
 	}
 	order, err := h.svc.GetOrder(orderID)
@@ -142,8 +136,10 @@ func (h *StoreHandler) GetOrder(c *gin.Context) {
 }
 
 func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 20, 100)
+	if !ok {
+		return
+	}
 	status := strings.TrimSpace(c.Query("status"))
 	items, total, err := h.svc.ListOrders(page, limit, status)
 	if err != nil {
@@ -164,9 +160,8 @@ func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
 }
 
 func (h *StoreHandler) UpdateOrderStatus(c *gin.Context) {
-	orderID := strings.TrimSpace(c.Param("orderId"))
-	if orderID == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "orderId is required")
+	orderID, ok := parseRequiredPathParam(c, "orderId", "order id")
+	if !ok {
 		return
 	}
 	var req struct {
@@ -211,15 +206,4 @@ func mapOrderResponse(order *models.StoreOrder) gin.H {
 			"customerBankName":    order.CustomerBankName,
 		},
 	}
-}
-
-func parseProductID(raw string) (uint, error) {
-	id64, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	if id64 == 0 {
-		return 0, errors.New("id must be greater than zero")
-	}
-	return uint(id64), nil
 }
