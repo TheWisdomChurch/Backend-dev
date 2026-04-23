@@ -70,11 +70,20 @@ type FormContentSectionDTO struct {
 	Items    []FormContentSectionItemDTO `json:"items,omitempty"`
 }
 
+type FormLegacyContentSectionDTO struct {
+	Title        *string  `json:"title,omitempty"`
+	Subtitle     *string  `json:"subtitle,omitempty"`
+	Items        []string `json:"items,omitempty"`
+	ItemSubtexts []string `json:"itemSubtexts,omitempty"`
+}
+
 type FormSettingsDTO struct {
-	Capacity       *int    `json:"capacity,omitempty"`
-	ClosesAt       *string `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
-	ExpiresAt      *string `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
-	SuccessMessage *string `json:"successMessage,omitempty"`                        // optional
+	Capacity        *int    `json:"capacity,omitempty"`
+	ClosesAt        *string `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
+	ExpiresAt       *string `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
+	SuccessMessage  *string `json:"successMessage,omitempty"`                        // optional
+	SuccessTitle    *string `json:"successTitle,omitempty"`
+	SuccessSubtitle *string `json:"successSubtitle,omitempty"`
 
 	// Form type controls public header label (registration, membership, workforce, etc).
 	FormType *string `json:"formType,omitempty"`
@@ -100,21 +109,22 @@ type FormSettingsDTO struct {
 	Design *FormDesignSettingsDTO `json:"design,omitempty"`
 
 	// Extended builder settings (kept at root for backward compat with frontend)
-	IntroTitle            *string                  `json:"introTitle,omitempty"`
-	IntroSubtitle         *string                  `json:"introSubtitle,omitempty"`
-	IntroBullets          *[]string                `json:"introBullets,omitempty"`
-	IntroBulletSubtexts   *[]string                `json:"introBulletSubtexts,omitempty"`
-	LayoutMode            *string                  `json:"layoutMode,omitempty"`
-	DateFormat            *string                  `json:"dateFormat,omitempty"`
-	FooterText            *string                  `json:"footerText,omitempty"`
-	FooterBg              *string                  `json:"footerBg,omitempty"`
-	FooterTextColor       *string                  `json:"footerTextColor,omitempty"`
-	Sections              *[]FormContentSectionDTO `json:"sections,omitempty"`
-	SubmitButtonText      *string                  `json:"submitButtonText,omitempty"`
-	SubmitButtonBg        *string                  `json:"submitButtonBg,omitempty"`
-	SubmitButtonTextColor *string                  `json:"submitButtonTextColor,omitempty"`
-	SubmitButtonIcon      *string                  `json:"submitButtonIcon,omitempty"`
-	FormHeaderNote        *string                  `json:"formHeaderNote,omitempty"`
+	IntroTitle            *string                        `json:"introTitle,omitempty"`
+	IntroSubtitle         *string                        `json:"introSubtitle,omitempty"`
+	IntroBullets          *[]string                      `json:"introBullets,omitempty"`
+	IntroBulletSubtexts   *[]string                      `json:"introBulletSubtexts,omitempty"`
+	LayoutMode            *string                        `json:"layoutMode,omitempty"`
+	DateFormat            *string                        `json:"dateFormat,omitempty"`
+	FooterText            *string                        `json:"footerText,omitempty"`
+	FooterBg              *string                        `json:"footerBg,omitempty"`
+	FooterTextColor       *string                        `json:"footerTextColor,omitempty"`
+	Sections              *[]FormContentSectionDTO       `json:"sections,omitempty"`
+	ContentSections       *[]FormLegacyContentSectionDTO `json:"contentSections,omitempty"`
+	SubmitButtonText      *string                        `json:"submitButtonText,omitempty"`
+	SubmitButtonBg        *string                        `json:"submitButtonBg,omitempty"`
+	SubmitButtonTextColor *string                        `json:"submitButtonTextColor,omitempty"`
+	SubmitButtonIcon      *string                        `json:"submitButtonIcon,omitempty"`
+	FormHeaderNote        *string                        `json:"formHeaderNote,omitempty"`
 }
 
 type CreateFormRequest struct {

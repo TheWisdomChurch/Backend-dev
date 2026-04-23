@@ -110,10 +110,16 @@ func (h *NotificationHandler) SubscribeByLink(c *gin.Context) {
 }
 
 func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	if !ok {
+		return
+	}
 
-	items, total, err := h.svc.ListSubscribers(page, limit)
+	status := strings.TrimSpace(c.Query("status"))
+	search := strings.TrimSpace(c.Query("search"))
+	source := strings.TrimSpace(c.Query("source"))
+
+	items, total, err := h.svc.ListSubscribers(page, limit, status, search, source)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load subscribers")
 		return
@@ -126,6 +132,15 @@ func (h *NotificationHandler) ListSubscribers(c *gin.Context) {
 		"limit":      limit,
 		"totalPages": (total + int64(limit) - 1) / int64(limit),
 	})
+}
+
+func (h *NotificationHandler) GetSubscriberSummary(c *gin.Context) {
+	summary, err := h.svc.GetSubscriberSummary()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load subscriber summary")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Subscriber summary loaded", summary)
 }
 
 func (h *NotificationHandler) SendNotification(c *gin.Context) {

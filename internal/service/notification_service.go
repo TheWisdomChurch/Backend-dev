@@ -21,7 +21,8 @@ type EmailSender interface {
 type NotificationService interface {
 	Subscribe(req *models.SubscribeRequest) (*models.Subscriber, error)
 	Unsubscribe(email string) error
-	ListSubscribers(page, limit int) ([]models.Subscriber, int64, error)
+	ListSubscribers(page, limit int, status, search, source string) ([]models.Subscriber, int64, error)
+	GetSubscriberSummary() (*models.SubscriberSummary, error)
 	SendNotification(req *models.SendNotificationRequest) (*models.SendNotificationResult, error)
 }
 
@@ -65,6 +66,7 @@ func (s *notificationService) Subscribe(req *models.SubscribeRequest) (*models.S
 		if req.Source != nil {
 			existing.Source = req.Source
 		}
+		existing.UnsubscribedAt = nil
 		if err := s.subscribers.Update(existing); err != nil {
 			return nil, err
 		}
@@ -102,10 +104,12 @@ func (s *notificationService) Unsubscribe(email string) error {
 	}
 
 	sub.Status = models.SubscriberStatusUnsubscribed
+	now := time.Now().UTC()
+	sub.UnsubscribedAt = &now
 	return s.subscribers.Update(sub)
 }
 
-func (s *notificationService) ListSubscribers(page, limit int) ([]models.Subscriber, int64, error) {
+func (s *notificationService) ListSubscribers(page, limit int, status, search, source string) ([]models.Subscriber, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -113,7 +117,11 @@ func (s *notificationService) ListSubscribers(page, limit int) ([]models.Subscri
 		limit = 10
 	}
 	offset := (page - 1) * limit
-	return s.subscribers.List(offset, limit)
+	return s.subscribers.List(offset, limit, status, search, source)
+}
+
+func (s *notificationService) GetSubscriberSummary() (*models.SubscriberSummary, error) {
+	return s.subscribers.GetSummary()
 }
 
 func (s *notificationService) SendNotification(req *models.SendNotificationRequest) (*models.SendNotificationResult, error) {
@@ -124,6 +132,18 @@ func (s *notificationService) SendNotification(req *models.SendNotificationReque
 	nType := normalizeNotificationType(req.Type)
 	if nType == "" {
 		return nil, errors.New("type must be 'update' or 'event'")
+	}
+
+	audience := "newsletter_subscribers"
+	if req.Audience != nil && strings.TrimSpace(*req.Audience) != "" {
+		audience = strings.ToLower(strings.TrimSpace(*req.Audience))
+	}
+	if audience != "newsletter_subscribers" {
+		return nil, errors.New("audience must be newsletter_subscribers")
+	}
+
+	if containsSensitiveNotificationContent(req.Subject, req.Title, req.Message) {
+		return nil, errors.New("message appears to contain internal-only content; use admin inbox for operational alerts")
 	}
 
 	if nType == string(models.NotificationTypeEvent) && req.EventID == nil {
@@ -205,6 +225,8 @@ func (s *notificationService) SendNotification(req *models.SendNotificationReque
 			result.Failed++
 			continue
 		}
+		sub.LastNotifiedAt = &sentAt
+		_ = s.subscribers.Update(&sub)
 		result.Sent++
 	}
 
@@ -217,7 +239,7 @@ func (s *notificationService) sendSubscriberWelcome(sub *models.Subscriber) {
 	}
 	unsubscribeURL := ""
 	if strings.TrimSpace(s.branding.PublicURL) != "" {
-		unsubscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/subscribers/unsubscribe?email=" + url.QueryEscape(sub.Email)
+		unsubscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/notifications/unsubscribe?email=" + url.QueryEscape(sub.Email)
 	}
 	name := ""
 	if sub.Name != nil {
@@ -248,4 +270,29 @@ func normalizeNotificationType(t string) string {
 	default:
 		return ""
 	}
+}
+
+func containsSensitiveNotificationContent(parts ...string) bool {
+	joined := strings.ToLower(strings.Join(parts, " "))
+	if strings.TrimSpace(joined) == "" {
+		return false
+	}
+
+	denyList := []string{
+		"testimonial removed",
+		"testimonial approved",
+		"approval request",
+		"user deleted",
+		"user suspended",
+		"admin",
+		"security alert",
+		"password reset",
+		"internal",
+	}
+	for _, term := range denyList {
+		if strings.Contains(joined, term) {
+			return true
+		}
+	}
+	return false
 }
