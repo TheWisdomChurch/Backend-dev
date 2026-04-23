@@ -814,6 +814,7 @@ func setupRouter(
 
 	// Notifications (admin)
 	admin.GET("/notifications/subscribers", middleware.RequirePermission(middleware.PermissionNotificationsManage), notificationHandler.ListSubscribers)
+	admin.GET("/notifications/subscribers/summary", middleware.RequirePermission(middleware.PermissionNotificationsManage), notificationHandler.GetSubscriberSummary)
 	admin.POST("/notifications/send", middleware.RequirePermission(middleware.PermissionNotificationsManage), notificationHandler.SendNotification)
 	admin.GET("/notifications/inbox", middleware.RequirePermission(middleware.PermissionNotificationsManage), adminNotificationHandler.List)
 	admin.PATCH("/notifications/:id/read", middleware.RequirePermission(middleware.PermissionNotificationsManage), adminNotificationHandler.MarkRead)
