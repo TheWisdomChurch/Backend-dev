@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,20 @@ func parseRequiredPathParam(c *gin.Context, paramName, label string) (string, bo
 	raw := strings.TrimSpace(c.Param(paramName))
 	if raw == "" {
 		utils.ErrorResponse(c, http.StatusBadRequest, label+" is required")
+		return "", false
+	}
+	return raw, true
+}
+
+var orderIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{2,119}$`)
+
+func parseOrderIDPathParam(c *gin.Context, paramName, label string) (string, bool) {
+	raw, ok := parseRequiredPathParam(c, paramName, label)
+	if !ok {
+		return "", false
+	}
+	if !orderIDPattern.MatchString(raw) {
+		utils.ErrorResponse(c, http.StatusBadRequest, label+" is invalid")
 		return "", false
 	}
 	return raw, true
@@ -70,6 +85,33 @@ func parsePaginationQuery(c *gin.Context, defaultLimit, maxLimit int) (int, int,
 	}
 
 	return page, limit, true
+}
+
+func parseOptionalBoolQuery(c *gin.Context, queryKey, label string) (*bool, bool) {
+	raw := strings.TrimSpace(c.Query(queryKey))
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, label+" must be true or false")
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func parseEnumQuery(c *gin.Context, queryKey, label string, allowed []string) (string, bool) {
+	raw := strings.ToLower(strings.TrimSpace(c.Query(queryKey)))
+	if raw == "" {
+		return "", true
+	}
+	for _, item := range allowed {
+		if raw == item {
+			return raw, true
+		}
+	}
+	utils.ErrorResponse(c, http.StatusBadRequest, label+" is invalid")
+	return "", false
 }
 
 func parseMonthPathParam(c *gin.Context, paramName string) (int, bool) {
