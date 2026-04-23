@@ -1,13 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/middleware"
@@ -18,11 +18,15 @@ import (
 )
 
 type FormHandler struct {
-	svc service.FormService
+	svc      service.FormService
+	uploader service.AssetUploader
 }
 
-func NewFormHandler(svc service.FormService) *FormHandler {
-	return &FormHandler{svc: svc}
+func NewFormHandler(svc service.FormService, uploader service.AssetUploader) *FormHandler {
+	return &FormHandler{
+		svc:      svc,
+		uploader: uploader,
+	}
 }
 
 func (h *FormHandler) ListAdminForms(c *gin.Context) {
@@ -112,6 +116,72 @@ func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Form deleted", nil)
+}
+
+func (h *FormHandler) UploadAdminFormBanner(c *gin.Context) {
+	if h.uploader == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Storage uploader not configured")
+		return
+	}
+
+	formID, ok := formIDParam(c)
+	if !ok {
+		return
+	}
+
+	fh, err := c.FormFile("file")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	const maxBytes = 10 << 20
+	if fh.Size > maxBytes {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file too large (max 10MB)")
+		return
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to open file")
+		return
+	}
+	defer src.Close()
+
+	contentType := fh.Header.Get("Content-Type")
+	ext, ok := allowedImageExt(contentType)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusBadRequest, "only png, jpg, webp allowed")
+		return
+	}
+
+	objectKey, err := h.uploader.BuildGenericAssetKey("forms/banners", ext)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+
+	cdnURL, err := h.uploader.Upload(ctx, objectKey, contentType, src)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
+		return
+	}
+
+	settingsPatch := &models.FormSettingsDTO{
+		Design: &models.FormDesignSettingsDTO{
+			CoverImageURL: &cdnURL,
+		},
+	}
+	updated, err := h.svc.Update(formID, &models.UpdateFormRequest{Settings: settingsPatch})
+	if err != nil {
+		utils.ErrorResponse(c, formServiceStatus(err), formServiceMessage(err, "failed to update form banner"))
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Banner uploaded", updated)
 }
 
 func (h *FormHandler) PublishAdminForm(c *gin.Context) {
@@ -278,16 +348,7 @@ func buildFormCampaignActor(c *gin.Context) *models.FormCampaignSendActor {
 }
 
 func formIDParam(c *gin.Context) (string, bool) {
-	id := strings.TrimSpace(c.Param("id"))
-	if id == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "form id is required")
-		return "", false
-	}
-	if _, err := uuid.Parse(id); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "form id must be a valid UUID")
-		return "", false
-	}
-	return id, true
+	return parseUUIDParam(c, "id", "form id")
 }
 
 func formServiceStatus(err error) int {
