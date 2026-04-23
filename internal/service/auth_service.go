@@ -36,6 +36,7 @@ type authServiceImpl struct {
 var ErrAdminPending = errors.New("admin approval pending")
 var ErrUserNotFound = errors.New("account not found")
 var ErrWrongPassword = errors.New("incorrect password")
+var ErrAdminTOTPRequired = errors.New("admin accounts with authenticator enabled must complete totp verification")
 
 const (
 	failedLoginThreshold  = 3
@@ -128,6 +129,10 @@ func (s *authServiceImpl) VerifyLoginMFA(email, code, purpose, method string, me
 	}
 
 	method = normalizeMFAMethod(method)
+	if isAdminRole(user.Role) && user.TOTPEnabled {
+		// Admin sessions must be bound to a TOTP verification.
+		method = "totp"
+	}
 	if method == "" {
 		if strings.HasPrefix(strings.TrimSpace(purpose), loginOTPPurposePrefix) {
 			method = "email_otp"
@@ -208,6 +213,22 @@ func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadat
 func (s *authServiceImpl) completePrimaryLogin(user *models.User, meta LoginMetadata, authMethod string) (*LoginResult, error) {
 	if user == nil {
 		return nil, errors.New("user not found")
+	}
+
+	// Require a TOTP step for admin/super_admin users once authenticator is enabled.
+	// This keeps issued session auth_method aligned with admin middleware enforcement.
+	if isAdminRole(user.Role) && user.TOTPEnabled {
+		if s.disableOTP {
+			return nil, errors.New("multi-factor authentication is disabled")
+		}
+		if s.security != nil {
+			s.security.RecordEvent("totp_challenge", user, meta, nil)
+		}
+		return &LoginResult{
+			User:        sanitizeUser(user),
+			OTPRequired: true,
+			MFAMethod:   "totp",
+		}, nil
 	}
 
 	if s.isTrustedDevice(user, meta) {
