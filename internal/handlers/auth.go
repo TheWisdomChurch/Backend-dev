@@ -401,13 +401,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "No active session",
+			"data":    nil,
+		})
 		return
 	}
 
 	id, ok := userID.(string)
 	if !ok || id == "" {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid session")
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "No active session",
+			"data":    nil,
+		})
 		return
 	}
 
