@@ -74,7 +74,11 @@ func (h *EventHandler) List(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
-	statusFilter := normalizeIncomingEventStatus(strings.TrimSpace(c.Query("status"))) // upcoming|happening|past (+ aliases)
+	statusQuery, ok := parseEnumQuery(c, "status", "status", []string{"upcoming", "happening", "past", "ongoing", "completed"})
+	if !ok {
+		return
+	}
+	statusFilter := normalizeIncomingEventStatus(statusQuery) // upcoming|happening|past (+ aliases)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()

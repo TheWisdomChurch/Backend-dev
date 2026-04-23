@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,14 +27,9 @@ func (h *MemberHandler) List(c *gin.Context) {
 		return
 	}
 
-	var activePtr *bool
-	if v := strings.TrimSpace(c.Query("active")); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			utils.ErrorResponse(c, http.StatusBadRequest, "active must be true or false")
-			return
-		}
-		activePtr = &b
+	activePtr, ok := parseOptionalBoolQuery(c, "active", "active")
+	if !ok {
+		return
 	}
 
 	items, total, err := h.svc.List(page, limit, activePtr)

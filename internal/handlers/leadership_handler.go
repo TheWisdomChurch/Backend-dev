@@ -113,8 +113,20 @@ func (h *LeadershipHandler) List(c *gin.Context) {
 		return
 	}
 
-	role := c.Query("role")
-	status := c.Query("status")
+	role, ok := parseEnumQuery(c, "role", "role", []string{
+		"senior_pastor",
+		"associate_pastor",
+		"deacon",
+		"deaconess",
+		"reverend",
+	})
+	if !ok {
+		return
+	}
+	status, ok := parseEnumQuery(c, "status", "status", []string{"pending", "approved", "declined"})
+	if !ok {
+		return
+	}
 
 	items, total, err := h.svc.List(page, limit, role, status)
 	if err != nil {
