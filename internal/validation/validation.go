@@ -1,8 +1,11 @@
 package validation
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
@@ -36,10 +39,39 @@ func Init() {
 
 // BindJSON binds and validates JSON payloads with consistent error responses.
 func BindJSON(c *gin.Context, dst any) bool {
-	if err := c.ShouldBindJSON(dst); err != nil {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		writeValidationError(c, errors.New("request body is required"))
+		return false
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		writeValidationError(c, err)
 		return false
 	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		writeValidationError(c, errors.New("request body is required"))
+		return false
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		writeValidationError(c, err)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeValidationError(c, errors.New("request payload must contain only one JSON object"))
+		return false
+	}
+
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		if err := v.Struct(dst); err != nil {
+			writeValidationError(c, err)
+			return false
+		}
+	}
+
 	return true
 }
 
