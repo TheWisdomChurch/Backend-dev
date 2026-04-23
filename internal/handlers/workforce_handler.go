@@ -50,7 +50,10 @@ func (h *WorkforceHandler) List(c *gin.Context) {
 	}
 
 	department := c.Query("department")
-	status := c.Query("status")
+	status, ok := parseEnumQuery(c, "status", "status", []string{"pending", "new", "serving", "not_serving"})
+	if !ok {
+		return
+	}
 
 	items, total, err := h.svc.List(page, limit, department, status)
 	if err != nil {

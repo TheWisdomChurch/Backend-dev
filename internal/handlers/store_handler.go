@@ -30,7 +30,11 @@ func (h *StoreHandler) ListProducts(c *gin.Context) {
 }
 
 func (h *StoreHandler) ListProductsAdmin(c *gin.Context) {
-	includeInactive := strings.EqualFold(c.DefaultQuery("includeInactive", "false"), "true")
+	includeInactivePtr, ok := parseOptionalBoolQuery(c, "includeInactive", "includeInactive")
+	if !ok {
+		return
+	}
+	includeInactive := includeInactivePtr != nil && *includeInactivePtr
 	items, err := h.svc.ListProductsAdmin(includeInactive)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load products")
@@ -123,7 +127,7 @@ func (h *StoreHandler) CreateOrder(c *gin.Context) {
 }
 
 func (h *StoreHandler) GetOrder(c *gin.Context) {
-	orderID, ok := parseRequiredPathParam(c, "orderId", "order id")
+	orderID, ok := parseOrderIDPathParam(c, "orderId", "order id")
 	if !ok {
 		return
 	}
@@ -140,7 +144,10 @@ func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
 	if !ok {
 		return
 	}
-	status := strings.TrimSpace(c.Query("status"))
+	status, ok := parseEnumQuery(c, "status", "status", []string{"pending", "processing", "shipped", "delivered", "cancelled"})
+	if !ok {
+		return
+	}
 	items, total, err := h.svc.ListOrders(page, limit, status)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load orders")
@@ -160,7 +167,7 @@ func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
 }
 
 func (h *StoreHandler) UpdateOrderStatus(c *gin.Context) {
-	orderID, ok := parseRequiredPathParam(c, "orderId", "order id")
+	orderID, ok := parseOrderIDPathParam(c, "orderId", "order id")
 	if !ok {
 		return
 	}
