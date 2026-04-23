@@ -218,7 +218,11 @@ func (h *LeadershipHandler) BirthdaysByMonth(c *gin.Context) {
 	}
 	items, err := h.svc.BirthdaysByMonth(month)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		if strings.Contains(strings.ToLower(err.Error()), "month must be 1-12") {
+			utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load birthdays")
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Birthdays retrieved", gin.H{
@@ -266,7 +270,11 @@ func (h *LeadershipHandler) AnniversariesByMonth(c *gin.Context) {
 	}
 	items, err := h.svc.AnniversariesByMonth(month)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		if strings.Contains(strings.ToLower(err.Error()), "month must be 1-12") {
+			utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load anniversaries")
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Anniversaries retrieved", gin.H{
