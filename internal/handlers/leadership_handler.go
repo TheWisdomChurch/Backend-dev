@@ -108,8 +108,10 @@ func (h *LeadershipHandler) UploadImage(c *gin.Context) {
 
 // Admin: list leadership applications/members
 func (h *LeadershipHandler) List(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	if !ok {
+		return
+	}
 
 	role := c.Query("role")
 	status := c.Query("status")
