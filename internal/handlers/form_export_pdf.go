@@ -12,9 +12,8 @@ import (
 )
 
 func (h *FormHandler) ExportAdminSubmissionsPDF(c *gin.Context) {
-	formID := strings.TrimSpace(c.Param("id"))
-	if formID == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "missing form id")
+	formID, ok := formIDParam(c)
+	if !ok {
 		return
 	}
 
