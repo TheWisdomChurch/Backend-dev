@@ -800,6 +800,12 @@ func setupRouter(
 	admin.POST("/forms", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.CreateAdminForm)
 	admin.PUT("/forms/:id", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.UpdateAdminForm)
 	admin.DELETE("/forms/:id", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.DeleteAdminForm)
+	admin.POST(
+		"/forms/:id/banner",
+		middleware.RequirePermission(middleware.PermissionFormsManage),
+		middleware.RequirePermission(middleware.PermissionUploadsManage),
+		formHandler.UploadAdminFormBanner,
+	)
 	admin.POST("/forms/:id/publish", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.PublishAdminForm)
 	admin.GET("/forms/:id/report-link", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.GetAdminFormReportLink)
 	admin.POST("/forms/:id/report-link", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.GetAdminFormReportLink)
@@ -1211,7 +1217,7 @@ func main() {
 	adminNotificationHandler := handlers.NewAdminNotificationHandler(adminNotificationService)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db, redisCache)
-	formHandler := handlers.NewFormHandler(formService)
+	formHandler := handlers.NewFormHandler(formService, s3Uploader)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
 	workforceHandler := handlers.NewWorkforceHandler(
