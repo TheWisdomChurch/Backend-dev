@@ -276,6 +276,32 @@ func authUserPayload(user *models.User) gin.H {
 	}
 }
 
+func deriveAccessStatus(user *models.User, authMethod string) (string, string, string) {
+	if user == nil {
+		return "login_required", "", ""
+	}
+
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	role = strings.ReplaceAll(role, "-", "_")
+	role = strings.ReplaceAll(role, " ", "_")
+	authMethod = strings.ToLower(strings.TrimSpace(authMethod))
+
+	isAdmin := role == "admin" || role == "super_admin"
+	if !isAdmin {
+		return "ok", "", ""
+	}
+
+	if !user.TOTPEnabled {
+		return "mfa_required", "admin_mfa_required", "/mfa/setup"
+	}
+
+	if authMethod != "totp" {
+		return "mfa_required", "admin_totp_session_required", "/verify-otp"
+	}
+
+	return "ok", "", ""
+}
+
 func (h *AuthHandler) issueAuthenticatedSession(c *gin.Context, user *models.User, rememberMe bool, authMethod string) error {
 	token, err := h.generateToken(user, rememberMe, authMethod)
 	if err != nil {
@@ -330,12 +356,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if result.OTPRequired {
+		nextStep := "/verify-otp"
+		accessCode := ""
+		if strings.EqualFold(strings.TrimSpace(result.MFAMethod), "totp") {
+			accessCode = "admin_totp_session_required"
+		}
 		utils.SuccessResponse(c, http.StatusAccepted, "Additional verification required", gin.H{
 			"otp_required": true,
 			"mfa_method":   result.MFAMethod,
 			"purpose":      result.OTPPurpose,
 			"expires_at":   result.OTPExpiresAt,
 			"action_url":   result.OTPActionURL,
+			"access_code":  accessCode,
+			"next_step":    nextStep,
 			"email":        req.Email,
 		})
 		return
@@ -405,6 +438,10 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			"status":  "success",
 			"message": "No active session",
 			"data":    nil,
+			"meta": gin.H{
+				"authenticated": false,
+				"access_status": "login_required",
+			},
 		})
 		return
 	}
@@ -415,6 +452,10 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			"status":  "success",
 			"message": "No active session",
 			"data":    nil,
+			"meta": gin.H{
+				"authenticated": false,
+				"access_status": "login_required",
+			},
 		})
 		return
 	}
@@ -431,10 +472,26 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
+	authMethod := ""
+	if rawAuthMethod, ok := c.Get("auth_method"); ok {
+		if method, ok := rawAuthMethod.(string); ok {
+			authMethod = method
+		}
+	}
+	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
+	responseData := authUserPayload(user)
+	responseData["auth_method"] = strings.TrimSpace(authMethod)
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "User retrieved successfully",
-		"data":    authUserPayload(user),
+		"data":    responseData,
+		"meta": gin.H{
+			"authenticated": true,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
+		},
 	})
 }
 
