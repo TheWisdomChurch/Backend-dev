@@ -10,12 +10,12 @@ import (
 type Permission string
 
 const (
-	PermissionAdminAccess  Permission = "admin:access"
-	PermissionAdminRead    Permission = "admin:read"
-	PermissionAdminWrite   Permission = "admin:write"
-	PermissionUsersManage  Permission = "admin:users:manage"
-	PermissionSecurityRead Permission = "admin:security:read"
-	PermissionFormsExport  Permission = "admin:forms:export"
+	PermissionAdminAccess   Permission = "admin:access"
+	PermissionAdminRead     Permission = "admin:read"
+	PermissionAdminWrite    Permission = "admin:write"
+	PermissionUsersManage   Permission = "admin:users:manage"
+	PermissionSecurityRead  Permission = "admin:security:read"
+	PermissionFormsExport   Permission = "admin:forms:export"
 	PermissionFormsCampaign Permission = "admin:forms:campaign"
 )
 
@@ -99,4 +99,3 @@ func normalizeRole(value string) string {
 	value = strings.ReplaceAll(value, " ", "_")
 	return value
 }
-
