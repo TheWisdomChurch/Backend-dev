@@ -146,6 +146,9 @@ func (s *authServiceImpl) DisableTOTP(userID, code string) (*models.AuthSecurity
 	if !user.IsActive {
 		return nil, errors.New("account is deactivated")
 	}
+	if isAdminRole(user.Role) {
+		return nil, errors.New("admin accounts cannot disable authenticator app")
+	}
 	if !user.TOTPEnabled || user.TOTPSecretEnc == nil || strings.TrimSpace(*user.TOTPSecretEnc) == "" {
 		return nil, errors.New("authenticator app is not enabled")
 	}
@@ -178,6 +181,9 @@ func (s *authServiceImpl) SetPreferredMFAMethod(userID, method string) (*models.
 	}
 	if !user.IsActive {
 		return nil, errors.New("account is deactivated")
+	}
+	if isAdminRole(user.Role) && normalized != "totp" {
+		return nil, errors.New("admin accounts must use authenticator app (totp)")
 	}
 	if normalized == "totp" && !user.TOTPEnabled {
 		return nil, errors.New("enable authenticator app before selecting totp")
