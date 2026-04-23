@@ -1217,7 +1217,7 @@ func main() {
 	adminNotificationHandler := handlers.NewAdminNotificationHandler(adminNotificationService)
 	reelHandler := handlers.NewReelHandler(reelRepo)
 	analyticsHandler := handlers.NewAnalyticsHandler(db, redisCache)
-	formHandler := handlers.NewFormHandler(formService, s3Uploader)
+	formHandler := handlers.NewFormHandler(formService, assetUploader)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
 	otpHandler := handlers.NewOTPHandler(otpService)
 	workforceHandler := handlers.NewWorkforceHandler(
