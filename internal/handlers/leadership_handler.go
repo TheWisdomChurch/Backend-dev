@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -148,7 +147,10 @@ func (h *LeadershipHandler) Create(c *gin.Context) {
 
 // Admin: update leadership member
 func (h *LeadershipHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	if !ok {
+		return
+	}
 
 	var req models.UpdateLeadershipRequest
 	if !validation.BindJSON(c, &req) {
@@ -166,7 +168,10 @@ func (h *LeadershipHandler) Update(c *gin.Context) {
 
 // Super-admin: approve leadership member
 func (h *LeadershipHandler) Approve(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	if !ok {
+		return
+	}
 
 	member, err := h.svc.Approve(id)
 	if err != nil {
@@ -179,7 +184,10 @@ func (h *LeadershipHandler) Approve(c *gin.Context) {
 
 // Super-admin: decline leadership member
 func (h *LeadershipHandler) Decline(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	if !ok {
+		return
+	}
 
 	member, err := h.svc.Decline(id)
 	if err != nil {
@@ -192,7 +200,10 @@ func (h *LeadershipHandler) Decline(c *gin.Context) {
 
 // Admin: delete leadership member
 func (h *LeadershipHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	if !ok {
+		return
+	}
 	if err := h.svc.Delete(id); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
@@ -210,10 +221,8 @@ func (h *LeadershipHandler) BirthdayStats(c *gin.Context) {
 }
 
 func (h *LeadershipHandler) BirthdaysByMonth(c *gin.Context) {
-	raw := strings.TrimSpace(c.Param("month"))
-	month, err := strconv.Atoi(raw)
-	if err != nil || month < 1 || month > 12 {
-		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+	month, ok := parseMonthPathParam(c, "month")
+	if !ok {
 		return
 	}
 	items, err := h.svc.BirthdaysByMonth(month)
@@ -262,10 +271,8 @@ func (h *LeadershipHandler) AnniversaryStats(c *gin.Context) {
 }
 
 func (h *LeadershipHandler) AnniversariesByMonth(c *gin.Context) {
-	raw := strings.TrimSpace(c.Param("month"))
-	month, err := strconv.Atoi(raw)
-	if err != nil || month < 1 || month > 12 {
-		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+	month, ok := parseMonthPathParam(c, "month")
+	if !ok {
 		return
 	}
 	items, err := h.svc.AnniversariesByMonth(month)
