@@ -6,7 +6,6 @@ import (
 	htmltemplate "html/template"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -45,8 +44,10 @@ func NewWorkforceHandler(
 }
 
 func (h *WorkforceHandler) List(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	if !ok {
+		return
+	}
 
 	department := c.Query("department")
 	status := c.Query("status")
@@ -155,7 +156,10 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 }
 
 func (h *WorkforceHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "workforce member id")
+	if !ok {
+		return
+	}
 
 	var req models.UpdateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
@@ -172,7 +176,10 @@ func (h *WorkforceHandler) Update(c *gin.Context) {
 }
 
 func (h *WorkforceHandler) Approve(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "workforce member id")
+	if !ok {
+		return
+	}
 
 	member, err := h.svc.Approve(id)
 	if err != nil {
@@ -202,10 +209,8 @@ func (h *WorkforceHandler) BirthdayStats(c *gin.Context) {
 }
 
 func (h *WorkforceHandler) BirthdaysByMonth(c *gin.Context) {
-	raw := strings.TrimSpace(c.Param("month"))
-	month, err := strconv.Atoi(raw)
-	if err != nil || month < 1 || month > 12 {
-		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+	month, ok := parseMonthPathParam(c, "month")
+	if !ok {
 		return
 	}
 	items, err := h.svc.BirthdaysByMonth(month)
