@@ -33,6 +33,20 @@ func parseRequiredPathParam(c *gin.Context, paramName, label string) (string, bo
 	return raw, true
 }
 
+func parseUintPathParam(c *gin.Context, paramName, label string) (uint, bool) {
+	raw := strings.TrimSpace(c.Param(paramName))
+	if raw == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, label+" is required")
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || parsed == 0 {
+		utils.ErrorResponse(c, http.StatusBadRequest, label+" must be a positive integer")
+		return 0, false
+	}
+	return uint(parsed), true
+}
+
 func parsePaginationQuery(c *gin.Context, defaultLimit, maxLimit int) (int, int, bool) {
 	page := 1
 	limit := defaultLimit
@@ -67,4 +81,3 @@ func parseMonthPathParam(c *gin.Context, paramName string) (int, bool) {
 	}
 	return month, true
 }
-

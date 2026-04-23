@@ -10,33 +10,78 @@ import (
 type Permission string
 
 const (
-	PermissionAdminAccess   Permission = "admin:access"
-	PermissionAdminRead     Permission = "admin:read"
-	PermissionAdminWrite    Permission = "admin:write"
-	PermissionUsersManage   Permission = "admin:users:manage"
-	PermissionSecurityRead  Permission = "admin:security:read"
-	PermissionFormsExport   Permission = "admin:forms:export"
-	PermissionFormsCampaign Permission = "admin:forms:campaign"
+	PermissionAdminAccess         Permission = "admin:access"
+	PermissionAdminRead           Permission = "admin:read"
+	PermissionAdminWrite          Permission = "admin:write"
+	PermissionUsersManage         Permission = "admin:users:manage"
+	PermissionSecurityRead        Permission = "admin:security:read"
+	PermissionAnalyticsRead       Permission = "admin:analytics:read"
+	PermissionContentManage       Permission = "admin:content:manage"
+	PermissionEngagementRead      Permission = "admin:engagement:read"
+	PermissionFormsRead           Permission = "admin:forms:read"
+	PermissionFormsManage         Permission = "admin:forms:manage"
+	PermissionFormsExport         Permission = "admin:forms:export"
+	PermissionFormsCampaign       Permission = "admin:forms:campaign"
+	PermissionNotificationsManage Permission = "admin:notifications:manage"
+	PermissionApprovalsRead       Permission = "admin:approvals:read"
+	PermissionEmailManage         Permission = "admin:email:manage"
+	PermissionUploadsManage       Permission = "admin:uploads:manage"
+	PermissionEventsManage        Permission = "admin:events:manage"
+	PermissionReelsManage         Permission = "admin:reels:manage"
+	PermissionWorkforceManage     Permission = "admin:workforce:manage"
+	PermissionMembersManage       Permission = "admin:members:manage"
+	PermissionStoreManage         Permission = "admin:store:manage"
+	PermissionLeadershipManage    Permission = "admin:leadership:manage"
 )
 
 var rolePermissions = map[string]map[Permission]struct{}{
 	"admin": {
-		PermissionAdminAccess:   {},
-		PermissionAdminRead:     {},
-		PermissionAdminWrite:    {},
-		PermissionUsersManage:   {},
-		PermissionSecurityRead:  {},
-		PermissionFormsExport:   {},
-		PermissionFormsCampaign: {},
+		PermissionAdminAccess:         {},
+		PermissionAdminRead:           {},
+		PermissionAdminWrite:          {},
+		PermissionUsersManage:         {},
+		PermissionSecurityRead:        {},
+		PermissionAnalyticsRead:       {},
+		PermissionContentManage:       {},
+		PermissionEngagementRead:      {},
+		PermissionFormsRead:           {},
+		PermissionFormsManage:         {},
+		PermissionFormsExport:         {},
+		PermissionFormsCampaign:       {},
+		PermissionNotificationsManage: {},
+		PermissionApprovalsRead:       {},
+		PermissionEmailManage:         {},
+		PermissionUploadsManage:       {},
+		PermissionEventsManage:        {},
+		PermissionReelsManage:         {},
+		PermissionWorkforceManage:     {},
+		PermissionMembersManage:       {},
+		PermissionStoreManage:         {},
+		PermissionLeadershipManage:    {},
 	},
 	"super_admin": {
-		PermissionAdminAccess:   {},
-		PermissionAdminRead:     {},
-		PermissionAdminWrite:    {},
-		PermissionUsersManage:   {},
-		PermissionSecurityRead:  {},
-		PermissionFormsExport:   {},
-		PermissionFormsCampaign: {},
+		PermissionAdminAccess:         {},
+		PermissionAdminRead:           {},
+		PermissionAdminWrite:          {},
+		PermissionUsersManage:         {},
+		PermissionSecurityRead:        {},
+		PermissionAnalyticsRead:       {},
+		PermissionContentManage:       {},
+		PermissionEngagementRead:      {},
+		PermissionFormsRead:           {},
+		PermissionFormsManage:         {},
+		PermissionFormsExport:         {},
+		PermissionFormsCampaign:       {},
+		PermissionNotificationsManage: {},
+		PermissionApprovalsRead:       {},
+		PermissionEmailManage:         {},
+		PermissionUploadsManage:       {},
+		PermissionEventsManage:        {},
+		PermissionReelsManage:         {},
+		PermissionWorkforceManage:     {},
+		PermissionMembersManage:       {},
+		PermissionStoreManage:         {},
+		PermissionLeadershipManage:    {},
 	},
 }
 
