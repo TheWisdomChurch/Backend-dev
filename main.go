@@ -682,10 +682,10 @@ func setupRouter(
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
 	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
+	auth.GET("/me", middleware.OptionalAuthMiddleware(cfg.JWT.Secret), authHandler.GetCurrentUser)
 
 	authProtected := auth.Group("")
 	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
-	authProtected.GET("/me", authHandler.GetCurrentUser)
 	authProtected.GET("/csrf-token", authHandler.GetCSRFToken)
 	authProtected.PATCH("/profile", authHandler.UpdateProfile)
 	authProtected.POST("/change-password", authHandler.ChangePassword)
