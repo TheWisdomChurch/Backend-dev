@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/middleware"
@@ -44,14 +45,17 @@ func (h *FormHandler) ListAdminForms(c *gin.Context) {
 }
 
 func (h *FormHandler) GetAdminForm(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	form, err := h.svc.GetByID(id)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form")
+		utils.ErrorResponse(c, formServiceStatus(err), formServiceMessage(err, "Failed to load form"))
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Form loaded", form)
@@ -71,7 +75,10 @@ func (h *FormHandler) CreateAdminForm(c *gin.Context) {
 }
 
 func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 
 	var req models.UpdateFormRequest
 	if !validation.BindJSON(c, &req) {
@@ -84,7 +91,7 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		utils.ErrorResponse(c, formServiceStatus(err), formServiceMessage(err, "Failed to update form"))
 		return
 	}
 
@@ -92,7 +99,10 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 }
 
 func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	if err := h.svc.Delete(id); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
@@ -105,14 +115,17 @@ func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 }
 
 func (h *FormHandler) PublishAdminForm(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	slug, publicURL, err := h.svc.Publish(id)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Form not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		utils.ErrorResponse(c, formServiceStatus(err), formServiceMessage(err, "Failed to publish form"))
 		return
 	}
 	resp := gin.H{"slug": slug}
@@ -123,7 +136,10 @@ func (h *FormHandler) PublishAdminForm(c *gin.Context) {
 }
 
 func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
-	formID := c.Param("id")
+	formID, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 
@@ -149,7 +165,10 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 }
 
 func (h *FormHandler) GetFormSubmissionStats(c *gin.Context) {
-	formID := c.Param("id")
+	formID, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	start, end, err := parseTimeRange(c)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
@@ -182,7 +201,10 @@ func (h *FormHandler) GetFormStats(c *gin.Context) {
 }
 
 func (h *FormHandler) SendAdminFormCampaign(c *gin.Context) {
-	formID := c.Param("id")
+	formID, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 
 	var req models.SendFormCampaignEmailRequest
 	if !validation.BindJSON(c, &req) {
@@ -204,7 +226,10 @@ func (h *FormHandler) SendAdminFormCampaign(c *gin.Context) {
 }
 
 func (h *FormHandler) ListAdminFormCampaignHistory(c *gin.Context) {
-	formID := c.Param("id")
+	formID, ok := formIDParam(c)
+	if !ok {
+		return
+	}
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
 
@@ -250,6 +275,47 @@ func buildFormCampaignActor(c *gin.Context) *models.FormCampaignSendActor {
 		return nil
 	}
 	return actor
+}
+
+func formIDParam(c *gin.Context) (string, bool) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "form id is required")
+		return "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "form id must be a valid UUID")
+		return "", false
+	}
+	return id, true
+}
+
+func formServiceStatus(err error) int {
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "required"),
+		strings.Contains(msg, "must"),
+		strings.Contains(msg, "invalid"),
+		strings.Contains(msg, "cannot"),
+		strings.Contains(msg, "already"),
+		strings.Contains(msg, "duplicate"),
+		strings.Contains(msg, "too long"),
+		strings.Contains(msg, "not found"),
+		strings.Contains(msg, "missing"):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func formServiceMessage(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	if formServiceStatus(err) == http.StatusBadRequest {
+		return err.Error()
+	}
+	return fallback
 }
 
 func (h *FormHandler) GetPublicForm(c *gin.Context) {
