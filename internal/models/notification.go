@@ -55,11 +55,12 @@ func (NotificationDelivery) TableName() string {
 }
 
 type SendNotificationRequest struct {
-	Type    string  `json:"type" binding:"required"`
-	Subject string  `json:"subject" binding:"required"`
-	Title   string  `json:"title" binding:"required"`
-	Message string  `json:"message" binding:"required"`
-	EventID *string `json:"eventId,omitempty"`
+	Type     string  `json:"type" binding:"required"`
+	Subject  string  `json:"subject" binding:"required"`
+	Title    string  `json:"title" binding:"required"`
+	Message  string  `json:"message" binding:"required"`
+	EventID  *string `json:"eventId,omitempty"`
+	Audience *string `json:"audience,omitempty"` // newsletter_subscribers (default)
 }
 
 type SendNotificationResult struct {

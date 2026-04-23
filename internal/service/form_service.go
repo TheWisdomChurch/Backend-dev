@@ -1328,6 +1328,148 @@ func normalizeFormContentSections(sections *[]models.FormContentSectionDTO) erro
 	return nil
 }
 
+func normalizeLegacyFormContentSections(sections *[]models.FormLegacyContentSectionDTO) error {
+	if sections == nil {
+		return nil
+	}
+
+	cleanSections := make([]models.FormLegacyContentSectionDTO, 0, len(*sections))
+	for i, section := range *sections {
+		var normalized models.FormLegacyContentSectionDTO
+
+		if section.Title != nil {
+			title := strings.TrimSpace(*section.Title)
+			if title != "" {
+				if utf8.RuneCountInString(title) > 160 {
+					return fmt.Errorf("contentSections[%d].title too long", i)
+				}
+				normalized.Title = &title
+			}
+		}
+		if section.Subtitle != nil {
+			subtitle := strings.TrimSpace(*section.Subtitle)
+			if subtitle != "" {
+				if utf8.RuneCountInString(subtitle) > 260 {
+					return fmt.Errorf("contentSections[%d].subtitle too long", i)
+				}
+				normalized.Subtitle = &subtitle
+			}
+		}
+
+		items := make([]string, 0, len(section.Items))
+		for j, item := range section.Items {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if utf8.RuneCountInString(item) > 160 {
+				return fmt.Errorf("contentSections[%d].items[%d] too long", i, j)
+			}
+			items = append(items, item)
+		}
+		normalized.Items = items
+
+		itemSubtexts := make([]string, 0, len(section.ItemSubtexts))
+		for j, itemSubtext := range section.ItemSubtexts {
+			itemSubtext = strings.TrimSpace(itemSubtext)
+			if itemSubtext == "" {
+				continue
+			}
+			if utf8.RuneCountInString(itemSubtext) > 260 {
+				return fmt.Errorf("contentSections[%d].itemSubtexts[%d] too long", i, j)
+			}
+			itemSubtexts = append(itemSubtexts, itemSubtext)
+		}
+		normalized.ItemSubtexts = itemSubtexts
+
+		if normalized.Title == nil && normalized.Subtitle == nil && len(normalized.Items) == 0 && len(normalized.ItemSubtexts) == 0 {
+			continue
+		}
+
+		cleanSections = append(cleanSections, normalized)
+	}
+
+	*sections = cleanSections
+	return nil
+}
+
+func convertLegacyToExtendedSections(sections []models.FormLegacyContentSectionDTO) []models.FormContentSectionDTO {
+	converted := make([]models.FormContentSectionDTO, 0, len(sections))
+	for idx, legacy := range sections {
+		section := models.FormContentSectionDTO{
+			Items: make([]models.FormContentSectionItemDTO, 0),
+		}
+		if legacy.Title != nil {
+			section.Title = strings.TrimSpace(*legacy.Title)
+		}
+		if legacy.Subtitle != nil {
+			subtitle := strings.TrimSpace(*legacy.Subtitle)
+			if subtitle != "" {
+				section.Subtitle = &subtitle
+			}
+		}
+		for i, itemTitle := range legacy.Items {
+			itemTitle = strings.TrimSpace(itemTitle)
+			if itemTitle == "" {
+				continue
+			}
+			item := models.FormContentSectionItemDTO{Title: itemTitle}
+			if i < len(legacy.ItemSubtexts) {
+				subtext := strings.TrimSpace(legacy.ItemSubtexts[i])
+				if subtext != "" {
+					itemBody := subtext
+					item.Body = &itemBody
+				}
+			}
+			section.Items = append(section.Items, item)
+		}
+		if strings.TrimSpace(section.Title) == "" {
+			if len(section.Items) > 0 {
+				section.Title = section.Items[0].Title
+			} else {
+				section.Title = fmt.Sprintf("Section %d", idx+1)
+			}
+		}
+		converted = append(converted, section)
+	}
+	return converted
+}
+
+func convertExtendedToLegacySections(sections []models.FormContentSectionDTO) []models.FormLegacyContentSectionDTO {
+	converted := make([]models.FormLegacyContentSectionDTO, 0, len(sections))
+	for _, section := range sections {
+		legacy := models.FormLegacyContentSectionDTO{
+			Items:        make([]string, 0, len(section.Items)),
+			ItemSubtexts: make([]string, 0, len(section.Items)),
+		}
+		if title := strings.TrimSpace(section.Title); title != "" {
+			legacy.Title = &title
+		}
+		if section.Subtitle != nil {
+			subtitle := strings.TrimSpace(*section.Subtitle)
+			if subtitle != "" {
+				legacy.Subtitle = &subtitle
+			}
+		}
+
+		for _, item := range section.Items {
+			itemTitle := strings.TrimSpace(item.Title)
+			if itemTitle == "" {
+				continue
+			}
+			legacy.Items = append(legacy.Items, itemTitle)
+
+			itemSubtext := ""
+			if item.Body != nil {
+				itemSubtext = strings.TrimSpace(*item.Body)
+			}
+			legacy.ItemSubtexts = append(legacy.ItemSubtexts, itemSubtext)
+		}
+		converted = append(converted, legacy)
+	}
+	return converted
+}
+
 func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
 		return datatypes.JSON([]byte("null")), nil
@@ -1385,6 +1527,12 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	// Root-level extended fields (kept for frontend compatibility)
 	var err error
 	if s.SuccessMessage, err = normalizeText("successMessage", s.SuccessMessage, 400); err != nil {
+		return nil, err
+	}
+	if s.SuccessTitle, err = normalizeText("successTitle", s.SuccessTitle, 200); err != nil {
+		return nil, err
+	}
+	if s.SuccessSubtitle, err = normalizeText("successSubtitle", s.SuccessSubtitle, 260); err != nil {
 		return nil, err
 	}
 	if s.ResponseEmailSubject, err = normalizeText("responseEmailSubject", s.ResponseEmailSubject, 160); err != nil {
@@ -1609,6 +1757,24 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if err := normalizeFormContentSections(s.Sections); err != nil {
 		return nil, err
 	}
+	if err := normalizeLegacyFormContentSections(s.ContentSections); err != nil {
+		return nil, err
+	}
+
+	if s.Sections == nil && s.ContentSections != nil {
+		converted := convertLegacyToExtendedSections(*s.ContentSections)
+		if err := normalizeFormContentSections(&converted); err != nil {
+			return nil, err
+		}
+		s.Sections = &converted
+	}
+	if s.ContentSections == nil && s.Sections != nil {
+		legacy := convertExtendedToLegacySections(*s.Sections)
+		if err := normalizeLegacyFormContentSections(&legacy); err != nil {
+			return nil, err
+		}
+		s.ContentSections = &legacy
+	}
 
 	// Normalize and validate optional design settings
 	if s.Design != nil {
@@ -1758,6 +1924,14 @@ func decodeSettings(j datatypes.JSON) (*models.FormSettingsDTO, error) {
 	var s models.FormSettingsDTO
 	if err := json.Unmarshal(j, &s); err != nil {
 		return &models.FormSettingsDTO{}, err
+	}
+	if s.Sections != nil && s.ContentSections == nil {
+		legacy := convertExtendedToLegacySections(*s.Sections)
+		s.ContentSections = &legacy
+	}
+	if s.ContentSections != nil && s.Sections == nil {
+		converted := convertLegacyToExtendedSections(*s.ContentSections)
+		s.Sections = &converted
 	}
 	return &s, nil
 }

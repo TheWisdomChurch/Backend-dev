@@ -23,8 +23,10 @@ func NewMemberHandler(svc service.MemberService) *MemberHandler {
 }
 
 func (h *MemberHandler) List(c *gin.Context) {
-	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	if !ok {
+		return
+	}
 
 	var activePtr *bool
 	if v := strings.TrimSpace(c.Query("active")); v != "" {
@@ -67,7 +69,10 @@ func (h *MemberHandler) Create(c *gin.Context) {
 }
 
 func (h *MemberHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "member id")
+	if !ok {
+		return
+	}
 
 	var req models.UpdateMemberRequest
 	if !validation.BindJSON(c, &req) {
@@ -84,7 +89,10 @@ func (h *MemberHandler) Update(c *gin.Context) {
 }
 
 func (h *MemberHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseUUIDParam(c, "id", "member id")
+	if !ok {
+		return
+	}
 	if err := h.svc.Delete(id); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
@@ -102,10 +110,8 @@ func (h *MemberHandler) BirthdayStats(c *gin.Context) {
 }
 
 func (h *MemberHandler) BirthdaysByMonth(c *gin.Context) {
-	raw := strings.TrimSpace(c.Param("month"))
-	month, err := strconv.Atoi(raw)
-	if err != nil || month < 1 || month > 12 {
-		utils.ErrorResponse(c, http.StatusBadRequest, "month must be 1-12")
+	month, ok := parseMonthPathParam(c, "month")
+	if !ok {
 		return
 	}
 	items, err := h.svc.BirthdaysByMonth(month)
