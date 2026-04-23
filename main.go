@@ -682,10 +682,10 @@ func setupRouter(
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
 	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
+	auth.GET("/me", middleware.OptionalAuthMiddleware(cfg.JWT.Secret), authHandler.GetCurrentUser)
 
 	authProtected := auth.Group("")
 	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
-	authProtected.GET("/me", authHandler.GetCurrentUser)
 	authProtected.GET("/csrf-token", authHandler.GetCSRFToken)
 	authProtected.PATCH("/profile", authHandler.UpdateProfile)
 	authProtected.POST("/change-password", authHandler.ChangePassword)
@@ -762,17 +762,25 @@ func setupRouter(
 
 	// ADMIN
 	admin := api.Group("/admin")
-	admin.Use(authGuard, sessionFreshnessGuard, sessionGuard, middleware.RoleMiddleware("admin"), csrfProtector.Middleware(), middleware.AuditLogger("admin"))
+	admin.Use(
+		authGuard,
+		sessionFreshnessGuard,
+		sessionGuard,
+		middleware.RoleMiddleware("admin"),
+		middleware.RequirePermission(middleware.PermissionAdminAccess),
+		csrfProtector.Middleware(),
+		middleware.AuditLogger("admin"),
+	)
 
-	admin.GET("/dashboard", adminHandler.GetDashboardStats)
-	admin.GET("/security/overview", adminHandler.GetSecurityOverview)
-	admin.GET("/testimonials/pending", adminHandler.GetPendingTestimonials)
+	admin.GET("/dashboard", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetDashboardStats)
+	admin.GET("/security/overview", middleware.RequirePermission(middleware.PermissionSecurityRead), adminHandler.GetSecurityOverview)
+	admin.GET("/testimonials/pending", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetPendingTestimonials)
 
-	admin.GET("/users", adminHandler.ListUsers)
-	admin.GET("/users/:id", adminHandler.GetUserByID)
-	admin.POST("/users", adminHandler.CreateUser)
-	admin.PATCH("/users/:id", adminHandler.UpdateUser)
-	admin.DELETE("/users/:id", adminHandler.DeleteUser)
+	admin.GET("/users", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ListUsers)
+	admin.GET("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.GetUserByID)
+	admin.POST("/users", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.CreateUser)
+	admin.PATCH("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.UpdateUser)
+	admin.DELETE("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.DeleteUser)
 
 	admin.GET("/analytics", analyticsHandler.GetAdminAnalytics)
 	admin.GET("/analytics/insights", analyticsHandler.GetDecisionInsights)
@@ -792,13 +800,13 @@ func setupRouter(
 	admin.PUT("/forms/:id", formHandler.UpdateAdminForm)
 	admin.DELETE("/forms/:id", formHandler.DeleteAdminForm)
 	admin.POST("/forms/:id/publish", formHandler.PublishAdminForm)
-	admin.GET("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
-	admin.POST("/forms/:id/report-link", formHandler.GetAdminFormReportLink)
+	admin.GET("/forms/:id/report-link", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.GetAdminFormReportLink)
+	admin.POST("/forms/:id/report-link", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.GetAdminFormReportLink)
 	admin.GET("/forms/:id/campaigns/history", formHandler.ListAdminFormCampaignHistory)
-	admin.POST("/forms/:id/campaigns/send", formHandler.SendAdminFormCampaign)
+	admin.POST("/forms/:id/campaigns/send", middleware.RequirePermission(middleware.PermissionFormsCampaign), formHandler.SendAdminFormCampaign)
 
 	admin.GET("/forms/:id/submissions", formHandler.ListAdminSubmissions)
-	admin.GET("/forms/:id/submissions/export.pdf", formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
+	admin.GET("/forms/:id/submissions/export.pdf", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.ExportAdminSubmissionsPDF) // ✅ ADD THIS
 	admin.GET("/forms/:id/submissions/stats", formHandler.GetFormSubmissionStats)
 
 	admin.GET("/forms/stats", formHandler.GetFormStats)
