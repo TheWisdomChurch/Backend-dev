@@ -399,7 +399,9 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 
 	// If fields provided => replace
 	if req.Fields != nil {
-		fields, err := buildAndValidateFields(existing.ID, *req.Fields, false)
+		// Updates should stay editable for draft-style builder iterations.
+		// Strict publish checks still run in Publish().
+		fields, err := buildAndValidateFields(existing.ID, *req.Fields, true)
 		if err != nil {
 			return nil, err
 		}
@@ -1483,6 +1485,9 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		switch target {
 		case "", "none":
 			s.SubmissionTarget = nil
+		case "leadership-form", "leadership_form", "leadership application", "leadership_application":
+			normalized := "leadership"
+			s.SubmissionTarget = &normalized
 		case "workforce", "workforce_new", "workforce_serving", "member", "leadership", "testimonial":
 			s.SubmissionTarget = &target
 		default:
@@ -1494,6 +1499,14 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	}
 	if s.FormType != nil {
 		formType := strings.ToLower(strings.TrimSpace(*s.FormType))
+		switch formType {
+		case "leadership-form", "leadership_form", "leadership application", "leadership_application":
+			formType = "leadership"
+		case "workforce-form", "workforce_form", "workforce application", "workforce_application":
+			formType = "workforce"
+		case "member-form", "member_form", "membership form":
+			formType = "membership"
+		}
 		switch formType {
 		case "":
 			s.FormType = nil
