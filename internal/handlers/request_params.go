@@ -77,9 +77,12 @@ func parsePaginationQuery(c *gin.Context, defaultLimit, maxLimit int) (int, int,
 
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		v, err := strconv.Atoi(raw)
-		if err != nil || v < 1 || v > maxLimit {
+		if err != nil || v < 1 {
 			utils.ErrorResponse(c, http.StatusBadRequest, "limit must be between 1 and "+strconv.Itoa(maxLimit))
 			return 0, 0, false
+		}
+		if v > maxLimit {
+			v = maxLimit
 		}
 		limit = v
 	}
