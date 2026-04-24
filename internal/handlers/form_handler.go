@@ -31,7 +31,7 @@ func NewFormHandler(svc service.FormService, uploader service.AssetUploader) *Fo
 
 func (h *FormHandler) ListAdminForms(c *gin.Context) {
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
-	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 100)
+	limit := parseIntClamp(c.DefaultQuery("limit", "10"), 1, 300)
 
 	items, total, err := h.svc.List(page, limit)
 	if err != nil {

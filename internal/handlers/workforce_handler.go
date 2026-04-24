@@ -44,7 +44,7 @@ func NewWorkforceHandler(
 }
 
 func (h *WorkforceHandler) List(c *gin.Context) {
-	page, limit, ok := parsePaginationQuery(c, 10, 100)
+	page, limit, ok := parsePaginationQuery(c, 10, 300)
 	if !ok {
 		return
 	}
