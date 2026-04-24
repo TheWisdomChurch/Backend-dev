@@ -69,7 +69,7 @@ func (s *memberService) Create(req *models.CreateMemberRequest) (*models.Member,
 		FirstName:     strings.TrimSpace(req.FirstName),
 		LastName:      strings.TrimSpace(req.LastName),
 		Email:         strings.TrimSpace(req.Email),
-		Phone:         strings.TrimSpace(ptrString(req.Phone)),
+		Phone:         optionalStringPtr(ptrString(req.Phone)),
 		IsActive:      isActive,
 		BirthdayMonth: month,
 		BirthdayDay:   day,
@@ -280,4 +280,12 @@ func ptrString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func optionalStringPtr(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
