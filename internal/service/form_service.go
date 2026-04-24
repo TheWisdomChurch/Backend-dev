@@ -5182,7 +5182,7 @@ func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsD
 		return nil, errors.New("missing required workforce fields")
 	}
 
-	emailAddr := valueAsString(values, "email", "contactEmail")
+	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
 	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
 	notes := valueAsString(values, "notes", "note", "comment", "message")
 	birthday := valueAsString(values, "birthday", "birthDate", "dob")
@@ -5224,7 +5224,7 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 		}
 	}
 
-	emailAddr := valueAsString(values, "email", "contactEmail")
+	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
 	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" || strings.TrimSpace(emailAddr) == "" {
 		return nil, errors.New("missing required member fields")
 	}
@@ -5286,7 +5286,7 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 
 	role := normalizeLeadershipRoleInput(valueAsString(values, "role", "leadershipRole", "leadership_role", "leadershipCategory"))
 
-	emailAddr := valueAsString(values, "email", "contactEmail")
+	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
 	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
 	bio := valueAsString(values, "bio", "notes", "note", "comment", "message", "about")
 	imageURL := valueAsString(values, "imageUrl", "image", "profileImage", "profile_image")
@@ -5353,7 +5353,7 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 		last = "Member"
 	}
 	if strings.TrimSpace(first) == "" {
-		emailValue := strings.TrimSpace(valueAsString(values, "email", "contactEmail"))
+		emailValue := strings.TrimSpace(valueAsString(values, "email", "contactEmail", "emailAddress", "email_address"))
 		if emailValue != "" {
 			local := emailValue
 			if at := strings.Index(local, "@"); at > 0 {
