@@ -7,7 +7,7 @@ type Member struct {
 	FirstName string `gorm:"size:100;not null" json:"firstName"`
 	LastName  string `gorm:"size:100;not null" json:"lastName"`
 	Email     string `gorm:"size:255;uniqueIndex;not null" json:"email"`
-	Phone     string `gorm:"size:50" json:"phone,omitempty"`
+	Phone     *string `gorm:"size:50" json:"phone,omitempty"`
 	IsActive  bool   `gorm:"not null;default:true" json:"isActive"`
 
 	// Birthday components (MM/DD). Year is not stored.

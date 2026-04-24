@@ -257,7 +257,10 @@ func (h *WorkforceHandler) sendWorkforceConfirmation(member models.WorkforceMemb
 		return
 	}
 
-	addr := strings.TrimSpace(member.Email)
+	addr := ""
+	if member.Email != nil {
+		addr = strings.TrimSpace(*member.Email)
+	}
 	if addr == "" {
 		return
 	}
