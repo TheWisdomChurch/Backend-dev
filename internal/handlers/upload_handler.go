@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -64,6 +65,7 @@ func (h *UploadHandler) UploadImage(c *gin.Context) {
 
 	cdnURL, err := h.storage.Upload(ctx, objectKey, ct, src)
 	if err != nil {
+		log.Printf("admin image upload failed folder=%q key=%q contentType=%q size=%d: %v", folder, objectKey, ct, fh.Size, err)
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
 		return
 	}
