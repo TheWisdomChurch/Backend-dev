@@ -65,6 +65,10 @@ func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
 		Offset(offset).
 		Find(&items).Error
 
+	if err == nil {
+		err = r.attachSubmissionCounts(items)
+	}
+
 	return items, total, err
 }
 
@@ -74,7 +78,44 @@ func (r *formRepository) GetByID(id string) (*models.Form, error) {
 	if err != nil {
 		return nil, err
 	}
+	count, err := r.CountSubmissions(f.ID)
+	if err != nil {
+		return nil, err
+	}
+	f.SubmissionCount = count
 	return &f, nil
+}
+
+func (r *formRepository) attachSubmissionCounts(items []models.Form) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(items))
+	for i := range items {
+		ids = append(ids, items[i].ID)
+	}
+
+	var rows []struct {
+		FormID string
+		Count  int64
+	}
+	if err := r.db.DB.Model(&models.FormSubmission{}).
+		Select("form_id, COUNT(*) as count").
+		Where("form_id IN ?", ids).
+		Group("form_id").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.FormID] = row.Count
+	}
+	for i := range items {
+		items[i].SubmissionCount = counts[items[i].ID]
+	}
+	return nil
 }
 
 func (r *formRepository) GetBySlug(slug string) (*models.Form, error) {

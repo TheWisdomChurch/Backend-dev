@@ -674,11 +674,6 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return errors.New("at least one field is required")
 	}
 
-	valuesJSON, err := json.Marshal(cleanValues)
-	if err != nil {
-		return errors.New("failed to store submission")
-	}
-
 	// Extract common fields into columns for analytics
 	name, email, phone, addr := extractCommonFields(fields, cleanValues)
 	if email == nil || strings.TrimSpace(*email) == "" {
@@ -704,6 +699,11 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		if _, exists := cleanValues["address"]; !exists {
 			cleanValues["address"] = strings.TrimSpace(*addr)
 		}
+	}
+
+	valuesJSON, err := json.Marshal(cleanValues)
+	if err != nil {
+		return errors.New("failed to store submission")
 	}
 
 	var regCode *string
@@ -5284,12 +5284,7 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 		return nil, errors.New("missing required leadership fields")
 	}
 
-	roleRaw := strings.ToLower(strings.TrimSpace(valueAsString(values, "role", "leadershipRole", "leadership_role", "leadershipCategory")))
-	role := models.LeadershipRoleAssociatePastor
-	switch models.LeadershipRole(roleRaw) {
-	case models.LeadershipRoleSeniorPastor, models.LeadershipRoleAssociatePastor, models.LeadershipRoleDeacon, models.LeadershipRoleDeaconess, models.LeadershipRoleReverend:
-		role = models.LeadershipRole(roleRaw)
-	}
+	role := normalizeLeadershipRoleInput(valueAsString(values, "role", "leadershipRole", "leadership_role", "leadershipCategory"))
 
 	emailAddr := valueAsString(values, "email", "contactEmail")
 	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
@@ -5533,6 +5528,28 @@ func buildLenientTestimonialRequest(values map[string]any) *models.CreateTestimo
 	return req
 }
 
+func normalizeLeadershipRoleInput(value string) models.LeadershipRole {
+	clean := strings.ToLower(strings.TrimSpace(value))
+	clean = strings.NewReplacer("-", "_", " ", "_").Replace(clean)
+	clean = regexp.MustCompile(`_+`).ReplaceAllString(clean, "_")
+	clean = strings.Trim(clean, "_")
+
+	switch clean {
+	case string(models.LeadershipRoleSeniorPastor), "senior", "lead_pastor", "head_pastor":
+		return models.LeadershipRoleSeniorPastor
+	case string(models.LeadershipRoleAssociatePastor), "associate", "assistant_pastor", "assistant":
+		return models.LeadershipRoleAssociatePastor
+	case string(models.LeadershipRoleDeacon):
+		return models.LeadershipRoleDeacon
+	case string(models.LeadershipRoleDeaconess):
+		return models.LeadershipRoleDeaconess
+	case string(models.LeadershipRoleReverend), "rev":
+		return models.LeadershipRoleReverend
+	default:
+		return models.LeadershipRoleAssociatePastor
+	}
+}
+
 func truncateWords(value string, maxWords int) string {
 	if maxWords <= 0 {
 		return strings.TrimSpace(value)
@@ -5563,7 +5580,46 @@ func valueAsString(values map[string]any, keys ...string) string {
 			}
 		}
 	}
+	wanted := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if normalized := normalizeFormValueKey(k); normalized != "" {
+			wanted[normalized] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return ""
+	}
+	for k, v := range values {
+		if _, ok := wanted[normalizeFormValueKey(k)]; !ok {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				return t
+			}
+		default:
+			s := strings.TrimSpace(fmt.Sprint(t))
+			if s != "" {
+				return s
+			}
+		}
+	}
 	return ""
+}
+
+func normalizeFormValueKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func splitName(full string) (string, string) {
