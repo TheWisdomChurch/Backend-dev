@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ func (h *MemberHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, activePtr)
 	if err != nil {
+		log.Printf("member admin list failed page=%d limit=%d active=%v: %v", page, limit, activePtr, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load members")
 		return
 	}

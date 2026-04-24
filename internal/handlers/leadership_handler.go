@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ func (h *LeadershipHandler) ListPublic(c *gin.Context) {
 	role := c.Query("role")
 	items, err := h.svc.ListApproved(role)
 	if err != nil {
+		log.Printf("leadership public list failed role=%q: %v", role, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load leadership")
 		return
 	}
@@ -130,6 +132,7 @@ func (h *LeadershipHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, role, status)
 	if err != nil {
+		log.Printf("leadership admin list failed page=%d limit=%d role=%q status=%q: %v", page, limit, role, status, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load leadership")
 		return
 	}
