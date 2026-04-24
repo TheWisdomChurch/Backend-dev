@@ -89,8 +89,8 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 	member := &models.WorkforceMember{
 		FirstName:     strings.TrimSpace(req.FirstName),
 		LastName:      strings.TrimSpace(req.LastName),
-		Email:         strings.TrimSpace(req.Email),
-		Phone:         strings.TrimSpace(req.Phone),
+		Email:         optionalStringPtr(req.Email),
+		Phone:         optionalStringPtr(req.Phone),
 		Department:    strings.TrimSpace(req.Department),
 		SourceChannel: strings.TrimSpace(req.SourceChannel),
 		Status:        status,
@@ -221,7 +221,7 @@ func (s *workforceService) SendBirthdayGreetings(month, day int) (*models.Birthd
 	}
 
 	for i := range members {
-		addr := strings.TrimSpace(members[i].Email)
+		addr := strings.TrimSpace(ptrString(members[i].Email))
 		if addr == "" {
 			result.Skipped++
 			continue
@@ -283,7 +283,11 @@ func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
 // normalizeBirthday validates optional month/day (1-12, 1-31). Returns nil pointers when absent.
 
 func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
-	if s.sender == nil || member == nil || strings.TrimSpace(member.Email) == "" {
+	addr := ""
+	if member != nil {
+		addr = strings.TrimSpace(ptrString(member.Email))
+	}
+	if s.sender == nil || member == nil || addr == "" {
 		return
 	}
 
@@ -294,5 +298,5 @@ func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 		Department:    member.Department,
 	})
 	subject := "Welcome to the workforce"
-	_ = s.sender.SendHTML(member.Email, subject, body)
+	_ = s.sender.SendHTML(addr, subject, body)
 }

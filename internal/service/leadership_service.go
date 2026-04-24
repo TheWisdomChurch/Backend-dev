@@ -251,7 +251,7 @@ func (s *leadershipService) SendBirthdayGreetings(month, day int) (*models.Birth
 	}
 
 	for i := range members {
-		addr := strings.TrimSpace(members[i].Email)
+		addr := strings.TrimSpace(ptrString(members[i].Email))
 		if addr == "" {
 			result.Skipped++
 			continue
@@ -352,7 +352,7 @@ func (s *leadershipService) SendAnniversaryGreetings(month, day int) (*models.Bi
 	}
 
 	for i := range members {
-		addr := strings.TrimSpace(members[i].Email)
+		addr := strings.TrimSpace(ptrString(members[i].Email))
 		if addr == "" {
 			result.Skipped++
 			continue
@@ -417,8 +417,8 @@ func (s *leadershipService) createWithStatus(
 	member := &models.LeadershipMember{
 		FirstName:        firstName,
 		LastName:         lastName,
-		Email:            strings.TrimSpace(req.Email),
-		Phone:            strings.TrimSpace(req.Phone),
+		Email:            optionalStringPtr(req.Email),
+		Phone:            optionalStringPtr(req.Phone),
 		Role:             req.Role,
 		Status:           status,
 		Bio:              req.Bio,
@@ -455,7 +455,11 @@ func (s *leadershipService) notifyNewApplication(member *models.LeadershipMember
 }
 
 func (s *leadershipService) sendLeadershipStatusEmail(member *models.LeadershipMember, status models.LeadershipStatus) {
-	if s.sender == nil || member == nil || strings.TrimSpace(member.Email) == "" {
+	addr := ""
+	if member != nil {
+		addr = strings.TrimSpace(ptrString(member.Email))
+	}
+	if s.sender == nil || member == nil || addr == "" {
 		return
 	}
 
@@ -504,7 +508,7 @@ func (s *leadershipService) sendLeadershipStatusEmail(member *models.LeadershipM
 		}
 	}
 
-	_ = s.sender.SendHTML(member.Email, subject, body)
+	_ = s.sender.SendHTML(addr, subject, body)
 }
 
 func isValidLeadershipRole(role models.LeadershipRole) bool {
