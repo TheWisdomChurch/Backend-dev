@@ -266,6 +266,7 @@ func authUserPayload(user *models.User) gin.H {
 		"email":                user.Email,
 		"role":                 user.Role,
 		"is_active":            user.IsActive,
+		"admin_approved":       user.AdminApproved,
 		"created_at":           user.CreatedAt,
 		"updated_at":           user.UpdatedAt,
 		"last_login_at":        user.LastLoginAt,
@@ -672,9 +673,22 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
+	responseData := authUserPayload(user)
+	responseData["auth_method"] = strings.TrimSpace(authMethod)
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Token refreshed successfully",
+		"data": gin.H{
+			"user": responseData,
+		},
+		"meta": gin.H{
+			"authenticated": true,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
+		},
 	})
 }
 
