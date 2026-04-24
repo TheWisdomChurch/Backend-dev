@@ -24,8 +24,8 @@ type LeadershipMember struct {
 	ID        string           `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	FirstName string           `gorm:"size:100;not null" json:"firstName"`
 	LastName  string           `gorm:"size:100;not null" json:"lastName"`
-	Email     string           `gorm:"size:255;index" json:"email"`
-	Phone     string           `gorm:"size:50" json:"phone"`
+	Email     *string          `gorm:"size:255;index" json:"email,omitempty"`
+	Phone     *string          `gorm:"size:50" json:"phone,omitempty"`
 	Role      LeadershipRole   `gorm:"size:30;not null" json:"role"`
 	Status    LeadershipStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
 	Bio       *string          `gorm:"type:text" json:"bio,omitempty"`
