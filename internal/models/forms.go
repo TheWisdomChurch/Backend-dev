@@ -45,7 +45,8 @@ type Form struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Computed/derived fields (not persisted)
-	PublicURL *string `gorm:"-" json:"publicUrl,omitempty"`
+	PublicURL       *string `gorm:"-" json:"publicUrl,omitempty"`
+	SubmissionCount int64   `gorm:"-" json:"submissionCount"`
 }
 
 func (Form) TableName() string {
