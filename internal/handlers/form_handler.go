@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"html/template"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -221,6 +222,7 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 
 	items, total, err := h.svc.ListSubmissions(formID, page, limit, start, end)
 	if err != nil {
+		log.Printf("form submissions list failed formID=%q page=%d limit=%d: %v", formID, page, limit, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load submissions")
 		return
 	}
@@ -247,6 +249,7 @@ func (h *FormHandler) GetFormSubmissionStats(c *gin.Context) {
 
 	stats, err := h.svc.StatsByForm(formID, start, end)
 	if err != nil {
+		log.Printf("form submission stats failed formID=%q: %v", formID, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load submission stats")
 		return
 	}
@@ -263,6 +266,7 @@ func (h *FormHandler) GetFormStats(c *gin.Context) {
 
 	stats, err := h.svc.Stats(start, end)
 	if err != nil {
+		log.Printf("form stats failed: %v", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form stats")
 		return
 	}
