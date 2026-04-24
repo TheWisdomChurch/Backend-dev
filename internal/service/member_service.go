@@ -40,7 +40,7 @@ func (s *memberService) List(page, limit int, active *bool) ([]models.Member, in
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > 300 {
 		limit = 10
 	}
 	offset := (page - 1) * limit
