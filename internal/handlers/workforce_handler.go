@@ -57,6 +57,7 @@ func (h *WorkforceHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, department, status)
 	if err != nil {
+		log.Printf("workforce admin list failed page=%d limit=%d department=%q status=%q: %v", page, limit, department, status, err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load workforce")
 		return
 	}
