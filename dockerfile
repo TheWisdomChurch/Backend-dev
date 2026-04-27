@@ -27,15 +27,30 @@ COPY . .
 EXPOSE 8080
 CMD ["air", "-c", ".air.toml"]
 
+# # =========================
+# # Production
+# # =========================
+# FROM alpine:latest AS production
+
+# RUN apk --no-cache add ca-certificates
+# WORKDIR /root/
+
+# COPY --from=builder /app/wisdom-house .
+# EXPOSE 8080
+
+# CMD ["./wisdom-house"]
 # =========================
 # Production
 # =========================
 FROM alpine:latest AS production
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates postgresql-client
+
 WORKDIR /root/
 
 COPY --from=builder /app/wisdom-house .
+COPY --from=builder /app/migrations ./migrations
+
 EXPOSE 8080
 
 CMD ["./wisdom-house"]
