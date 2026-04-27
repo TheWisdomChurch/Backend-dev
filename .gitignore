@@ -27,3 +27,9 @@ Thumbs.db
 *.log
 logs/
 _external/
+
+# Nested frontend/admin repo
+Admin_portal/
+
+# Nested frontend/admin repo
+Admin_portal/
