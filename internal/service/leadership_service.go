@@ -527,6 +527,7 @@ func isValidLeadershipRole(role models.LeadershipRole) bool {
 func isValidLeadershipStatus(status models.LeadershipStatus) bool {
 	switch status {
 	case models.LeadershipStatusPending,
+		models.LeadershipStatusAwaitingSuperAdminApproval,
 		models.LeadershipStatusApproved,
 		models.LeadershipStatusDeclined:
 		return true
