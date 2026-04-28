@@ -236,6 +236,22 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 	})
 }
 
+func (h *FormHandler) DeleteFormSubmission(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Submission ID is required")
+		return
+	}
+
+	if err := h.svc.DeleteSubmission(id); err != nil {
+		log.Printf("form submission delete failed id=%q: %v", id, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete submission")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Form response deleted", gin.H{"id": id})
+}
+
 func (h *FormHandler) GetFormSubmissionStats(c *gin.Context) {
 	formID, ok := formIDParam(c)
 	if !ok {
