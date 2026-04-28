@@ -67,6 +67,7 @@ type FormService interface {
 
 	// Admin submissions
 	ListSubmissions(formID string, page, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
+	DeleteSubmission(id string) error
 	ListCampaignDeliveries(formID string, page, limit int) ([]models.FormCampaignDeliveryHistoryItem, int64, error)
 	Stats(start, end *time.Time) (*models.FormStatsResponse, error)
 	StatsByForm(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
@@ -768,6 +769,10 @@ func (s *formService) ListSubmissions(formID string, page, limit int, start, end
 	}
 	offset := (page - 1) * limit
 	return s.repo.ListSubmissions(formID, offset, limit, start, end)
+}
+
+func (s *formService) DeleteSubmission(id string) error {
+	return s.repo.DeleteSubmission(id)
 }
 
 func (s *formService) ListCampaignDeliveries(formID string, page, limit int) ([]models.FormCampaignDeliveryHistoryItem, int64, error) {
