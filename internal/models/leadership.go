@@ -5,9 +5,10 @@ import "time"
 type LeadershipStatus string
 
 const (
-	LeadershipStatusPending  LeadershipStatus = "pending"
-	LeadershipStatusApproved LeadershipStatus = "approved"
-	LeadershipStatusDeclined LeadershipStatus = "declined"
+	LeadershipStatusPending                    LeadershipStatus = "pending"
+	LeadershipStatusAwaitingSuperAdminApproval LeadershipStatus = "awaiting_super_admin_approval"
+	LeadershipStatusApproved                   LeadershipStatus = "approved"
+	LeadershipStatusDeclined                   LeadershipStatus = "declined"
 )
 
 type LeadershipRole string
@@ -50,7 +51,7 @@ type CreateLeadershipRequest struct {
 	Email     string           `json:"email" binding:"omitempty,email"`
 	Phone     string           `json:"phone"`
 	Role      LeadershipRole   `json:"role" binding:"required,oneof=senior_pastor associate_pastor deacon deaconess reverend"`
-	Status    LeadershipStatus `json:"status" binding:"omitempty,oneof=pending approved declined"`
+	Status    LeadershipStatus `json:"status" binding:"omitempty,oneof=pending awaiting_super_admin_approval approved declined"`
 	Bio       *string          `json:"bio,omitempty"`
 	ImageURL  *string          `json:"imageUrl,omitempty"`
 
@@ -71,7 +72,7 @@ type UpdateLeadershipRequest struct {
 	Email     *string           `json:"email,omitempty"`
 	Phone     *string           `json:"phone,omitempty"`
 	Role      *LeadershipRole   `json:"role,omitempty" binding:"omitempty,oneof=senior_pastor associate_pastor deacon deaconess reverend"`
-	Status    *LeadershipStatus `json:"status,omitempty" binding:"omitempty,oneof=pending approved declined"`
+	Status    *LeadershipStatus `json:"status,omitempty" binding:"omitempty,oneof=pending awaiting_super_admin_approval approved declined"`
 	Bio       *string           `json:"bio,omitempty"`
 	ImageURL  *string           `json:"imageUrl,omitempty"`
 
