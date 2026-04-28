@@ -125,7 +125,7 @@ func (h *LeadershipHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	status, ok := parseEnumQuery(c, "status", "status", []string{"pending", "approved", "declined"})
+	status, ok := parseEnumQuery(c, "status", "status", []string{"pending", "awaiting_super_admin_approval", "approved", "declined"})
 	if !ok {
 		return
 	}
