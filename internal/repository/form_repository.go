@@ -31,6 +31,7 @@ type FormRepository interface {
 	ListCampaignDeliveries(formID string, offset, limit int) ([]models.FormCampaignDelivery, int64, error)
 
 	ListSubmissions(formID string, offset, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error)
+	DeleteSubmission(id string) error
 	ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error)
 	CountSubmissionsByForm(start, end *time.Time) ([]models.FormSubmissionCount, error)
 	CountSubmissionsFiltered(formID string, start, end *time.Time) (int64, error)
@@ -290,6 +291,10 @@ func (r *formRepository) ListSubmissions(formID string, offset, limit int, start
 		Offset(offset).
 		Find(&items).Error
 	return items, total, err
+}
+
+func (r *formRepository) DeleteSubmission(id string) error {
+	return r.db.DB.Delete(&models.FormSubmission{}, "id = ?", id).Error
 }
 
 func (r *formRepository) ListRecentSubmissions(limit int, start, end *time.Time) ([]models.FormSubmissionWithForm, error) {
