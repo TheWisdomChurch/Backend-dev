@@ -6,7 +6,7 @@ type WorkforceStatus string
 
 const (
 	WorkforceStatusPending    WorkforceStatus = "pending"
-	WorkforceStatusNew        WorkforceStatus = "new" // legacy/alias for pending
+	WorkforceStatusNew        WorkforceStatus = "new"
 	WorkforceStatusServing    WorkforceStatus = "serving"
 	WorkforceStatusNotServing WorkforceStatus = "not_serving"
 )
@@ -15,14 +15,14 @@ type WorkforceMember struct {
 	ID            string          `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	FirstName     string          `gorm:"size:100;not null" json:"firstName"`
 	LastName      string          `gorm:"size:100;not null" json:"lastName"`
-	Email         *string         `gorm:"size:255;index" json:"email,omitempty"`
+	Email         *string         `gorm:"size:255;index:idx_workforce_members_email" json:"email,omitempty"`
 	Phone         *string         `gorm:"size:50" json:"phone,omitempty"`
-	Department    string          `gorm:"size:120;index;not null" json:"department"`
-	SourceChannel string          `gorm:"size:120;index;not null;default:'frontend:web:workforce'" json:"sourceChannel"`
-	Status        WorkforceStatus `gorm:"size:20;not null;default:'pending'" json:"status"`
+	Department    string          `gorm:"size:120;not null;index:idx_workforce_members_department" json:"department"`
+	SourceChannel string          `gorm:"size:120;not null;default:'frontend:web:workforce';index:idx_workforce_members_source_channel" json:"sourceChannel"`
+	Status        WorkforceStatus `gorm:"size:20;not null;default:'pending';index:idx_workforce_members_status" json:"status"`
 	Notes         *string         `gorm:"type:text" json:"notes,omitempty"`
 
-	// Birthday components (MM/DD). Year is not stored.
+	// Birthday is stored as month/day components so yearly birthday automation works without storing a birth year.
 	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
 
@@ -44,17 +44,15 @@ type CreateWorkforceRequest struct {
 	Status        WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes         *string         `json:"notes,omitempty"`
 
-	// birthday in MM/DD (month/day) components
-	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
-	BirthdayDay   *int `json:"birthdayDay,omitempty"`
-	// birthday in DD/MM format (day/month)
-	Birthday *string `json:"birthday,omitempty"`
+	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
 }
 
 type UpdateWorkforceRequest struct {
 	FirstName  *string          `json:"firstName,omitempty"`
 	LastName   *string          `json:"lastName,omitempty"`
-	Email      *string          `json:"email,omitempty"`
+	Email      *string          `json:"email,omitempty" binding:"omitempty,email"`
 	Phone      *string          `json:"phone,omitempty"`
 	Department *string          `json:"department,omitempty"`
 	Status     *WorkforceStatus `json:"status,omitempty" binding:"omitempty,oneof=pending new serving not_serving"`
@@ -62,7 +60,7 @@ type UpdateWorkforceRequest struct {
 
 	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
-	Birthday      *string `json:"birthday,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
 }
 
 type WorkforceStatsResponse struct {

@@ -3,14 +3,14 @@ package models
 import "time"
 
 type Member struct {
-	ID        string `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	FirstName string `gorm:"size:100;not null" json:"firstName"`
-	LastName  string `gorm:"size:100;not null" json:"lastName"`
-	Email     string `gorm:"size:255;uniqueIndex;not null" json:"email"`
+	ID        string  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	FirstName string  `gorm:"size:100;not null" json:"firstName"`
+	LastName  string  `gorm:"size:100;not null" json:"lastName"`
+	Email     string  `gorm:"size:255;not null;index:idx_members_email" json:"email"`
 	Phone     *string `gorm:"size:50" json:"phone,omitempty"`
-	IsActive  bool   `gorm:"not null;default:true" json:"isActive"`
+	IsActive  bool    `gorm:"not null;default:true" json:"isActive"`
 
-	// Birthday components (MM/DD). Year is not stored.
+	// Birthday is stored as month/day components so yearly birthday automation works without storing a birth year.
 	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
 
@@ -29,11 +29,9 @@ type CreateMemberRequest struct {
 	Phone     *string `json:"phone,omitempty"`
 	IsActive  *bool   `json:"isActive,omitempty"`
 
-	// birthday in MM/DD (month/day) components
-	BirthdayMonth *int `json:"birthdayMonth,omitempty"`
-	BirthdayDay   *int `json:"birthdayDay,omitempty"`
-	// birthday in DD/MM format (day/month)
-	Birthday *string `json:"birthday,omitempty"`
+	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
 }
 
 type UpdateMemberRequest struct {
@@ -45,7 +43,7 @@ type UpdateMemberRequest struct {
 
 	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
-	Birthday      *string `json:"birthday,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
 }
 
 type SendMemberEmailRequest struct {
