@@ -845,6 +845,7 @@ func setupRouter(
 
 	// Uploads
 	admin.POST("/uploads/images", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadImage)
+	admin.POST("/uploads/files", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadFile)
 	admin.POST("/uploads/presign", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Presign)
 	admin.POST("/uploads/:id/complete", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Complete)
 	admin.GET("/uploads/:id", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Get)
@@ -1204,7 +1205,7 @@ func main() {
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService)
-	uploadHandler := handlers.NewUploadHandler(assetUploader)
+	uploadHandler := handlers.NewUploadHandler(assetUploader, assetService)
 	assetHandler := handlers.NewAssetHandler(assetService)
 	eventHandler := handlers.NewEventHandler(
 		eventRepo,
