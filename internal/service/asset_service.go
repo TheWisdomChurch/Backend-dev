@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ type AssetService interface {
 	CompleteUpload(id string) (*models.Asset, error)
 	GetByID(id string) (*models.Asset, error)
 	List(page, limit int, ownerType, ownerID string) ([]models.Asset, int64, error)
+	RecordUploadedAsset(req *models.RecordUploadedAssetRequest, createdBy *string) (*models.Asset, error)
 }
 
 type presignCapable interface {
@@ -122,6 +124,68 @@ func (s *assetService) PresignUpload(req *models.PresignAssetRequest, createdBy 
 	}, nil
 }
 
+func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetRequest, createdBy *string) (*models.Asset, error) {
+	if s.uploader == nil {
+		return nil, errors.New("storage uploader not configured")
+	}
+	if req == nil {
+		return nil, errors.New("request is required")
+	}
+	if strings.TrimSpace(req.ObjectKey) == "" {
+		return nil, errors.New("objectKey is required")
+	}
+	if strings.TrimSpace(req.PublicURL) == "" {
+		return nil, errors.New("publicUrl is required")
+	}
+
+	ownerType := ""
+	if req.OwnerType != nil {
+		ownerType = strings.ToLower(strings.TrimSpace(*req.OwnerType))
+	}
+	ownerID := ""
+	if req.OwnerID != nil {
+		ownerID = strings.TrimSpace(*req.OwnerID)
+	}
+	kind := ""
+	if req.Kind != nil {
+		kind = strings.ToLower(strings.TrimSpace(*req.Kind))
+	}
+
+	metadata := map[string]any{}
+	if req.Folder != nil && strings.TrimSpace(*req.Folder) != "" {
+		metadata["folder"] = strings.TrimSpace(*req.Folder)
+	}
+	if req.OriginalName != nil && strings.TrimSpace(*req.OriginalName) != "" {
+		metadata["originalName"] = strings.TrimSpace(*req.OriginalName)
+	}
+
+	asset := &models.Asset{
+		OwnerType:   nilIfEmpty(ownerType),
+		OwnerID:     nilIfEmpty(ownerID),
+		Kind:        nilIfEmpty(kind),
+		Provider:    resolveUploaderProvider(s.uploader),
+		Bucket:      resolveUploaderBucket(s.uploader),
+		ObjectKey:   strings.TrimSpace(req.ObjectKey),
+		PublicURL:   strings.TrimSpace(req.PublicURL),
+		ContentType: nilIfEmpty(req.ContentType),
+		SizeBytes:   &req.SizeBytes,
+		Checksum:    req.Checksum,
+		Status:      models.AssetStatusReady,
+		CreatedByID: createdBy,
+	}
+
+	if len(metadata) > 0 {
+		if b, err := json.Marshal(metadata); err == nil {
+			asset.Metadata = b
+		}
+	}
+
+	if err := s.repo.Create(asset); err != nil {
+		return nil, err
+	}
+	return asset, nil
+}
+
 func (s *assetService) CompleteUpload(id string) (*models.Asset, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("asset id is required")
@@ -194,6 +258,26 @@ func extFromContentType(ct string) (string, error) {
 		return "avi", nil
 	case "video/x-matroska":
 		return "mkv", nil
+	case "audio/mpeg":
+		return "mp3", nil
+	case "audio/mp4":
+		return "m4a", nil
+	case "audio/wav":
+		return "wav", nil
+	case "audio/x-wav":
+		return "wav", nil
+	case "application/msword":
+		return "doc", nil
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return "docx", nil
+	case "application/vnd.ms-excel":
+		return "xls", nil
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return "xlsx", nil
+	case "text/csv":
+		return "csv", nil
+	case "text/plain":
+		return "txt", nil
 	default:
 		return "", fmt.Errorf("unsupported content type: %s", ct)
 	}
