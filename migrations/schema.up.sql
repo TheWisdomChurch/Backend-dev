@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS public.members (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   first_name varchar(100) NOT NULL,
   last_name varchar(100) NOT NULL,
-  email varchar(255) UNIQUE NOT NULL,
+  email varchar(255) NOT NULL,
   phone varchar(50),
   is_active boolean NOT NULL DEFAULT true,
   birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
@@ -270,7 +270,7 @@ CREATE TABLE IF NOT EXISTS public.leadership_members (
   email character varying(255),
   phone character varying(50),
   role character varying(30) NOT NULL,
-  status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+  status character varying(40) DEFAULT 'pending'::character varying NOT NULL,
   bio text,
   image_url text,
   birthday_month smallint CHECK (birthday_month BETWEEN 1 AND 12),
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS public.leadership_members (
   CONSTRAINT leadership_members_role_check
     CHECK (role IN ('senior_pastor', 'associate_pastor', 'deacon', 'deaconess', 'reverend')),
   CONSTRAINT leadership_members_status_check
-    CHECK (status IN ('pending', 'approved', 'declined'))
+    CHECK (status IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined'))
 );
 
 -- =========================
@@ -540,10 +540,10 @@ WHERE role IS NULL OR role NOT IN ('senior_pastor', 'associate_pastor', 'deacon'
 
 UPDATE public.leadership_members
 SET status = CASE
-    WHEN status IN ('pending', 'approved', 'declined') THEN status
+    WHEN status IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined') THEN status
     ELSE 'pending'
   END
-WHERE status IS NULL OR status NOT IN ('pending', 'approved', 'declined');
+WHERE status IS NULL OR status NOT IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined');
 
 ALTER TABLE public.leadership_members
   DROP CONSTRAINT IF EXISTS leadership_members_role_check;
@@ -557,7 +557,7 @@ ALTER TABLE public.leadership_members
 
 ALTER TABLE public.leadership_members
   ADD CONSTRAINT leadership_members_status_check
-  CHECK (status IN ('pending', 'approved', 'declined'));
+  CHECK (status IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined'));
 
 -- =========================
 -- FOREIGN KEYS (IDEMPOTENT)
@@ -633,6 +633,46 @@ BEGIN
 END $$;
 
 -- =========================
+-- PEOPLE DOMAIN SAFETY CLEANUP
+-- =========================
+
+ALTER TABLE IF EXISTS public.members
+  DROP CONSTRAINT IF EXISTS uni_members_email;
+
+ALTER TABLE IF EXISTS public.members
+  DROP CONSTRAINT IF EXISTS members_email_key;
+
+ALTER TABLE IF EXISTS public.workforce_members
+  DROP CONSTRAINT IF EXISTS uni_workforce_members_email;
+
+ALTER TABLE IF EXISTS public.leadership_members
+  DROP CONSTRAINT IF EXISTS uni_leadership_members_email;
+
+DROP INDEX IF EXISTS public.uni_members_email;
+DROP INDEX IF EXISTS public.idx_members_email_unique;
+DROP INDEX IF EXISTS public.uni_workforce_members_email;
+DROP INDEX IF EXISTS public.idx_workforce_members_email_unique;
+DROP INDEX IF EXISTS public.uni_leadership_members_email;
+DROP INDEX IF EXISTS public.idx_leadership_members_email_unique;
+
+ALTER TABLE IF EXISTS public.leadership_members
+  ALTER COLUMN status TYPE varchar(40) USING status::text;
+
+UPDATE public.leadership_members
+SET status = CASE
+    WHEN status IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined') THEN status
+    ELSE 'pending'
+  END
+WHERE status IS NULL OR status NOT IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined');
+
+ALTER TABLE IF EXISTS public.leadership_members
+  DROP CONSTRAINT IF EXISTS leadership_members_status_check;
+
+ALTER TABLE IF EXISTS public.leadership_members
+  ADD CONSTRAINT leadership_members_status_check
+  CHECK (status IN ('pending', 'awaiting_super_admin_approval', 'approved', 'declined'));
+
+-- =========================
 -- INDEXES (IDEMPOTENT)
 -- =========================
 
@@ -700,6 +740,13 @@ CREATE INDEX IF NOT EXISTS idx_workforce_bday_month_day
 
 CREATE INDEX IF NOT EXISTS idx_workforce_source_channel
   ON public.workforce_members (source_channel);
+
+
+CREATE INDEX IF NOT EXISTS idx_members_email
+  ON public.members (email);
+
+CREATE INDEX IF NOT EXISTS idx_workforce_members_email
+  ON public.workforce_members (email);
 
 CREATE INDEX IF NOT EXISTS idx_members_birthday_month_day
   ON public.members (birthday_month, birthday_day);
