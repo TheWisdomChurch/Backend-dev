@@ -5256,6 +5256,37 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 	return req, nil
 }
 
+func normalizeDDMMInput(value string) string {
+	clean := strings.TrimSpace(value)
+	if clean == "" {
+		return ""
+	}
+
+	clean = strings.ReplaceAll(clean, "-", "/")
+	clean = strings.ReplaceAll(clean, ".", "/")
+	clean = strings.ReplaceAll(clean, " ", "/")
+
+	parts := strings.Split(clean, "/")
+	if len(parts) != 2 {
+		return clean
+	}
+
+	day := strings.TrimLeft(strings.TrimSpace(parts[0]), "0")
+	month := strings.TrimLeft(strings.TrimSpace(parts[1]), "0")
+	if day == "" {
+		day = "0"
+	}
+	if month == "" {
+		month = "0"
+	}
+
+	return fmt.Sprintf("%02s/%02s", day, month)
+}
+
+func isDataImageValue(value string) bool {
+	return dataImageRe.MatchString(strings.ToLower(strings.TrimSpace(value)))
+}
+
 func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequest, error) {
 	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
 	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
@@ -5289,14 +5320,43 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 		return nil, errors.New("missing required leadership fields")
 	}
 
-	role := normalizeLeadershipRoleInput(valueAsString(values, "role", "leadershipRole", "leadership_role", "leadershipCategory"))
+	role := normalizeLeadershipRoleInput(valueAsString(
+		values,
+		"role",
+		"leadershipRole",
+		"leadership_role",
+		"leadershipCategory",
+		"leadership_category",
+		"position",
+		"title",
+	))
 
 	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
-	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
-	bio := valueAsString(values, "bio", "notes", "note", "comment", "message", "about")
-	imageURL := valueAsString(values, "imageUrl", "image", "profileImage", "profile_image")
-	birthday := valueAsString(values, "birthday", "birthDate", "dob")
-	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "anniversaryDate")
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber", "contact_number")
+	bio := valueAsString(values, "bio", "biography", "notes", "note", "comment", "message", "about", "profile")
+	imageURL := valueAsString(
+		values,
+		"imageUrl",
+		"image_url",
+		"image",
+		"profileImage",
+		"profile_image",
+		"photoUrl",
+		"photo_url",
+		"avatar",
+		"picture",
+	)
+	birthday := valueAsString(values, "birthday", "birthDate", "birth_date", "dob", "dateOfBirth", "date_of_birth")
+	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "wedding_anniversary", "anniversaryDate", "anniversary_date")
+
+	birthday = normalizeDDMMInput(birthday)
+	anniversary = normalizeDDMMInput(anniversary)
+
+	// Never save raw base64 data images as leadership image URLs.
+	// Public form uploads should upload first, then submit the returned public URL.
+	if isDataImageValue(imageURL) {
+		imageURL = ""
+	}
 
 	req := &models.CreateLeadershipRequest{
 		FirstName: strings.TrimSpace(first),
