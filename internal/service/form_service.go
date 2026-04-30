@@ -43,7 +43,9 @@ var dataImageRe = regexp.MustCompile(`^data:image\/(?:png|jpe?g|webp);base64,`)
 var ErrFormExpired = errors.New("form expired")
 var ErrFormClosed = errors.New("registration closed")
 var ErrFormReportAccessDenied = errors.New("invalid report link")
+
 const canonicalLeadershipFormSlug = "leadership-biodata"
+
 var flexibleTimeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",
