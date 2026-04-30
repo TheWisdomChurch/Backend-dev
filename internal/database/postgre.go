@@ -71,6 +71,13 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 		return nil, fmt.Errorf("failed to ensure database extensions: %w", err)
 	}
 
+	// Keep the admin-domain tables available even in environments that do not
+	// run the full migration job on every deploy. This is intentionally scoped
+	// to the records that power the administration flows used by the frontend.
+	if err := ensureAdminDomainSchema(db); err != nil {
+		return nil, fmt.Errorf("failed to ensure admin domain schema: %w", err)
+	}
+
 	// ✅ Seamless behavior:
 	// - In dev: AutoMigrate runs automatically
 	// - In prod: AutoMigrate runs ONLY if RUN_AUTOMIGRATE=true (migrate job)
@@ -138,6 +145,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.OTP{},
 		&models.TicketSequence{},
 		&models.WorkforceMember{},
+		&models.Member{},
+		&models.LeadershipMember{},
 		&models.SecurityEvent{},
 		&models.TrustedDevice{},
 		&models.AnalyticsBatch{},
@@ -155,6 +164,21 @@ func AutoMigrate(db *gorm.DB) error {
 
 	log.Println("✅ AutoMigrate completed successfully")
 	return nil
+}
+
+func ensureAdminDomainSchema(db *gorm.DB) error {
+	log.Println("🧱 Ensuring critical admin domain tables...")
+
+	return db.AutoMigrate(
+		&models.WorkforceMember{},
+		&models.Member{},
+		&models.LeadershipMember{},
+		&models.Form{},
+		&models.FormField{},
+		&models.FormSubmission{},
+		&models.FormCalendarReminder{},
+		&models.FormCampaignDelivery{},
+	)
 }
 
 func (d *Database) Close() error {

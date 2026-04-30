@@ -14,6 +14,7 @@ type FormRepository interface {
 	List(offset, limit int) ([]models.Form, int64, error)
 	GetByID(id string) (*models.Form, error)
 	GetBySlug(slug string) (*models.Form, error)
+	GetAnyBySlug(slug string) (*models.Form, error)
 
 	Create(form *models.Form) error
 	Update(form *models.Form) error
@@ -126,6 +127,21 @@ func (r *formRepository) GetBySlug(slug string) (*models.Form, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &f, nil
+}
+
+func (r *formRepository) GetAnyBySlug(slug string) (*models.Form, error) {
+	var f models.Form
+	err := r.db.DB.Preload("Fields", "deleted_at IS NULL").
+		First(&f, "slug = ?", slug).Error
+	if err != nil {
+		return nil, err
+	}
+	count, err := r.CountSubmissions(f.ID)
+	if err != nil {
+		return nil, err
+	}
+	f.SubmissionCount = count
 	return &f, nil
 }
 

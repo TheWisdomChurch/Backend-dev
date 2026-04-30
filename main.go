@@ -760,6 +760,11 @@ func setupRouter(
 	api.POST("/leadership/upload-image", leadershipHandler.UploadImage)
 	api.POST("/leadership/upload", leadershipHandler.UploadImage)
 
+	// Universal public uploads for forms and future public upload flows.
+	api.POST("/uploads", uploadHandler.UploadFile)
+	api.POST("/uploads/files", uploadHandler.UploadFile)
+	api.POST("/uploads/images", uploadHandler.UploadImage)
+
 	// ADMIN
 	admin := api.Group("/admin")
 	admin.Use(
@@ -846,6 +851,7 @@ func setupRouter(
 	// Uploads
 	admin.POST("/uploads/images", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadImage)
 	admin.POST("/uploads/files", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadFile)
+	admin.POST("/uploads", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadFile)
 	admin.POST("/uploads/presign", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Presign)
 	admin.POST("/uploads/:id/complete", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Complete)
 	admin.GET("/uploads/:id", middleware.RequirePermission(middleware.PermissionUploadsManage), assetHandler.Get)
