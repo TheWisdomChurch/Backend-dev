@@ -46,7 +46,7 @@ func (h *UploadHandler) UploadFile(c *gin.Context) {
 	case "audio":
 		h.uploadFile(c, "audio", 100<<20)
 	case "video":
-		h.uploadFile(c, "video", 25<<20) // large video should use presign
+		h.uploadFile(c, "video", 250<<20) // 250MB; very large media should still use presigned upload
 	default:
 		h.uploadFile(c, "file", 25<<20)
 	}
@@ -179,12 +179,16 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 func normalizeUploadKind(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
 	switch v {
-	case "image", "video", "document", "audio", "file":
-		return v
-	case "pdf", "doc", "docs":
-		return "document"
-	case "photo", "picture", "avatar":
+	case "image", "photo", "picture", "avatar", "thumbnail", "banner", "passport":
 		return "image"
+	case "video", "movie", "reel", "clip":
+		return "video"
+	case "audio", "sound", "voice":
+		return "audio"
+	case "document", "pdf", "doc", "docs", "docx", "sheet", "spreadsheet", "csv", "xls", "xlsx", "txt":
+		return "document"
+	case "file":
+		return "file"
 	default:
 		return "file"
 	}
@@ -195,7 +199,11 @@ func allowedUploadContentType(kind, ct string) bool {
 
 	switch kind {
 	case "image":
-		return ct == "image/png" || ct == "image/jpeg" || ct == "image/jpg" || ct == "image/webp" || ct == "image/gif"
+		return ct == "image/png" ||
+			ct == "image/jpeg" ||
+			ct == "image/jpg" ||
+			ct == "image/webp" ||
+			ct == "image/gif"
 	case "document":
 		return ct == "application/pdf" ||
 			ct == "application/msword" ||
@@ -205,9 +213,20 @@ func allowedUploadContentType(kind, ct string) bool {
 			ct == "text/csv" ||
 			ct == "text/plain"
 	case "audio":
-		return ct == "audio/mpeg" || ct == "audio/mp4" || ct == "audio/wav" || ct == "audio/x-wav"
+		return ct == "audio/mpeg" ||
+			ct == "audio/mp4" ||
+			ct == "audio/wav" ||
+			ct == "audio/x-wav" ||
+			ct == "audio/aac" ||
+			ct == "audio/ogg" ||
+			ct == "audio/webm"
 	case "video":
-		return ct == "video/mp4" || ct == "video/webm" || ct == "video/quicktime" || ct == "video/x-msvideo" || ct == "video/x-matroska"
+		return ct == "video/mp4" ||
+			ct == "video/webm" ||
+			ct == "video/quicktime" ||
+			ct == "video/x-msvideo" ||
+			ct == "video/x-matroska" ||
+			ct == "video/mpeg"
 	default:
 		return allowedUploadContentType("image", ct) ||
 			allowedUploadContentType("document", ct) ||
