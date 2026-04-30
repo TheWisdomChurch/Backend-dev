@@ -43,6 +43,7 @@ var dataImageRe = regexp.MustCompile(`^data:image\/(?:png|jpe?g|webp);base64,`)
 var ErrFormExpired = errors.New("form expired")
 var ErrFormClosed = errors.New("registration closed")
 var ErrFormReportAccessDenied = errors.New("invalid report link")
+const canonicalLeadershipFormSlug = "leadership-biodata"
 var flexibleTimeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",
@@ -303,6 +304,14 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 				return nil, err
 			}
 			if exists {
+				if isCanonicalLeadershipFormRequest(req, slug) {
+					existing, err := s.repo.GetAnyBySlug(slug)
+					if err != nil {
+						return nil, err
+					}
+					s.attachPublicURL(existing)
+					return existing, nil
+				}
 				return nil, errors.New("slug already in use")
 			}
 			normalizedSlug = &slug
@@ -341,6 +350,24 @@ func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error
 	}
 	s.attachPublicURL(created)
 	return created, nil
+}
+
+func isCanonicalLeadershipFormRequest(req *models.CreateFormRequest, slug string) bool {
+	if req == nil || slug != canonicalLeadershipFormSlug || req.Settings == nil {
+		return false
+	}
+
+	formType := ""
+	if req.Settings.FormType != nil {
+		formType = strings.ToLower(strings.TrimSpace(*req.Settings.FormType))
+	}
+
+	submissionTarget := ""
+	if req.Settings.SubmissionTarget != nil {
+		submissionTarget = strings.ToLower(strings.TrimSpace(*req.Settings.SubmissionTarget))
+	}
+
+	return formType == "leadership" && submissionTarget == "leadership"
 }
 
 func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.Form, error) {
