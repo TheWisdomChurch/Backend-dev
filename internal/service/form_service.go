@@ -696,9 +696,18 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	fields := applyImplicitFieldVisibilityDefaults(form.Fields)
 
-	cleanValues, err := validateSubmission(fields, req.Values)
+	mediaSafeValues, err := s.materializeSubmissionMedia(form, req.Values)
 	if err != nil {
 		return err
+	}
+
+	cleanValues, err := validateSubmission(fields, mediaSafeValues)
+	if err != nil {
+		return err
+	}
+
+	if containsSubmissionDataURL(cleanValues) {
+		return fmt.Errorf("submission contains embedded base64 media; upload failed before save")
 	}
 	if len(cleanValues) == 0 {
 		return errors.New("at least one field is required")
