@@ -1,7 +1,8 @@
 package service
 
 import (
-	"errors"
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -10,89 +11,107 @@ type dayMonthParseMode int
 
 const (
 	dayMonthNoYear dayMonthParseMode = iota
-	dayMonthOptionalYear
+	dayMonthAllowYear
 	dayMonthRequireYear
 )
 
-// parseBirthday accepts either month/day pointers or a DD/MM string.
+var (
+	dayMonthInputRe = regexp.MustCompile(`^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?$`)
+	isoDateInputRe  = regexp.MustCompile(`^(\d{4})-(\d{1,2})-(\d{1,2})$`)
+)
+
 func parseBirthday(monthPtr, dayPtr *int, birthdayStr *string) (*int, *int, error) {
 	return parseDayMonth(monthPtr, dayPtr, birthdayStr, "birthday", dayMonthNoYear)
 }
 
-// parseAnniversary accepts month/day pointers or a DD/MM/YYYY string.
 func parseAnniversary(monthPtr, dayPtr *int, anniversaryStr *string) (*int, *int, error) {
-	return parseDayMonth(monthPtr, dayPtr, anniversaryStr, "anniversary", dayMonthRequireYear)
+	return parseDayMonth(monthPtr, dayPtr, anniversaryStr, "anniversary", dayMonthAllowYear)
 }
 
 func parseDayMonth(monthPtr, dayPtr *int, rawPtr *string, field string, mode dayMonthParseMode) (*int, *int, error) {
-	if strings.TrimSpace(field) == "" {
-		field = "date"
+	if monthPtr != nil || dayPtr != nil {
+		if monthPtr == nil || dayPtr == nil {
+			return nil, nil, fmt.Errorf("%s month and day must be provided together", field)
+		}
+
+		month := *monthPtr
+		day := *dayPtr
+
+		if err := validateMonthDay(field, month, day); err != nil {
+			return nil, nil, err
+		}
+
+		return &month, &day, nil
 	}
 
-	monthField := field + "Month"
-	dayField := field + "Day"
-
-	normalize := func(m, d *int) (*int, *int, error) {
-		if m == nil && d == nil {
-			return nil, nil, nil
-		}
-		if m == nil || d == nil {
-			return nil, nil, errors.New(monthField + " and " + dayField + " must both be provided")
-		}
-		mm := *m
-		dd := *d
-		if mm < 1 || mm > 12 {
-			return nil, nil, errors.New(monthField + " must be 1-12")
-		}
-		if dd < 1 || dd > 31 {
-			return nil, nil, errors.New(dayField + " must be 1-31")
-		}
-		return &mm, &dd, nil
+	if rawPtr == nil || strings.TrimSpace(*rawPtr) == "" {
+		return nil, nil, nil
 	}
 
-	if rawPtr != nil {
-		raw := strings.TrimSpace(*rawPtr)
-		if raw == "" {
-			return nil, nil, nil
+	raw := strings.TrimSpace(*rawPtr)
+
+	if match := isoDateInputRe.FindStringSubmatch(raw); match != nil {
+		month, _ := strconv.Atoi(match[2])
+		day, _ := strconv.Atoi(match[3])
+
+		if err := validateMonthDay(field, month, day); err != nil {
+			return nil, nil, err
 		}
-		parts := strings.Split(raw, "/")
-		switch mode {
-		case dayMonthNoYear:
-			if len(parts) != 2 {
-				return nil, nil, errors.New(field + " must be in DD/MM format")
-			}
-		case dayMonthRequireYear:
-			if len(parts) != 3 {
-				return nil, nil, errors.New(field + " must be in DD/MM/YYYY format")
-			}
-		case dayMonthOptionalYear:
-			if len(parts) != 2 && len(parts) != 3 {
-				return nil, nil, errors.New(field + " must be in DD/MM or DD/MM/YYYY format")
-			}
-		default:
-			if len(parts) != 2 {
-				return nil, nil, errors.New(field + " must be in DD/MM format")
-			}
-		}
-		day, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-		if err != nil {
-			return nil, nil, errors.New(field + " day must be numeric")
-		}
-		month, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil {
-			return nil, nil, errors.New(field + " month must be numeric")
-		}
-		if len(parts) == 3 {
-			year, err := strconv.Atoi(strings.TrimSpace(parts[2]))
-			if err != nil {
-				return nil, nil, errors.New(field + " year must be numeric")
-			}
-			if year < 1 {
-				return nil, nil, errors.New(field + " year must be valid")
-			}
-		}
-		return normalize(&month, &day)
+
+		return &month, &day, nil
 	}
 
-	return normalize(monthPtr, dayPtr)
+	match := dayMonthInputRe.FindStringSubmatch(raw)
+	if match == nil {
+		return nil, nil, formatDayMonthError(field, mode)
+	}
+
+	day, _ := strconv.Atoi(match[1])
+	month, _ := strconv.Atoi(match[2])
+	year := strings.TrimSpace(match[3])
+
+	if mode == dayMonthRequireYear && year == "" {
+		return nil, nil, formatDayMonthError(field, mode)
+	}
+
+	if err := validateMonthDay(field, month, day); err != nil {
+		return nil, nil, err
+	}
+
+	return &month, &day, nil
+}
+
+func formatDayMonthError(field string, mode dayMonthParseMode) error {
+	switch mode {
+	case dayMonthRequireYear:
+		return fmt.Errorf("%s must be in DD/MM/YYYY format", field)
+	case dayMonthAllowYear:
+		return fmt.Errorf("%s must be in DD/MM or DD/MM/YYYY format", field)
+	default:
+		return fmt.Errorf("%s must be in DD/MM format", field)
+	}
+}
+
+func validateMonthDay(field string, month int, day int) error {
+	if month < 1 || month > 12 {
+		return fmt.Errorf("%s month must be between 1 and 12", field)
+	}
+
+	maxDay := daysInMonthForBirthday(month)
+	if day < 1 || day > maxDay {
+		return fmt.Errorf("%s day must be between 1 and %d", field, maxDay)
+	}
+
+	return nil
+}
+
+func daysInMonthForBirthday(month int) int {
+	switch month {
+	case 2:
+		return 29
+	case 4, 6, 9, 11:
+		return 30
+	default:
+		return 31
+	}
 }
