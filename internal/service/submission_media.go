@@ -77,7 +77,7 @@ func (s *formService) materializeSubmissionMediaValue(form *models.Form, key str
 		return typed, nil
 
 	case map[string]any:
-		if url := firstMediaURLFromMap(typed); url != "" {
+		if url := firstSubmissionMediaURLFromMap(typed); url != "" {
 			return url, nil
 		}
 
@@ -87,6 +87,7 @@ func (s *formService) materializeSubmissionMediaValue(form *models.Form, key str
 			if err != nil {
 				return nil, err
 			}
+
 			next[childKey] = materialized
 		}
 
@@ -138,7 +139,13 @@ func (s *formService) uploadSubmissionDataURL(form *models.Form, fieldKey string
 		return "", fmt.Errorf("invalid media payload for field %q", fieldKey)
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(dataURL[commaIndex+1:])
+	encodedPayload := strings.TrimSpace(dataURL[commaIndex+1:])
+	encodedPayload = strings.ReplaceAll(encodedPayload, "\n", "")
+	encodedPayload = strings.ReplaceAll(encodedPayload, "\r", "")
+	encodedPayload = strings.ReplaceAll(encodedPayload, "\t", "")
+	encodedPayload = strings.ReplaceAll(encodedPayload, " ", "")
+
+	decoded, err := base64.StdEncoding.DecodeString(encodedPayload)
 	if err != nil {
 		return "", fmt.Errorf("invalid base64 media payload for field %q", fieldKey)
 	}
@@ -187,19 +194,14 @@ func buildSubmissionMediaFolder(form *models.Form, contentType string) string {
 	formRef := "unknown-form"
 
 	if form != nil {
-		// models.Form.Slug is *string, so it must be safely dereferenced.
-		if slug := stringPtrValue(form.Slug); slug != "" {
-			formRef = sanitizeStorageSegment(slug)
-		} else {
-			// Keep this fmt.Sprint to avoid issues if ID is uuid.UUID/string.
-			if id := strings.TrimSpace(fmt.Sprint(form.ID)); id != "" {
-				formRef = sanitizeStorageSegment(id)
-			}
+		if slug := submissionStringPtrValue(form.Slug); slug != "" {
+			formRef = sanitizeSubmissionStorageSegment(slug)
+		} else if id := strings.TrimSpace(fmt.Sprint(form.ID)); id != "" {
+			formRef = sanitizeSubmissionStorageSegment(id)
 		}
 	}
 
 	kind := "files"
-
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 
 	if strings.HasPrefix(contentType, "image/") {
@@ -215,7 +217,7 @@ func buildSubmissionMediaFolder(form *models.Form, contentType string) string {
 	return "public-forms/" + formRef + "/" + kind
 }
 
-func stringPtrValue(value *string) string {
+func submissionStringPtrValue(value *string) string {
 	if value == nil {
 		return ""
 	}
@@ -223,7 +225,9 @@ func stringPtrValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func sanitizeStorageSegment(value string) string {
+// Important: this name is intentionally different from sanitizeStorageSegment
+// in spaces_uploader.go. All files in internal/service share one package scope.
+func sanitizeSubmissionStorageSegment(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return "unknown"
@@ -245,18 +249,18 @@ func sanitizeStorageSegment(value string) string {
 	}
 
 	clean := strings.Trim(b.String(), "-_")
-	if clean == "" {
-		return "unknown"
-	}
-
 	for strings.Contains(clean, "--") {
 		clean = strings.ReplaceAll(clean, "--", "-")
+	}
+
+	if clean == "" {
+		return "unknown"
 	}
 
 	return clean
 }
 
-func firstMediaURLFromMap(record map[string]any) string {
+func firstSubmissionMediaURLFromMap(record map[string]any) string {
 	keys := []string{
 		"publicUrl",
 		"public_url",
@@ -275,7 +279,7 @@ func firstMediaURLFromMap(record map[string]any) string {
 		}
 
 		value := strings.TrimSpace(fmt.Sprint(raw))
-		if isHTTPURL(value) {
+		if isSubmissionHTTPURL(value) {
 			return value
 		}
 	}
@@ -320,7 +324,7 @@ func isSubmissionDataURL(value string) bool {
 	return submissionDataURLRe.MatchString(strings.TrimSpace(value))
 }
 
-func isHTTPURL(value string) bool {
+func isSubmissionHTTPURL(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
