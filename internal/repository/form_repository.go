@@ -42,6 +42,7 @@ type FormRepository interface {
 	ListNewMemberSubmissions(offset, limit int, start, end *time.Time) ([]models.NewMemberSubmission, int64, error)
 	CountNewMemberSubmissions(start, end *time.Time) (int64, error)
 	CountNewMemberSubmissionsByPeriod(period string, start, end *time.Time) ([]models.GrowthBucket, error)
+	ListLeadershipIntakeSubmissions(limit int) ([]models.FormSubmissionWithForm, error)
 	DeleteExpired(now time.Time) (int64, error)
 }
 
@@ -300,11 +301,19 @@ func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *g
 
 func applyNewMemberFormFilter(q *gorm.DB) *gorm.DB {
 	return q.Where(`(
-		LOWER(COALESCE(forms.settings->>'submissionTarget', '')) IN ('member', 'membership', 'new_member', 'new_members')
-		OR LOWER(COALESCE(forms.settings->>'formType', '')) = 'membership'
-		OR LOWER(COALESCE(forms.slug, '')) IN ('add-new-member', 'new-member', 'new-members', 'membership')
-		OR LOWER(forms.title) LIKE '%new member%'
-		OR LOWER(forms.title) LIKE '%membership%'
+		LOWER(COALESCE(forms.slug, '')) = 'add-new-member'
+		OR regexp_replace(LOWER(COALESCE(forms.title, '')), '[^a-z0-9]+', ' ', 'g') = 'add new member'
+		OR LOWER(COALESCE(forms.settings->>'newMemberSource', '')) = 'add-new-member'
+	)`)
+}
+
+func applyLeadershipIntakeFormFilter(q *gorm.DB) *gorm.DB {
+	return q.Where(`(
+		LOWER(COALESCE(forms.settings->>'submissionTarget', '')) = 'leadership'
+		OR LOWER(COALESCE(forms.settings->>'formType', '')) = 'leadership'
+		OR LOWER(COALESCE(forms.slug, '')) = 'leadership-biodata'
+		OR LOWER(COALESCE(forms.slug, '')) = 'leadership-application'
+		OR LOWER(COALESCE(forms.title, '')) LIKE '%leadership%'
 	)`)
 }
 
@@ -477,4 +486,29 @@ func (r *formRepository) CountNewMemberSubmissionsByPeriod(period string, start,
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *formRepository) ListLeadershipIntakeSubmissions(limit int) ([]models.FormSubmissionWithForm, error) {
+	var items []models.FormSubmissionWithForm
+	if limit < 1 || limit > 1000 {
+		limit = 500
+	}
+
+	q := applyLeadershipIntakeFormFilter(r.db.DB.Model(&models.FormSubmission{})).
+		Select(`form_submissions.id,
+			form_submissions.form_id,
+			COALESCE(forms.title, '') as form_title,
+			form_submissions.name,
+			form_submissions.email,
+			form_submissions.contact_number,
+			form_submissions.contact_address,
+			form_submissions.registration_code,
+			form_submissions.values,
+			form_submissions.created_at`).
+		Joins("JOIN forms ON forms.id = form_submissions.form_id").
+		Where("form_submissions.deleted_at IS NULL").
+		Order("form_submissions.created_at DESC").
+		Limit(limit)
+
+	return items, q.Scan(&items).Error
 }

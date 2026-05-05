@@ -15,6 +15,7 @@ type LeadershipRepository interface {
 	ListByAnniversaryMonthDay(month, day int, status string) ([]models.LeadershipMember, error)
 	AnniversaryCountsByMonth(status string) (map[int]int64, int64, error)
 	GetByID(id string) (*models.LeadershipMember, error)
+	GetByEmail(email string) (*models.LeadershipMember, error)
 	Create(member *models.LeadershipMember) error
 	Update(id string, updates map[string]interface{}) (*models.LeadershipMember, error)
 	Delete(id string) error
@@ -160,6 +161,14 @@ func (r *leadershipRepository) AnniversaryCountsByMonth(status string) (map[int]
 func (r *leadershipRepository) GetByID(id string) (*models.LeadershipMember, error) {
 	var member models.LeadershipMember
 	if err := r.db.DB.First(&member, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &member, nil
+}
+
+func (r *leadershipRepository) GetByEmail(email string) (*models.LeadershipMember, error) {
+	var member models.LeadershipMember
+	if err := r.db.DB.First(&member, "LOWER(email) = LOWER(?)", email).Error; err != nil {
 		return nil, err
 	}
 	return &member, nil
