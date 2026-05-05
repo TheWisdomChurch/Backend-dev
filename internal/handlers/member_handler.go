@@ -49,6 +49,50 @@ func (h *MemberHandler) List(c *gin.Context) {
 	})
 }
 
+func (h *MemberHandler) Stats(c *gin.Context) {
+	stats, err := h.svc.Stats()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load member stats")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Member stats retrieved", stats)
+}
+
+func (h *MemberHandler) NewMemberDashboard(c *gin.Context) {
+	dashboard, err := h.svc.NewMemberDashboard(time.Now())
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load new member dashboard")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "New member dashboard retrieved", dashboard)
+}
+
+func (h *MemberHandler) ListNewMemberSubmissions(c *gin.Context) {
+	page, limit, ok := parsePaginationQuery(c, 25, 500)
+	if !ok {
+		return
+	}
+	start, end, err := parseTimeRange(c)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, total, err := h.svc.ListNewMemberSubmissions(page, limit, start, end)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load new member submissions")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "New member submissions loaded", gin.H{
+		"data":       items,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
 func (h *MemberHandler) Create(c *gin.Context) {
 	var req models.CreateMemberRequest
 	if !validation.BindJSON(c, &req) {

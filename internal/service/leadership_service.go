@@ -20,6 +20,8 @@ type LeadershipService interface {
 	Update(id string, req *models.UpdateLeadershipRequest) (*models.LeadershipMember, error)
 	Approve(id string) (*models.LeadershipMember, error)
 	Decline(id string) (*models.LeadershipMember, error)
+	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	ApproveDelete(id string, approver *models.User) error
 	Delete(id string) error
 
 	BirthdayStats() (*models.BirthdayStatsResponse, error)
@@ -34,23 +36,26 @@ type LeadershipService interface {
 }
 
 type leadershipService struct {
-	repo      repository.LeadershipRepository
-	notifySvc AdminNotificationService
-	sender    EmailSender
-	branding  email.Branding
+	repo        repository.LeadershipRepository
+	notifySvc   AdminNotificationService
+	approvalSvc ApprovalService
+	sender      EmailSender
+	branding    email.Branding
 }
 
 func NewLeadershipService(
 	repo repository.LeadershipRepository,
 	notifySvc AdminNotificationService,
+	approvalSvc ApprovalService,
 	sender EmailSender,
 	branding email.Branding,
 ) LeadershipService {
 	return &leadershipService{
-		repo:      repo,
-		notifySvc: notifySvc,
-		sender:    sender,
-		branding:  branding,
+		repo:        repo,
+		notifySvc:   notifySvc,
+		approvalSvc: approvalSvc,
+		sender:      sender,
+		branding:    branding,
 	}
 }
 
@@ -183,6 +188,69 @@ func (s *leadershipService) Decline(id string) (*models.LeadershipMember, error)
 	}
 	s.sendLeadershipStatusEmail(updated, models.LeadershipStatusDeclined)
 	return updated, nil
+}
+
+func (s *leadershipService) RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+	if s.approvalSvc == nil {
+		return nil, errors.New("approval service not configured")
+	}
+
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	label := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	if label == "" {
+		label = id
+	}
+
+	var requestedByID, requestedByName, requestedByEmail *string
+	if requestedBy != nil {
+		requestedByID = &requestedBy.ID
+		name := strings.TrimSpace(strings.Join([]string{requestedBy.FirstName, requestedBy.LastName}, " "))
+		if name != "" {
+			requestedByName = &name
+		}
+		if strings.TrimSpace(requestedBy.Email) != "" {
+			email := strings.TrimSpace(requestedBy.Email)
+			requestedByEmail = &email
+		}
+	}
+
+	req, err := s.approvalSvc.CreateRequest(CreateApprovalRequest{
+		Type:             models.ApprovalTypeLeadershipDelete,
+		EntityID:         &member.ID,
+		EntityLabel:      &label,
+		RequestedByID:    requestedByID,
+		RequestedByName:  requestedByName,
+		RequestedByEmail: requestedByEmail,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.notifyLeadershipDeleteRequest(member, req)
+	return req, nil
+}
+
+func (s *leadershipService) ApproveDelete(id string, approver *models.User) error {
+	if s.approvalSvc == nil {
+		return errors.New("approval service not configured")
+	}
+
+	if _, err := s.repo.GetByID(id); err != nil {
+		return err
+	}
+	if _, err := s.approvalSvc.CompleteRequest(
+		models.ApprovalTypeLeadershipDelete,
+		id,
+		models.ApprovalStatusApproved,
+		approver,
+	); err != nil {
+		return err
+	}
+	return s.repo.Delete(id)
 }
 
 func (s *leadershipService) Delete(id string) error {
@@ -446,6 +514,28 @@ func (s *leadershipService) notifyNewApplication(member *models.LeadershipMember
 	entityID := member.ID
 	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
 		Type:       "leadership_application",
+		Title:      title,
+		Message:    message,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"super_admin"},
+	})
+}
+
+func (s *leadershipService) notifyLeadershipDeleteRequest(member *models.LeadershipMember, req *models.ApprovalRequest) {
+	if s.notifySvc == nil || member == nil || req == nil {
+		return
+	}
+	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	if fullName == "" {
+		fullName = "Leadership profile"
+	}
+	title := "Leadership delete approval required"
+	message := fmt.Sprintf("%s was marked for deletion. Super admin approval is required before removal.", fullName)
+	entityType := "leadership_delete"
+	entityID := member.ID
+	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "leadership_delete_request",
 		Title:      title,
 		Message:    message,
 		EntityType: &entityType,
