@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// S3Uploader implements AssetUploader using S3-compatible object storage.
+// S3Uploader implements AssetUploader using AWS S3 or S3-compatible storage.
 type S3Uploader struct {
 	bucket        string
 	basePath      string
@@ -27,20 +27,17 @@ type S3Uploader struct {
 	publicRead    bool
 	provider      string
 	endpoint      string
+	region        string
+	forcePath     bool
 	client        *s3.Client
 }
 
-// NewS3UploaderFromEnv builds an uploader from S3_* env vars.
-// For Supabase Storage S3, use:
-// S3_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3
-// S3_PUBLIC_BASE_URL=https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>
-// S3_PUBLIC_READ=false
 func NewS3UploaderFromEnv() (*S3Uploader, error) {
 	bucket := firstEnv("S3_BUCKET")
-	accessKey := firstEnv("S3_ACCESS_KEY")
-	secretKey := firstEnv("S3_SECRET_KEY")
+	accessKey := firstEnv("S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID")
+	secretKey := firstEnv("S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY")
 	endpoint := normalizeEndpoint(firstEnv("S3_ENDPOINT"))
-	region := firstEnv("S3_REGION")
+	region := firstEnv("S3_REGION", "AWS_REGION", "AWS_DEFAULT_REGION")
 	publicBaseURL := strings.TrimRight(firstEnv("S3_PUBLIC_BASE_URL"), "/")
 	basePath := strings.Trim(firstEnv("S3_BASE_PATH"), "/")
 	provider := strings.ToLower(firstEnv("S3_PROVIDER", "STORAGE_PROVIDER"))
@@ -62,23 +59,18 @@ func NewS3UploaderFromEnv() (*S3Uploader, error) {
 	if secretKey == "" {
 		return nil, errors.New("storage config incomplete: S3_SECRET_KEY is required")
 	}
-	if endpoint == "" {
-		return nil, errors.New("storage config incomplete: S3_ENDPOINT is required")
-	}
 
 	if region == "" {
 		region = "us-east-1"
 	}
 
 	if publicBaseURL == "" {
-		publicBaseURL = derivePublicBaseURL(bucket, endpoint, region)
+		publicBaseURL = derivePublicBaseURL(bucket, endpoint, region, provider)
 	}
 	if publicBaseURL == "" {
 		return nil, errors.New("S3_PUBLIC_BASE_URL is required to build public URLs")
 	}
 
-	// Supabase Storage S3 does not support x-amz-acl.
-	// Default false. Only enable for providers that actually support ACL headers.
 	publicRead := parseBoolEnv("S3_PUBLIC_READ", false)
 
 	loadOpts := []func(*config.LoadOptions) error{
@@ -86,30 +78,32 @@ func NewS3UploaderFromEnv() (*S3Uploader, error) {
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	}
 
-	resolver := aws.EndpointResolverWithOptionsFunc(
-		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID {
-				return aws.Endpoint{
-					URL:               endpoint,
-					HostnameImmutable: true,
-					SigningRegion:     region,
-				}, nil
-			}
+	if endpoint != "" {
+		resolver := aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				if service == s3.ServiceID {
+					return aws.Endpoint{
+						URL:               endpoint,
+						HostnameImmutable: true,
+						SigningRegion:     region,
+					}, nil
+				}
 
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-		},
-	)
+				return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+			},
+		)
 
-	loadOpts = append(loadOpts, config.WithEndpointResolverWithOptions(resolver))
+		loadOpts = append(loadOpts, config.WithEndpointResolverWithOptions(resolver))
+	}
 
 	cfg, err := config.LoadDefaultConfig(context.Background(), loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("s3 config load failed: %w", err)
 	}
 
+	forcePath := shouldForcePathStyle(provider, endpoint)
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		// Supabase S3 requires path-style access.
-		o.UsePathStyle = true
+		o.UsePathStyle = forcePath
 	})
 
 	return &S3Uploader{
@@ -119,6 +113,8 @@ func NewS3UploaderFromEnv() (*S3Uploader, error) {
 		publicRead:    publicRead,
 		provider:      provider,
 		endpoint:      endpoint,
+		region:        region,
+		forcePath:     forcePath,
 		client:        client,
 	}, nil
 }
@@ -145,21 +141,20 @@ func (s *S3Uploader) Upload(ctx context.Context, objectKey string, contentType s
 		input.ContentType = aws.String(ct)
 	}
 
-	// Supabase Storage S3 rejects x-amz-acl.
-	// Only send ACL for non-Supabase providers when explicitly enabled.
 	if s.publicRead && s.supportsACL() {
 		input.ACL = types.ObjectCannedACLPublicRead
 	}
 
 	if _, err := s.client.PutObject(ctx, input); err != nil {
 		return "", fmt.Errorf(
-			"s3 PutObject failed: bucket=%q key=%q contentType=%q endpoint=%q publicRead=%t supportsACL=%t: %w",
+			"s3 PutObject failed: bucket=%q key=%q contentType=%q endpoint=%q publicRead=%t supportsACL=%t forcePathStyle=%t: %w",
 			s.bucket,
 			key,
 			ct,
-			s.endpoint,
+			s.endpointDescription(),
 			s.publicRead,
 			s.supportsACL(),
+			s.forcePath,
 			err,
 		)
 	}
@@ -167,7 +162,6 @@ func (s *S3Uploader) Upload(ctx context.Context, objectKey string, contentType s
 	return strings.TrimRight(s.publicBaseURL, "/") + "/" + key, nil
 }
 
-// PresignPut creates a pre-signed PUT URL for direct uploads.
 func (s *S3Uploader) PresignPut(ctx context.Context, objectKey string, contentType string, expires time.Duration) (string, error) {
 	if s == nil || s.client == nil {
 		return "", errors.New("uploader not configured")
@@ -193,7 +187,6 @@ func (s *S3Uploader) PresignPut(ctx context.Context, objectKey string, contentTy
 		input.ContentType = aws.String(ct)
 	}
 
-	// Supabase Storage S3 rejects x-amz-acl.
 	if s.publicRead && s.supportsACL() {
 		input.ACL = types.ObjectCannedACLPublicRead
 	}
@@ -203,11 +196,12 @@ func (s *S3Uploader) PresignPut(ctx context.Context, objectKey string, contentTy
 	out, err := presigner.PresignPutObject(ctx, input, s3.WithPresignExpires(expires))
 	if err != nil {
 		return "", fmt.Errorf(
-			"s3 PresignPutObject failed: bucket=%q key=%q contentType=%q endpoint=%q: %w",
+			"s3 PresignPutObject failed: bucket=%q key=%q contentType=%q endpoint=%q forcePathStyle=%t: %w",
 			s.bucket,
 			key,
 			ct,
-			s.endpoint,
+			s.endpointDescription(),
+			s.forcePath,
 			err,
 		)
 	}
@@ -289,6 +283,32 @@ func (s *S3Uploader) ProviderName() string {
 	return provider
 }
 
+func (s *S3Uploader) StorageSummary() string {
+	if s == nil {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"provider=%s bucket=%s region=%s endpoint=%s publicBaseURL=%s forcePathStyle=%t publicRead=%t supportsACL=%t",
+		s.ProviderName(),
+		s.Bucket(),
+		strings.TrimSpace(s.region),
+		s.endpointDescription(),
+		s.PublicBaseURL(),
+		s.forcePath,
+		s.publicRead,
+		s.supportsACL(),
+	)
+}
+
+func (s *S3Uploader) endpointDescription() string {
+	if s == nil || strings.TrimSpace(s.endpoint) == "" {
+		return "aws-default"
+	}
+
+	return strings.TrimSpace(s.endpoint)
+}
+
 func (s *S3Uploader) supportsACL() bool {
 	if s == nil {
 		return false
@@ -297,15 +317,15 @@ func (s *S3Uploader) supportsACL() bool {
 	lowerEndpoint := strings.ToLower(strings.TrimSpace(s.endpoint))
 	lowerProvider := strings.ToLower(strings.TrimSpace(s.provider))
 
+	if lowerProvider == "supabase" {
+		return false
+	}
+
 	if strings.Contains(lowerEndpoint, "supabase.co") {
 		return false
 	}
 
 	if strings.Contains(lowerEndpoint, "/storage/v1/s3") {
-		return false
-	}
-
-	if lowerProvider == "supabase" {
 		return false
 	}
 
@@ -393,10 +413,37 @@ func normalizeEndpoint(endpoint string) string {
 	return "https://" + strings.TrimRight(raw, "/")
 }
 
-func derivePublicBaseURL(bucket, endpoint, region string) string {
+func shouldForcePathStyle(provider, endpoint string) bool {
+	if v := strings.TrimSpace(os.Getenv("S3_FORCE_PATH_STYLE")); v != "" {
+		return parseBoolEnv("S3_FORCE_PATH_STYLE", false)
+	}
+
+	lowerEndpoint := strings.ToLower(strings.TrimSpace(endpoint))
+	lowerProvider := strings.ToLower(strings.TrimSpace(provider))
+
+	if lowerProvider == "aws" || strings.Contains(lowerEndpoint, "amazonaws.com") {
+		return false
+	}
+
+	return lowerEndpoint != ""
+}
+
+func derivePublicBaseURL(bucket, endpoint, region, provider string) string {
 	bucket = strings.TrimSpace(bucket)
 	if bucket == "" {
 		return ""
+	}
+
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	if endpoint == "" || strings.EqualFold(strings.TrimSpace(provider), "aws") {
+		if region == "us-east-1" {
+			return "https://" + bucket + ".s3.amazonaws.com"
+		}
+		return "https://" + bucket + ".s3." + region + ".amazonaws.com"
 	}
 
 	endpoint = normalizeEndpoint(endpoint)
@@ -423,10 +470,16 @@ func derivePublicBaseURL(bucket, endpoint, region string) string {
 		return ""
 	}
 
-	// Supabase public object URL is different from the S3 endpoint URL.
 	if strings.Contains(strings.ToLower(host), "supabase.co") {
 		projectHost := strings.Replace(host, ".storage.supabase.co", ".supabase.co", 1)
 		return scheme + "://" + projectHost + "/storage/v1/object/public/" + bucket
+	}
+
+	if strings.Contains(strings.ToLower(host), "amazonaws.com") {
+		if region == "us-east-1" {
+			return "https://" + bucket + ".s3.amazonaws.com"
+		}
+		return "https://" + bucket + ".s3." + region + ".amazonaws.com"
 	}
 
 	return scheme + "://" + strings.TrimPrefix(host, bucket+".") + "/" + bucket
