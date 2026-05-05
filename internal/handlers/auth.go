@@ -26,6 +26,30 @@ import (
 	"wisdomHouse-backend/pkg/utils"
 )
 
+const (
+	authTokenCookieName    = "auth_token"
+	lastActivityCookieName = "last_activity"
+	deviceIDCookieName     = "device_id"
+	oauthStateCookieName   = "oauth_google_state"
+)
+
+var (
+	authCookieClearPathCandidates = []string{
+		"/",
+		"/api",
+		"/api/v1",
+		"/api/v1/auth",
+	}
+
+	authCookieKnownDomainCandidates = []string{
+		"",
+		".wisdomchurchhq.org",
+		"wisdomchurchhq.org",
+		"api.wisdomchurchhq.org",
+		"admin.wisdomchurchhq.org",
+	}
+)
+
 type AuthHandlerOptions struct {
 	JWTSecret                    string
 	Secure                       bool
@@ -116,12 +140,17 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 	if len(h.jwtSecret) == 0 {
 		return "", fmt.Errorf("JWT_SECRET not configured")
 	}
+	if user == nil {
+		return "", fmt.Errorf("user is required")
+	}
 
+	now := time.Now().UTC()
 	idleTTL := h.sessionIdleTimeout
-	expiresAt := time.Now().Add(h.accessTokenTTL)
+	expiresAt := now.Add(h.accessTokenTTL)
+
 	if rememberMe {
 		idleTTL = h.rememberedSessionIdleTimeout
-		expiresAt = time.Now().Add(h.rememberMeTTL)
+		expiresAt = now.Add(h.rememberMeTTL)
 	}
 
 	claims := middleware.AccessClaims{
@@ -133,7 +162,7 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 		AuthMethod:                strings.TrimSpace(authMethod),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			IssuedAt:  jwt.NewNumericDate(now),
 			Subject:   user.ID,
 			Issuer:    middleware.JWTIssuer,
 			Audience:  []string{middleware.JWTAudience},
@@ -179,7 +208,7 @@ func normalizeConfiguredCookieDomain(raw string) string {
 		value = value[:slash]
 	}
 
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(strings.ToLower(value))
 
 	// Do not set Domain for localhost, IP:port, or host:port.
 	// Browsers reject those and local development will break.
@@ -213,34 +242,118 @@ func configuredCSRFCookieName() string {
 	if name == "" {
 		return middleware.DefaultCSRFCookieName
 	}
+
 	return name
 }
 
 func authCookieClearDomains() []string {
-	domain := configuredAuthCookieDomain()
-	if domain == "" {
-		return []string{""}
+	candidates := make([]string, 0, len(authCookieKnownDomainCandidates)+4)
+
+	candidates = append(candidates, authCookieKnownDomainCandidates...)
+	candidates = append(candidates,
+		configuredAuthCookieDomain(),
+		normalizeConfiguredCookieDomain(os.Getenv("AUTH_COOKIE_DOMAIN")),
+		normalizeConfiguredCookieDomain(os.Getenv("SESSION_COOKIE_DOMAIN")),
+		normalizeConfiguredCookieDomain(os.Getenv("COOKIE_DOMAIN")),
+	)
+
+	seen := make(map[string]bool, len(candidates))
+	domains := make([]string, 0, len(candidates))
+
+	for _, domain := range candidates {
+		domain = strings.TrimSpace(domain)
+		if seen[domain] {
+			continue
+		}
+
+		seen[domain] = true
+		domains = append(domains, domain)
 	}
 
-	// Clear old host-only cookies and new parent-domain cookies.
-	return []string{"", domain}
+	return domains
 }
 
-func expireAuthCookie(c *gin.Context, name string, domain string, secure bool, sameSite http.SameSite) {
+func expireCookie(c *gin.Context, name string, domain string, cookiePath string, secure bool, sameSite http.SameSite) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     "/",
+		Path:     cookiePath,
 		Domain:   domain,
 		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
+		Expires:  time.Unix(0, 0).UTC(),
 		Secure:   secure,
 		HttpOnly: true,
 		SameSite: sameSite,
 	})
 }
 
+func expireAuthCookie(c *gin.Context, name string, domain string, secure bool, sameSite http.SameSite) {
+	for _, cookiePath := range authCookieClearPathCandidates {
+		expireCookie(c, name, domain, cookiePath, secure, sameSite)
+	}
+}
+
+func setHTTPOnlyCookie(c *gin.Context, name string, value string, domain string, maxAge int, expires time.Time, secure bool, sameSite http.SameSite) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		Domain:   domain,
+		MaxAge:   maxAge,
+		Expires:  expires,
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: sameSite,
+	})
+}
+
+// latestCookieValue returns the last non-empty cookie value for a name.
+//
+// This protects the auth handler during cookie-domain migrations. Browsers may
+// send duplicate cookies when older host/path variants still exist.
+func latestCookieValue(c *gin.Context, name string) (string, error) {
+	if c == nil || c.Request == nil {
+		return "", http.ErrNoCookie
+	}
+
+	values := make([]string, 0)
+
+	for _, cookie := range c.Request.Cookies() {
+		if cookie == nil || cookie.Name != name {
+			continue
+		}
+
+		value := strings.TrimSpace(cookie.Value)
+		if value == "" {
+			continue
+		}
+
+		values = append(values, value)
+	}
+
+	if len(values) == 0 {
+		return "", http.ErrNoCookie
+	}
+
+	return values[len(values)-1], nil
+}
+
+func (h *AuthHandler) clearSessionCookieVariants(c *gin.Context) {
+	sameSite := h.cookieSameSite()
+	secure := h.cookieSecure()
+
+	for _, domain := range authCookieClearDomains() {
+		expireAuthCookie(c, authTokenCookieName, domain, secure, sameSite)
+		expireAuthCookie(c, lastActivityCookieName, domain, secure, sameSite)
+	}
+}
+
 func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe bool) {
+	// Remove stale host/domain/path variants before writing the canonical cookies.
+	// This prevents browsers from sending duplicate auth_token and last_activity cookies.
+	h.clearSessionCookieVariants(c)
+
+	now := time.Now().UTC()
 	maxAge := 0
 	expires := time.Time{}
 
@@ -250,45 +363,21 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 
 	if rememberMe {
 		maxAge = int(h.rememberMeTTL / time.Second)
-		expires = time.Now().Add(h.rememberMeTTL)
+		expires = now.Add(h.rememberMeTTL)
 
 		idleTTL = h.rememberedSessionIdleTimeout
 		activityMaxAge = int(idleTTL / time.Second)
-		activityExpires = time.Now().Add(idleTTL)
+		activityExpires = now.Add(idleTTL)
 	}
 
 	sameSite := h.cookieSameSite()
 	secure := h.cookieSecure()
 	domain := configuredAuthCookieDomain()
 
-	// Important:
-	// In production, AUTH_COOKIE_DOMAIN must be ".wisdomchurchhq.org".
-	// This lets admin.wisdomchurchhq.org and api.wisdomchurchhq.org share the same session.
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		Domain:   domain,
-		MaxAge:   maxAge,
-		Expires:  expires,
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
-
-	now := time.Now().UTC()
-
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "last_activity",
-		Value:    now.Format(time.RFC3339),
-		Path:     "/",
-		Domain:   domain,
-		MaxAge:   activityMaxAge,
-		Expires:  activityExpires,
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
+	// In production, AUTH_COOKIE_DOMAIN should be ".wisdomchurchhq.org"
+	// if the session must be shared across admin/api subdomains.
+	setHTTPOnlyCookie(c, authTokenCookieName, token, domain, maxAge, expires, secure, sameSite)
+	setHTTPOnlyCookie(c, lastActivityCookieName, now.Format(time.RFC3339), domain, activityMaxAge, activityExpires, secure, sameSite)
 }
 
 func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
@@ -296,9 +385,10 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 	secure := h.cookieSecure()
 
 	for _, domain := range authCookieClearDomains() {
-		expireAuthCookie(c, "auth_token", domain, secure, sameSite)
-		expireAuthCookie(c, "last_activity", domain, secure, sameSite)
+		expireAuthCookie(c, authTokenCookieName, domain, secure, sameSite)
+		expireAuthCookie(c, lastActivityCookieName, domain, secure, sameSite)
 		expireAuthCookie(c, configuredCSRFCookieName(), domain, secure, sameSite)
+		expireAuthCookie(c, oauthStateCookieName, domain, secure, http.SameSiteLaxMode)
 	}
 
 	// Compatibility with your existing CSRF middleware helper.
@@ -306,15 +396,15 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 }
 
 func (h *AuthHandler) loginMetadata(c *gin.Context) service.LoginMetadata {
+	deviceID := ""
+	if value, err := latestCookieValue(c, deviceIDCookieName); err == nil {
+		deviceID = value
+	}
+
 	return service.LoginMetadata{
 		IP:        c.ClientIP(),
 		UserAgent: c.Request.UserAgent(),
-		DeviceID: func() string {
-			if v, err := c.Cookie("device_id"); err == nil {
-				return v
-			}
-			return ""
-		}(),
+		DeviceID: deviceID,
 	}
 }
 
@@ -387,7 +477,7 @@ func (h *AuthHandler) effectivePostLoginRedirectURL() string {
 
 ============================================================================ */
 
-// Login establishes cookie-based session ONLY here
+// Login establishes cookie-based session ONLY here.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
 		Email      string `json:"email" binding:"required,email"`
@@ -426,6 +516,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		if strings.EqualFold(strings.TrimSpace(result.MFAMethod), "totp") {
 			accessCode = "admin_totp_session_required"
 		}
+
 		utils.SuccessResponse(c, http.StatusAccepted, "Additional verification required", gin.H{
 			"otp_required": true,
 			"mfa_method":   result.MFAMethod,
@@ -453,7 +544,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// Register creates account but does NOT authenticate or set cookies
+// Register creates account but does NOT authenticate or set cookies.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
 		FirstName string `json:"first_name" binding:"required,min=2,max=50"`
@@ -484,7 +575,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Safety: ensure registration never leaves the user authenticated
+	// Safety: ensure registration never leaves the user authenticated.
 	h.clearAuthCookie(c)
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -543,6 +634,7 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 			authMethod = method
 		}
 	}
+
 	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
 	responseData := authUserPayload(user)
 	responseData["auth_method"] = strings.TrimSpace(authMethod)
@@ -758,13 +850,14 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	deviceID := ""
-	if v, err := c.Cookie("device_id"); err == nil {
-		deviceID = v
+	if value, err := latestCookieValue(c, deviceIDCookieName); err == nil {
+		deviceID = value
 	}
 
 	userID := ""
-	if tokenCookie, err := c.Cookie("auth_token"); err == nil && tokenCookie != "" && len(h.jwtSecret) > 0 {
-		// Try unverified parse first
+	if tokenCookie, err := latestCookieValue(c, authTokenCookieName); err == nil && tokenCookie != "" && len(h.jwtSecret) > 0 {
+		// Try unverified parse first. Logout must still clear cookies even if
+		// the token is expired or invalid after a JWT secret rotation.
 		if t, _, err := new(jwt.Parser).ParseUnverified(tokenCookie, jwt.MapClaims{}); err == nil {
 			if claims, ok := t.Claims.(jwt.MapClaims); ok {
 				if uid, ok := claims["user_id"].(string); ok {
@@ -772,7 +865,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 				}
 			}
 		} else {
-			// Fallback: parse with verification
+			// Fallback: parse with verification.
 			if t, err2 := jwt.Parse(tokenCookie, func(token *jwt.Token) (interface{}, error) {
 				return h.jwtSecret, nil
 			}); err2 == nil {
@@ -856,8 +949,6 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	}
 
 	if err := h.service.ResetPasswordWithOTP(req.Email, req.Code, req.Purpose, req.NewPassword); err != nil {
-		// You can specialize error handling here if your service exposes
-		// ErrOTPInvalid, ErrOTPExpired, etc. For now, we keep it generic.
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -911,6 +1002,7 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
+
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -925,6 +1017,7 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 		} else if errors.Is(err, service.ErrAdminPending) {
 			status = http.StatusForbidden
 		}
+
 		utils.ErrorResponse(c, status, err.Error())
 		return
 	}
@@ -987,6 +1080,7 @@ func (h *AuthHandler) EnableTOTP(c *gin.Context) {
 	var req struct {
 		Code string `json:"code" binding:"required,len=6"`
 	}
+
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -1010,6 +1104,7 @@ func (h *AuthHandler) DisableTOTP(c *gin.Context) {
 	var req struct {
 		Code string `json:"code" binding:"required,len=6"`
 	}
+
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -1033,6 +1128,7 @@ func (h *AuthHandler) SetPreferredMFAMethod(c *gin.Context) {
 	var req struct {
 		Method string `json:"method" binding:"required"`
 	}
+
 	if !validation.BindJSON(c, &req) {
 		return
 	}
@@ -1051,9 +1147,11 @@ func (h *AuthHandler) GetCSRFToken(c *gin.Context) {
 	tokenStr, _ := token.(string)
 	headerName, _ := c.Get("csrf_header")
 	headerStr, _ := headerName.(string)
+
 	if strings.TrimSpace(headerStr) == "" {
 		headerStr = middleware.DefaultCSRFHeaderName
 	}
+
 	if strings.TrimSpace(tokenStr) == "" {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to issue CSRF token")
 		return
@@ -1219,12 +1317,12 @@ func (h *AuthHandler) googleOAuthEnabled() bool {
 
 func (h *AuthHandler) setOAuthStateCookie(c *gin.Context, value string) {
 	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "oauth_google_state",
+		Name:     oauthStateCookieName,
 		Value:    value,
 		Path:     "/",
 		Domain:   configuredAuthCookieDomain(),
 		MaxAge:   int((10 * time.Minute) / time.Second),
-		Expires:  time.Now().Add(10 * time.Minute),
+		Expires:  time.Now().UTC().Add(10 * time.Minute),
 		Secure:   h.cookieSecure(),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -1235,27 +1333,17 @@ func (h *AuthHandler) clearOAuthStateCookie(c *gin.Context) {
 	secure := h.cookieSecure()
 
 	for _, domain := range authCookieClearDomains() {
-		http.SetCookie(c.Writer, &http.Cookie{
-			Name:     "oauth_google_state",
-			Value:    "",
-			Path:     "/",
-			Domain:   domain,
-			MaxAge:   -1,
-			Expires:  time.Unix(0, 0),
-			Secure:   secure,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-		})
+		expireAuthCookie(c, oauthStateCookieName, domain, secure, http.SameSiteLaxMode)
 	}
 }
 
 func (h *AuthHandler) readOAuthState(c *gin.Context) (*googleOAuthState, error) {
-	cookie, err := c.Request.Cookie("oauth_google_state")
-	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+	cookieValue, err := latestCookieValue(c, oauthStateCookieName)
+	if err != nil || strings.TrimSpace(cookieValue) == "" {
 		return nil, errors.New("missing oauth state")
 	}
 
-	payload, err := h.protector.VerifySignedPayload(cookie.Value)
+	payload, err := h.protector.VerifySignedPayload(cookieValue)
 	if err != nil {
 		return nil, err
 	}
@@ -1507,5 +1595,6 @@ func generateOAuthStateValue() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
+
 	return hex.EncodeToString(buf), nil
 }
