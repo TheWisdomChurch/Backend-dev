@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -150,24 +151,99 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 ============================================================================ */
 
 func (h *AuthHandler) cookieSameSite() http.SameSite {
-	// Cross-site requests from admin/FE -> api.* require SameSite=None + Secure=true
+	// Production auth uses Secure cookies across wisdomchurchhq.org subdomains.
 	if h.secure {
 		return http.SameSiteNoneMode
 	}
+
+	// Local/dev HTTP cannot use SameSite=None because browsers require Secure.
 	return http.SameSiteLaxMode
 }
 
 func (h *AuthHandler) cookieSecure() bool {
-	// SameSite=None requires Secure=true in modern browsers.
-	if h.secure {
-		return true
+	// SameSite=None requires Secure=true.
+	return h.secure
+}
+
+func normalizeConfiguredCookieDomain(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
 	}
-	return false
+
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.Trim(value, " /")
+
+	if slash := strings.Index(value, "/"); slash >= 0 {
+		value = value[:slash]
+	}
+
+	value = strings.TrimSpace(value)
+
+	// Do not set Domain for localhost, IP:port, or host:port.
+	// Browsers reject those and local development will break.
+	if value == "" || value == "localhost" || strings.Contains(value, ":") {
+		return ""
+	}
+
+	if !strings.HasPrefix(value, ".") {
+		value = "." + value
+	}
+
+	return value
+}
+
+func configuredAuthCookieDomain() string {
+	for _, key := range []string{
+		"AUTH_COOKIE_DOMAIN",
+		"SESSION_COOKIE_DOMAIN",
+		"COOKIE_DOMAIN",
+	} {
+		if value := normalizeConfiguredCookieDomain(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func configuredCSRFCookieName() string {
+	name := strings.TrimSpace(os.Getenv("AUTH_CSRF_COOKIE_NAME"))
+	if name == "" {
+		return middleware.DefaultCSRFCookieName
+	}
+	return name
+}
+
+func authCookieClearDomains() []string {
+	domain := configuredAuthCookieDomain()
+	if domain == "" {
+		return []string{""}
+	}
+
+	// Clear old host-only cookies and new parent-domain cookies.
+	return []string{"", domain}
+}
+
+func expireAuthCookie(c *gin.Context, name string, domain string, secure bool, sameSite http.SameSite) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		Domain:   domain,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: sameSite,
+	})
 }
 
 func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe bool) {
 	maxAge := 0
 	expires := time.Time{}
+
 	idleTTL := h.sessionIdleTimeout
 	activityMaxAge := 0
 	activityExpires := time.Time{}
@@ -175,6 +251,7 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 	if rememberMe {
 		maxAge = int(h.rememberMeTTL / time.Second)
 		expires = time.Now().Add(h.rememberMeTTL)
+
 		idleTTL = h.rememberedSessionIdleTimeout
 		activityMaxAge = int(idleTTL / time.Second)
 		activityExpires = time.Now().Add(idleTTL)
@@ -182,13 +259,16 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 
 	sameSite := h.cookieSameSite()
 	secure := h.cookieSecure()
+	domain := configuredAuthCookieDomain()
 
-	// Domain left empty => host-only cookie (api.wisdomchurchhq.org)
+	// Important:
+	// In production, AUTH_COOKIE_DOMAIN must be ".wisdomchurchhq.org".
+	// This lets admin.wisdomchurchhq.org and api.wisdomchurchhq.org share the same session.
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token,
 		Path:     "/",
-		Domain:   "",
+		Domain:   domain,
 		MaxAge:   maxAge,
 		Expires:  expires,
 		Secure:   secure,
@@ -196,13 +276,13 @@ func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe boo
 		SameSite: sameSite,
 	})
 
-	// Track inactivity (30 minutes)
-	now := time.Now()
+	now := time.Now().UTC()
+
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "last_activity",
-		Value:    now.UTC().Format(time.RFC3339),
+		Value:    now.Format(time.RFC3339),
 		Path:     "/",
-		Domain:   "",
+		Domain:   domain,
 		MaxAge:   activityMaxAge,
 		Expires:  activityExpires,
 		Secure:   secure,
@@ -215,29 +295,13 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 	sameSite := h.cookieSameSite()
 	secure := h.cookieSecure()
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "auth_token",
-		Value:    "",
-		Path:     "/",
-		Domain:   "",
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
+	for _, domain := range authCookieClearDomains() {
+		expireAuthCookie(c, "auth_token", domain, secure, sameSite)
+		expireAuthCookie(c, "last_activity", domain, secure, sameSite)
+		expireAuthCookie(c, configuredCSRFCookieName(), domain, secure, sameSite)
+	}
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "last_activity",
-		Value:    "",
-		Path:     "/",
-		Domain:   "",
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
+	// Compatibility with your existing CSRF middleware helper.
 	middleware.ClearCSRFCookie(c, secure, "")
 }
 
@@ -1158,6 +1222,7 @@ func (h *AuthHandler) setOAuthStateCookie(c *gin.Context, value string) {
 		Name:     "oauth_google_state",
 		Value:    value,
 		Path:     "/",
+		Domain:   configuredAuthCookieDomain(),
 		MaxAge:   int((10 * time.Minute) / time.Second),
 		Expires:  time.Now().Add(10 * time.Minute),
 		Secure:   h.cookieSecure(),
@@ -1167,16 +1232,21 @@ func (h *AuthHandler) setOAuthStateCookie(c *gin.Context, value string) {
 }
 
 func (h *AuthHandler) clearOAuthStateCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     "oauth_google_state",
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		Secure:   h.cookieSecure(),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	secure := h.cookieSecure()
+
+	for _, domain := range authCookieClearDomains() {
+		http.SetCookie(c.Writer, &http.Cookie{
+			Name:     "oauth_google_state",
+			Value:    "",
+			Path:     "/",
+			Domain:   domain,
+			MaxAge:   -1,
+			Expires:  time.Unix(0, 0),
+			Secure:   secure,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 func (h *AuthHandler) readOAuthState(c *gin.Context) (*googleOAuthState, error) {
