@@ -99,6 +99,7 @@ type formService struct {
 	testimonialSvc TestimonialService
 	sender         EmailSender
 	branding       email.Branding
+	uploader       AssetUploader
 
 	publicBaseURL   string
 	tplStore        *email.TemplateStore
@@ -117,6 +118,7 @@ func NewFormService(
 	testimonialSvc TestimonialService,
 	sender EmailSender,
 	branding email.Branding,
+	uploader AssetUploader,
 	publicBaseURL string,
 ) FormService {
 	var tplStore *email.TemplateStore
@@ -145,6 +147,7 @@ func NewFormService(
 		testimonialSvc:  testimonialSvc,
 		sender:          sender,
 		branding:        branding,
+		uploader:        uploader,
 		publicBaseURL:   strings.TrimRight(strings.TrimSpace(publicBaseURL), "/"),
 		tplStore:        tplStore,
 		templateTimeout: templateTimeout,
