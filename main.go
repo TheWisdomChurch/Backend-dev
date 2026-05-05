@@ -882,9 +882,12 @@ func setupRouter(
 
 	// Members admin
 	admin.GET("/members", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.List)
+	admin.GET("/members/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Stats)
 	admin.POST("/members", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Create)
 	admin.PUT("/members/:id", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Update)
 	admin.DELETE("/members/:id", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Delete)
+	admin.GET("/new-members/dashboard", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.NewMemberDashboard)
+	admin.GET("/new-members/submissions", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.ListNewMemberSubmissions)
 	admin.GET("/members/birthdays/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdayStats)
 	admin.GET("/members/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysToday)
@@ -921,6 +924,7 @@ func setupRouter(
 	superAdmin.POST("/workforce/:id/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Approve)
 	superAdmin.POST("/leadership/:id/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Approve)
 	superAdmin.POST("/leadership/:id/decline", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Decline)
+	superAdmin.POST("/leadership/:id/delete/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.ApproveDelete)
 	superAdmin.PATCH("/testimonials/:id/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Approve)
@@ -1160,8 +1164,8 @@ func main() {
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
-	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService, emailSender, branding)
-	memberService := service.NewMemberService(memberRepo, eventRepo, emailSender, branding)
+	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService, approvalService, emailSender, branding)
+	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	formService := service.NewFormService(
@@ -1235,7 +1239,7 @@ func main() {
 		emailTemplateRepo,
 		branding,
 	)
-	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader)
+	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader, userRepo)
 	memberHandler := handlers.NewMemberHandler(memberService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)

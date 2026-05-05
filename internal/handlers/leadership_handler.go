@@ -9,7 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
@@ -18,13 +20,30 @@ import (
 type LeadershipHandler struct {
 	svc      service.LeadershipService
 	uploader service.AssetUploader
+	userRepo repository.UserRepository
 }
 
-func NewLeadershipHandler(svc service.LeadershipService, uploader service.AssetUploader) *LeadershipHandler {
+func NewLeadershipHandler(svc service.LeadershipService, uploader service.AssetUploader, userRepo repository.UserRepository) *LeadershipHandler {
 	return &LeadershipHandler{
 		svc:      svc,
 		uploader: uploader,
+		userRepo: userRepo,
 	}
+}
+
+func (h *LeadershipHandler) currentUser(c *gin.Context) *models.User {
+	if h.userRepo == nil {
+		return nil
+	}
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return nil
+	}
+	user, err := h.userRepo.FindByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
 }
 
 // Public: list approved leadership members
@@ -215,13 +234,27 @@ func (h *LeadershipHandler) Decline(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Leadership request declined", member)
 }
 
-// Admin: delete leadership member
+// Admin: request leadership deletion. Super admin approval performs the actual delete.
 func (h *LeadershipHandler) Delete(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id", "leadership member id")
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(id); err != nil {
+	req, err := h.svc.RequestDelete(id, h.currentUser(c))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusAccepted, "Leadership delete request sent for super admin approval", req)
+}
+
+// Super-admin: approve leadership deletion
+func (h *LeadershipHandler) ApproveDelete(c *gin.Context) {
+	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	if !ok {
+		return
+	}
+	if err := h.svc.ApproveDelete(id, h.currentUser(c)); err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
