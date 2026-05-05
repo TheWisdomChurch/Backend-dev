@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+
+	"gorm.io/datatypes"
 )
 
 type LeadershipService interface {
@@ -37,6 +40,7 @@ type LeadershipService interface {
 
 type leadershipService struct {
 	repo        repository.LeadershipRepository
+	formRepo    repository.FormRepository
 	notifySvc   AdminNotificationService
 	approvalSvc ApprovalService
 	sender      EmailSender
@@ -45,6 +49,7 @@ type leadershipService struct {
 
 func NewLeadershipService(
 	repo repository.LeadershipRepository,
+	formRepo repository.FormRepository,
 	notifySvc AdminNotificationService,
 	approvalSvc ApprovalService,
 	sender EmailSender,
@@ -52,6 +57,7 @@ func NewLeadershipService(
 ) LeadershipService {
 	return &leadershipService{
 		repo:        repo,
+		formRepo:    formRepo,
 		notifySvc:   notifySvc,
 		approvalSvc: approvalSvc,
 		sender:      sender,
@@ -60,6 +66,7 @@ func NewLeadershipService(
 }
 
 func (s *leadershipService) List(page, limit int, role, status string) ([]models.LeadershipMember, int64, error) {
+	s.syncLeadershipIntakeSubmissions()
 	if page < 1 {
 		page = 1
 	}
@@ -71,6 +78,7 @@ func (s *leadershipService) List(page, limit int, role, status string) ([]models
 }
 
 func (s *leadershipService) ListApproved(role string) ([]models.LeadershipMember, error) {
+	s.syncLeadershipIntakeSubmissions()
 	return s.repo.ListApproved(role)
 }
 
@@ -501,6 +509,52 @@ func (s *leadershipService) createWithStatus(
 		return nil, err
 	}
 	return member, nil
+}
+
+func (s *leadershipService) syncLeadershipIntakeSubmissions() {
+	if s.formRepo == nil {
+		return
+	}
+
+	submissions, err := s.formRepo.ListLeadershipIntakeSubmissions(500)
+	if err != nil {
+		return
+	}
+
+	for _, submission := range submissions {
+		values, err := datatypesJSONToMap(submission.Values)
+		if err != nil {
+			continue
+		}
+		req, err := buildLeadershipRequest(values)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(req.Phone) == "" && submission.ContactNumber != nil {
+			req.Phone = strings.TrimSpace(*submission.ContactNumber)
+		}
+		if strings.TrimSpace(req.Email) == "" && submission.Email != nil {
+			req.Email = strings.TrimSpace(*submission.Email)
+		}
+		if strings.TrimSpace(req.Email) == "" {
+			continue
+		}
+		if _, err := s.repo.GetByEmail(req.Email); err == nil {
+			continue
+		}
+		_, _ = s.Apply(req)
+	}
+}
+
+func datatypesJSONToMap(raw datatypes.JSON) (map[string]any, error) {
+	out := map[string]any{}
+	if len(raw) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *leadershipService) notifyNewApplication(member *models.LeadershipMember) {
