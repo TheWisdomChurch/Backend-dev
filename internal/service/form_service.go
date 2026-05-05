@@ -36,8 +36,8 @@ var slugDashCollapseRe = regexp.MustCompile(`-+`)
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 var phoneRe = regexp.MustCompile(`^\+[1-9]\d{7,14}$`)
-var ddDashRe = regexp.MustCompile(`^(\d{2})-(\d{2})$`)
-var ddSlashRe = regexp.MustCompile(`^(\d{2})/(\d{2})$`)
+var ddDashRe = regexp.MustCompile(`^(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?$`)
+var ddSlashRe = regexp.MustCompile(`^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$`)
 var templateKeyRe = regexp.MustCompile(`^[A-Za-z0-9/_-]+$`)
 var dataImageRe = regexp.MustCompile(`^data:image\/(?:png|jpe?g|webp);base64,`)
 var ErrFormExpired = errors.New("form expired")
@@ -2886,8 +2886,8 @@ func normalizePublicFormDateValue(value string) (string, error) {
 		return "", errors.New("date is empty")
 	}
 
-	// Preferred user-facing format (no year): DD-MM.
-	if m := ddDashRe.FindStringSubmatch(val); len(m) == 3 {
+	// Preferred user-facing format: DD-MM or DD-MM-YYYY.
+	if m := ddDashRe.FindStringSubmatch(val); len(m) >= 3 {
 		day, _ := strconv.Atoi(m[1])
 		month, _ := strconv.Atoi(m[2])
 		if month < 1 || month > 12 {
@@ -2900,8 +2900,8 @@ func normalizePublicFormDateValue(value string) (string, error) {
 		return fmt.Sprintf("%02d-%02d", day, month), nil
 	}
 
-	// Backward-compatible: DD/MM.
-	if m := ddSlashRe.FindStringSubmatch(val); len(m) == 3 {
+	// Backward-compatible: DD/MM or DD/MM/YYYY.
+	if m := ddSlashRe.FindStringSubmatch(val); len(m) >= 3 {
 		day, _ := strconv.Atoi(m[1])
 		month, _ := strconv.Atoi(m[2])
 		if month < 1 || month > 12 {

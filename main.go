@@ -1166,7 +1166,7 @@ func main() {
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
-	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService, approvalService, emailSender, branding)
+	leadershipService := service.NewLeadershipService(leadershipRepo, formRepo, adminNotificationService, approvalService, emailSender, branding)
 	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
