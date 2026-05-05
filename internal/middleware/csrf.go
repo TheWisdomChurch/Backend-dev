@@ -60,10 +60,16 @@ func NewCSRFProtector(opts CSRFOptions) *CSRFProtector {
 }
 
 func (p *CSRFProtector) CookieName() string {
+	if p == nil {
+		return DefaultCSRFCookieName
+	}
 	return p.cookieName
 }
 
 func (p *CSRFProtector) HeaderName() string {
+	if p == nil {
+		return DefaultCSRFHeaderName
+	}
 	return p.headerName
 }
 
@@ -77,6 +83,7 @@ func (p *CSRFProtector) Middleware() gin.HandlerFunc {
 		token, err := p.EnsureToken(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"status":     "error",
 				"error":      "Forbidden",
 				"message":    "CSRF protection is not available",
 				"statusCode": http.StatusForbidden,
@@ -96,6 +103,7 @@ func (p *CSRFProtector) Middleware() gin.HandlerFunc {
 		presented := strings.TrimSpace(c.GetHeader(p.headerName))
 		if presented == "" || subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"status":     "error",
 				"error":      "Forbidden",
 				"message":    "Invalid or missing CSRF token",
 				"statusCode": http.StatusForbidden,
@@ -112,7 +120,7 @@ func (p *CSRFProtector) EnsureToken(c *gin.Context) (string, error) {
 		return "", http.ErrNoCookie
 	}
 
-	secret, err := c.Cookie(p.cookieName)
+	secret, err := LatestCookieValue(c.Request, p.cookieName)
 	if err != nil || strings.TrimSpace(secret) == "" {
 		secret, err = generateCSRFSecret()
 		if err != nil {
@@ -126,10 +134,12 @@ func (p *CSRFProtector) EnsureToken(c *gin.Context) (string, error) {
 
 func (p *CSRFProtector) setCSRFCookie(c *gin.Context, secret string) {
 	expires := time.Now().UTC().Add(p.cookieTTL)
+
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     p.cookieName,
-		Value:    secret,
+		Value:    strings.TrimSpace(secret),
 		Path:     "/",
+		Domain:   configuredSessionCookieDomain(),
 		MaxAge:   int(p.cookieTTL / time.Second),
 		Expires:  expires,
 		Secure:   p.secure,
@@ -140,7 +150,7 @@ func (p *CSRFProtector) setCSRFCookie(c *gin.Context, secret string) {
 
 func (p *CSRFProtector) sign(secret string) string {
 	mac := hmac.New(sha256.New, p.secretKey)
-	_, _ = mac.Write([]byte(secret))
+	_, _ = mac.Write([]byte(strings.TrimSpace(secret)))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
@@ -150,16 +160,24 @@ func ClearCSRFCookie(c *gin.Context, secure bool, cookieName string) {
 		name = DefaultCSRFCookieName
 	}
 
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSiteForEnv(secure),
-	})
+	sameSite := sameSiteForEnv(secure)
+	paths := []string{"/", "/api", "/api/v1", "/api/v1/auth"}
+
+	for _, domain := range sessionCookieClearDomains() {
+		for _, cookiePath := range paths {
+			http.SetCookie(c.Writer, &http.Cookie{
+				Name:     name,
+				Value:    "",
+				Path:     cookiePath,
+				Domain:   domain,
+				MaxAge:   -1,
+				Expires:  time.Unix(0, 0),
+				Secure:   secure,
+				HttpOnly: true,
+				SameSite: sameSite,
+			})
+		}
+	}
 }
 
 func generateCSRFSecret() (string, error) {
