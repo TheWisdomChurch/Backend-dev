@@ -19,6 +19,8 @@ type WorkforceService interface {
 	RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
+	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	ApproveDelete(id string, approver *models.User) error
 	Stats() (*models.WorkforceStatsResponse, error)
 
 	// Birthday scheduler helpers
@@ -29,13 +31,27 @@ type WorkforceService interface {
 }
 
 type workforceService struct {
-	repo     repository.WorkforceRepository
-	sender   EmailSender
-	branding email.Branding
+	repo        repository.WorkforceRepository
+	notifySvc   AdminNotificationService
+	approvalSvc ApprovalService
+	sender      EmailSender
+	branding    email.Branding
 }
 
-func NewWorkforceService(repo repository.WorkforceRepository, sender EmailSender, branding email.Branding) WorkforceService {
-	return &workforceService{repo: repo, sender: sender, branding: branding}
+func NewWorkforceService(
+	repo repository.WorkforceRepository,
+	notifySvc AdminNotificationService,
+	approvalSvc ApprovalService,
+	sender EmailSender,
+	branding email.Branding,
+) WorkforceService {
+	return &workforceService{
+		repo:        repo,
+		notifySvc:   notifySvc,
+		approvalSvc: approvalSvc,
+		sender:      sender,
+		branding:    branding,
+	}
 }
 
 func (s *workforceService) List(page, limit int, department, status string) ([]models.WorkforceMember, int64, error) {
@@ -280,7 +296,133 @@ func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
 	return updated, nil
 }
 
+func (s *workforceService) RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+	if s.approvalSvc == nil {
+		return nil, errors.New("approval service not configured")
+	}
+
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	label := workforceMemberName(member)
+	if label == "" {
+		label = id
+	}
+
+	var requestedByID, requestedByName, requestedByEmail *string
+	if requestedBy != nil {
+		requestedByID = &requestedBy.ID
+		name := strings.TrimSpace(strings.Join([]string{requestedBy.FirstName, requestedBy.LastName}, " "))
+		if name != "" {
+			requestedByName = &name
+		}
+		if strings.TrimSpace(requestedBy.Email) != "" {
+			email := strings.TrimSpace(requestedBy.Email)
+			requestedByEmail = &email
+		}
+	}
+
+	req, err := s.approvalSvc.CreateRequest(CreateApprovalRequest{
+		Type:             models.ApprovalTypeWorkforceDelete,
+		EntityID:         &member.ID,
+		EntityLabel:      &label,
+		RequestedByID:    requestedByID,
+		RequestedByName:  requestedByName,
+		RequestedByEmail: requestedByEmail,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.notifyWorkforceDeleteRequest(member, req)
+	return req, nil
+}
+
+func (s *workforceService) ApproveDelete(id string, approver *models.User) error {
+	if s.approvalSvc == nil {
+		return errors.New("approval service not configured")
+	}
+
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return err
+	}
+	req, err := s.approvalSvc.CompleteRequest(
+		models.ApprovalTypeWorkforceDelete,
+		id,
+		models.ApprovalStatusApproved,
+		approver,
+	)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.Delete(id); err != nil {
+		return err
+	}
+	s.notifyWorkforceDeleteApproved(member, req)
+	return nil
+}
+
 // normalizeBirthday validates optional month/day (1-12, 1-31). Returns nil pointers when absent.
+
+func workforceMemberName(member *models.WorkforceMember) string {
+	if member == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+}
+
+func (s *workforceService) notifyWorkforceDeleteRequest(member *models.WorkforceMember, req *models.ApprovalRequest) {
+	if s.notifySvc == nil || member == nil || req == nil {
+		return
+	}
+	fullName := workforceMemberName(member)
+	if fullName == "" {
+		fullName = "Workforce profile"
+	}
+	title := "Workforce delete approval required"
+	message := fmt.Sprintf("%s was marked for deletion from %s. Super admin approval is required before removal.", fullName, member.Department)
+	entityType := "workforce_delete"
+	entityID := member.ID
+	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "workforce_delete_request",
+		Title:      title,
+		Message:    message,
+		TicketCode: &req.TicketCode,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"super_admin"},
+	})
+}
+
+func (s *workforceService) notifyWorkforceDeleteApproved(member *models.WorkforceMember, req *models.ApprovalRequest) {
+	if s.notifySvc == nil || member == nil {
+		return
+	}
+	fullName := workforceMemberName(member)
+	if fullName == "" {
+		fullName = "Workforce profile"
+	}
+	title := "Workforce delete approved"
+	message := fmt.Sprintf("%s has been approved and removed from workforce records.", fullName)
+	entityType := "workforce_delete"
+	entityID := member.ID
+	var ticket *string
+	if req != nil {
+		ticket = &req.TicketCode
+	}
+	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "workforce_delete_approved",
+		Title:      title,
+		Message:    message,
+		TicketCode: ticket,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"admin"},
+	})
+}
 
 func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 	addr := ""
