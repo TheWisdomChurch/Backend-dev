@@ -14,10 +14,10 @@ type FormSubmission struct {
 	FormID string `gorm:"type:uuid;not null;index" json:"formId"`
 
 	// Common denormalized fields for quick analytics
-	Name           *string `gorm:"size:255" json:"name,omitempty"`
-	Email          *string `gorm:"size:255" json:"email,omitempty"`
-	ContactNumber  *string `gorm:"size:100" json:"contactNumber,omitempty"`
-	ContactAddress *string `gorm:"size:500" json:"contactAddress,omitempty"`
+	Name             *string `gorm:"size:255" json:"name,omitempty"`
+	Email            *string `gorm:"size:255" json:"email,omitempty"`
+	ContactNumber    *string `gorm:"size:100" json:"contactNumber,omitempty"`
+	ContactAddress   *string `gorm:"size:500" json:"contactAddress,omitempty"`
 	RegistrationCode *string `gorm:"size:40" json:"registrationCode,omitempty"`
 
 	// Values: {"fullName":"...", "agree":true, ...}
@@ -34,16 +34,16 @@ func (FormSubmission) TableName() string {
 
 // FormSubmissionWithForm is used for admin stats/list endpoints to return form title alongside submission.
 type FormSubmissionWithForm struct {
-	ID             string         `json:"id"`
-	FormID         string         `json:"formId"`
-	FormTitle      string         `json:"formTitle"`
-	Name           *string        `json:"name,omitempty"`
-	Email          *string        `json:"email,omitempty"`
-	ContactNumber  *string        `json:"contactNumber,omitempty"`
-	ContactAddress *string        `json:"contactAddress,omitempty"`
-	RegistrationCode *string      `json:"registrationCode,omitempty"`
-	Values         datatypes.JSON `json:"values"`
-	CreatedAt      time.Time      `json:"createdAt"`
+	ID               string         `json:"id"`
+	FormID           string         `json:"formId"`
+	FormTitle        string         `json:"formTitle"`
+	Name             *string        `json:"name,omitempty"`
+	Email            *string        `json:"email,omitempty"`
+	ContactNumber    *string        `json:"contactNumber,omitempty"`
+	ContactAddress   *string        `json:"contactAddress,omitempty"`
+	RegistrationCode *string        `json:"registrationCode,omitempty"`
+	Values           datatypes.JSON `json:"values"`
+	CreatedAt        time.Time      `json:"createdAt"`
 }
 
 type FormSubmissionCount struct {

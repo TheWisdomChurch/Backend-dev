@@ -64,4 +64,3 @@ func SessionFreshnessMiddleware(userRepo repository.UserRepository) gin.HandlerF
 		c.Next()
 	}
 }
-
