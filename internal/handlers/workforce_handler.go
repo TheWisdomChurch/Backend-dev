@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/email"
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
@@ -22,6 +23,7 @@ import (
 type WorkforceHandler struct {
 	svc       service.WorkforceService
 	notifySvc service.AdminNotificationService
+	userRepo  repository.UserRepository
 	sender    service.EmailSender
 	tplRepo   repository.EmailTemplateRepository
 	branding  email.Branding
@@ -30,6 +32,7 @@ type WorkforceHandler struct {
 func NewWorkforceHandler(
 	svc service.WorkforceService,
 	notifySvc service.AdminNotificationService,
+	userRepo repository.UserRepository,
 	sender service.EmailSender,
 	tplRepo repository.EmailTemplateRepository,
 	branding email.Branding,
@@ -37,10 +40,26 @@ func NewWorkforceHandler(
 	return &WorkforceHandler{
 		svc:       svc,
 		notifySvc: notifySvc,
+		userRepo:  userRepo,
 		sender:    sender,
 		tplRepo:   tplRepo,
 		branding:  branding,
 	}
+}
+
+func (h *WorkforceHandler) currentUser(c *gin.Context) *models.User {
+	if h.userRepo == nil {
+		return nil
+	}
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return nil
+	}
+	user, err := h.userRepo.FindByID(userID)
+	if err != nil {
+		return nil
+	}
+	return user
 }
 
 func (h *WorkforceHandler) List(c *gin.Context) {
@@ -192,6 +211,35 @@ func (h *WorkforceHandler) Approve(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Workforce request approved", member)
+}
+
+func (h *WorkforceHandler) Delete(c *gin.Context) {
+	id, ok := parseUUIDParam(c, "id", "workforce member id")
+	if !ok {
+		return
+	}
+
+	req, err := h.svc.RequestDelete(id, h.currentUser(c))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusAccepted, "Workforce delete request sent for super admin approval", req)
+}
+
+func (h *WorkforceHandler) ApproveDelete(c *gin.Context) {
+	id, ok := parseUUIDParam(c, "id", "workforce member id")
+	if !ok {
+		return
+	}
+
+	if err := h.svc.ApproveDelete(id, h.currentUser(c)); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Workforce profile deleted", nil)
 }
 
 func (h *WorkforceHandler) Stats(c *gin.Context) {

@@ -10,6 +10,7 @@ const (
 	ApprovalTypeEvent            ApprovalRequestType = "event"
 	ApprovalTypeAdminUser        ApprovalRequestType = "admin_user"
 	ApprovalTypeLeadershipDelete ApprovalRequestType = "leadership_delete"
+	ApprovalTypeWorkforceDelete  ApprovalRequestType = "workforce_delete"
 )
 
 const (

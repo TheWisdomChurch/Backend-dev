@@ -874,6 +874,7 @@ func setupRouter(
 	admin.GET("/workforce", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.List)
 	admin.POST("/workforce", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Create)
 	admin.PUT("/workforce/:id", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Update)
+	admin.DELETE("/workforce/:id", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Delete)
 	admin.GET("/workforce/stats", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Stats)
 	admin.GET("/workforce/birthdays/stats", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.BirthdayStats)
 	admin.GET("/workforce/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.BirthdaysByMonth)
@@ -922,6 +923,7 @@ func setupRouter(
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/users/:id/approve", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ApproveUser)
 	superAdmin.POST("/workforce/:id/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Approve)
+	superAdmin.POST("/workforce/:id/delete/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.ApproveDelete)
 	superAdmin.POST("/leadership/:id/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Approve)
 	superAdmin.POST("/leadership/:id/decline", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Decline)
 	superAdmin.POST("/leadership/:id/delete/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.ApproveDelete)
@@ -1163,7 +1165,7 @@ func main() {
 	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, emailSender, branding)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
-	workforceService := service.NewWorkforceService(workforceRepo, emailSender, branding)
+	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
 	leadershipService := service.NewLeadershipService(leadershipRepo, adminNotificationService, approvalService, emailSender, branding)
 	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding)
 
@@ -1235,6 +1237,7 @@ func main() {
 	workforceHandler := handlers.NewWorkforceHandler(
 		workforceService,
 		adminNotificationService,
+		userRepo,
 		emailSender,
 		emailTemplateRepo,
 		branding,
