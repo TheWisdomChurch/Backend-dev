@@ -10,6 +10,7 @@ type WorkforceRepository interface {
 	GetByID(id string) (*models.WorkforceMember, error)
 	Create(member *models.WorkforceMember) error
 	Update(id string, updates map[string]interface{}) (*models.WorkforceMember, error)
+	Delete(id string) error
 	Stats() (*models.WorkforceStatsResponse, error)
 
 	// Birthday helpers
@@ -73,6 +74,10 @@ func (r *workforceRepository) Update(id string, updates map[string]interface{}) 
 		return nil, err
 	}
 	return &member, nil
+}
+
+func (r *workforceRepository) Delete(id string) error {
+	return r.db.DB.Delete(&models.WorkforceMember{}, "id = ?", id).Error
 }
 
 func (r *workforceRepository) Stats() (*models.WorkforceStatsResponse, error) {
