@@ -21,7 +21,7 @@ var (
 )
 
 func parseBirthday(monthPtr, dayPtr *int, birthdayStr *string) (*int, *int, error) {
-	return parseDayMonth(monthPtr, dayPtr, birthdayStr, "birthday", dayMonthNoYear)
+	return parseDayMonth(monthPtr, dayPtr, birthdayStr, "birthday", dayMonthAllowYear)
 }
 
 func parseAnniversary(monthPtr, dayPtr *int, anniversaryStr *string) (*int, *int, error) {
