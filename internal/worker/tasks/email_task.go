@@ -8,48 +8,48 @@ import (
 )
 
 type Sender interface {
-    SendHTML(to, subject, body string) error
+	SendHTML(to, subject, body string) error
 }
 
 type EmailTask struct {
-    To      string
-    Subject string
-    Body    string
-    Retries int
-    sender  Sender
+	To      string
+	Subject string
+	Body    string
+	Retries int
+	sender  Sender
 }
 
 func NewEmailTask(sender Sender, to, subject, body string) *EmailTask {
-    return &EmailTask{
-        To:      to,
-        Subject: subject,
-        Body:    body,
-        Retries: 3, // Default retry count
-        sender:  sender,
-    }
+	return &EmailTask{
+		To:      to,
+		Subject: subject,
+		Body:    body,
+		Retries: 3, // Default retry count
+		sender:  sender,
+	}
 }
 
 func (t *EmailTask) Execute() error {
-    return t.sender.SendHTML(t.To, t.Subject, t.Body)
+	return t.sender.SendHTML(t.To, t.Subject, t.Body)
 }
 
 func (t *EmailTask) Name() string {
-    return fmt.Sprintf("email_task_%s_%d", t.To, time.Now().Unix())
+	return fmt.Sprintf("email_task_%s_%d", t.To, time.Now().Unix())
 }
 
 func (t *EmailTask) RetryCount() int {
-    return t.Retries
+	return t.Retries
 }
 
 // WelcomeEmailTask specific implementation
 type WelcomeEmailTask struct {
-    EmailTask
-    Name string
+	EmailTask
+	Name string
 }
 
 func NewWelcomeEmailTask(sender *email.Sender, to, name string) *WelcomeEmailTask {
-    subject := "Welcome to Wisdom House Church!"
-    body := fmt.Sprintf(`
+	subject := "Welcome to Wisdom House Church!"
+	body := fmt.Sprintf(`
     <!DOCTYPE html>
     <html>
     <body style="font-family: Arial, sans-serif; line-height: 1.6;">
@@ -60,9 +60,9 @@ func NewWelcomeEmailTask(sender *email.Sender, to, name string) *WelcomeEmailTas
         <p>Blessings,<br>The Wisdom House Team</p>
     </body>
     </html>`, name)
-    
-    return &WelcomeEmailTask{
-        EmailTask: *NewEmailTask(sender, to, subject, body),
-        Name:      name,
-    }
+
+	return &WelcomeEmailTask{
+		EmailTask: *NewEmailTask(sender, to, subject, body),
+		Name:      name,
+	}
 }
