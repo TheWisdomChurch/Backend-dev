@@ -981,7 +981,7 @@ func main() {
 		logger.Printf("⚠️ Storage uploader not initialized: %v", err)
 	} else if uploader != nil {
 		assetUploader = uploader
-		logger.Println("✅ Storage uploader initialized (S3-compatible)")
+		logger.Printf("✅ Storage uploader initialized (%s)", uploader.StorageSummary())
 	}
 
 	// Database
@@ -1176,6 +1176,7 @@ func main() {
 		testimonialService,
 		emailSender,
 		branding,
+		assetUploader,
 		publicBaseURL,
 	)
 
