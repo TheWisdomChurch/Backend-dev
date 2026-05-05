@@ -14,6 +14,9 @@ import (
 
 type MemberService interface {
 	List(page, limit int, active *bool) ([]models.Member, int64, error)
+	Stats() (*models.MemberStatsResponse, error)
+	NewMemberDashboard(now time.Time) (*models.NewMemberDashboardResponse, error)
+	ListNewMemberSubmissions(page, limit int, start, end *time.Time) ([]models.NewMemberSubmission, int64, error)
 	Create(req *models.CreateMemberRequest) (*models.Member, error)
 	Update(id string, req *models.UpdateMemberRequest) (*models.Member, error)
 	Delete(id string) error
@@ -27,13 +30,27 @@ type MemberService interface {
 
 type memberService struct {
 	repo      repository.MemberRepository
+	formRepo  repository.FormRepository
 	eventRepo *repository.EventRepository
 	sender    EmailSender
 	branding  email.Branding
 }
 
-func NewMemberService(repo repository.MemberRepository, eventRepo *repository.EventRepository, sender EmailSender, branding email.Branding) MemberService {
-	return &memberService{repo: repo, eventRepo: eventRepo, sender: sender, branding: branding}
+func NewMemberService(repo repository.MemberRepository, formRepo repository.FormRepository, eventRepo *repository.EventRepository, sender EmailSender, branding email.Branding) MemberService {
+	return &memberService{repo: repo, formRepo: formRepo, eventRepo: eventRepo, sender: sender, branding: branding}
+}
+
+func startOfWeek(t time.Time) time.Time {
+	t = t.UTC()
+	start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	offset := (int(start.Weekday()) + 6) % 7
+	return start.AddDate(0, 0, -offset)
+}
+
+func startOfQuarter(t time.Time) time.Time {
+	t = t.UTC()
+	quarterMonth := time.Month(((int(t.Month())-1)/3)*3 + 1)
+	return time.Date(t.Year(), quarterMonth, 1, 0, 0, 0, 0, time.UTC)
 }
 
 func (s *memberService) List(page, limit int, active *bool) ([]models.Member, int64, error) {
@@ -45,6 +62,101 @@ func (s *memberService) List(page, limit int, active *bool) ([]models.Member, in
 	}
 	offset := (page - 1) * limit
 	return s.repo.List(offset, limit, active)
+}
+
+func (s *memberService) Stats() (*models.MemberStatsResponse, error) {
+	return s.repo.Stats()
+}
+
+func (s *memberService) NewMemberDashboard(now time.Time) (*models.NewMemberDashboardResponse, error) {
+	if s.formRepo == nil {
+		return nil, errors.New("form repository not configured")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	weekStart := startOfWeek(now)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	quarterStart := startOfQuarter(now)
+	yearStart := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	weekHistoryStart := now.AddDate(0, 0, -7*11)
+	monthHistoryStart := now.AddDate(0, -11, 0)
+	quarterHistoryStart := now.AddDate(0, -9, 0)
+	yearHistoryStart := now.AddDate(-4, 0, 0)
+
+	forms, err := s.formRepo.ListNewMemberForms()
+	if err != nil {
+		return nil, err
+	}
+	recent, _, err := s.formRepo.ListNewMemberSubmissions(0, 12, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.formRepo.CountNewMemberSubmissions(nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	thisWeek, err := s.formRepo.CountNewMemberSubmissions(&weekStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	thisMonth, err := s.formRepo.CountNewMemberSubmissions(&monthStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	thisQuarter, err := s.formRepo.CountNewMemberSubmissions(&quarterStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	thisYear, err := s.formRepo.CountNewMemberSubmissions(&yearStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	weekly, err := s.formRepo.CountNewMemberSubmissionsByPeriod("week", &weekHistoryStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	monthly, err := s.formRepo.CountNewMemberSubmissionsByPeriod("month", &monthHistoryStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	quarterly, err := s.formRepo.CountNewMemberSubmissionsByPeriod("quarter", &quarterHistoryStart, nil)
+	if err != nil {
+		return nil, err
+	}
+	yearly, err := s.formRepo.CountNewMemberSubmissionsByPeriod("year", &yearHistoryStart, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.NewMemberDashboardResponse{
+		TotalSubmissions: total,
+		ThisWeek:         thisWeek,
+		ThisMonth:        thisMonth,
+		ThisQuarter:      thisQuarter,
+		ThisYear:         thisYear,
+		Forms:            forms,
+		Recent:           recent,
+		WeeklyGrowth:     weekly,
+		MonthlyGrowth:    monthly,
+		QuarterlyGrowth:  quarterly,
+		YearlyGrowth:     yearly,
+	}, nil
+}
+
+func (s *memberService) ListNewMemberSubmissions(page, limit int, start, end *time.Time) ([]models.NewMemberSubmission, int64, error) {
+	if s.formRepo == nil {
+		return nil, 0, errors.New("form repository not configured")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 500 {
+		limit = 25
+	}
+	offset := (page - 1) * limit
+	return s.formRepo.ListNewMemberSubmissions(offset, limit, start, end)
 }
 
 func (s *memberService) Create(req *models.CreateMemberRequest) (*models.Member, error) {
