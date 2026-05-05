@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"wisdomHouse-backend/internal/models"
@@ -16,28 +15,6 @@ import (
 const maxEmbeddedSubmissionMediaBytes = 50 * 1024 * 1024 // 50MB safety limit
 
 var submissionDataURLRe = regexp.MustCompile(`(?i)^data:([^;,]+);base64,`)
-
-var (
-	submissionUploaderOnce sync.Once
-	submissionUploader     AssetUploader
-	submissionUploaderErr  error
-)
-
-func getSubmissionUploaderFromEnv() (AssetUploader, error) {
-	submissionUploaderOnce.Do(func() {
-		submissionUploader, submissionUploaderErr = NewS3UploaderFromEnv()
-	})
-
-	if submissionUploaderErr != nil {
-		return nil, submissionUploaderErr
-	}
-
-	if submissionUploader == nil {
-		return nil, fmt.Errorf("storage uploader not configured")
-	}
-
-	return submissionUploader, nil
-}
 
 func (s *formService) materializeSubmissionMedia(form *models.Form, values map[string]any) (map[string]any, error) {
 	if values == nil {
@@ -117,9 +94,8 @@ func (s *formService) materializeSubmissionMediaValue(form *models.Form, key str
 }
 
 func (s *formService) uploadSubmissionDataURL(form *models.Form, fieldKey string, dataURL string) (string, error) {
-	uploader, err := getSubmissionUploaderFromEnv()
-	if err != nil {
-		return "", fmt.Errorf("cannot upload media field %q: %w", fieldKey, err)
+	if s.uploader == nil {
+		return "", fmt.Errorf("cannot upload media field %q: storage uploader not configured", fieldKey)
 	}
 
 	dataURL = strings.TrimSpace(dataURL)
@@ -169,7 +145,7 @@ func (s *formService) uploadSubmissionDataURL(form *models.Form, fieldKey string
 
 	folder := buildSubmissionMediaFolder(form, contentType)
 
-	objectKey, err := uploader.BuildGenericAssetKey(folder, ext)
+	objectKey, err := s.uploader.BuildGenericAssetKey(folder, ext)
 	if err != nil {
 		return "", fmt.Errorf("failed to build storage object key for field %q: %w", fieldKey, err)
 	}
@@ -177,7 +153,7 @@ func (s *formService) uploadSubmissionDataURL(form *models.Form, fieldKey string
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	publicURL, err := uploader.Upload(ctx, objectKey, contentType, bytes.NewReader(decoded))
+	publicURL, err := s.uploader.Upload(ctx, objectKey, contentType, bytes.NewReader(decoded))
 	if err != nil {
 		return "", fmt.Errorf("failed to upload media field %q to storage: %w", fieldKey, err)
 	}
