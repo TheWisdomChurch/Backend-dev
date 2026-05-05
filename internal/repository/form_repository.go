@@ -2,6 +2,7 @@
 package repository
 
 import (
+	"fmt"
 	"time"
 
 	"wisdomHouse-backend/internal/database"
@@ -37,6 +38,10 @@ type FormRepository interface {
 	CountSubmissionsByForm(start, end *time.Time) ([]models.FormSubmissionCount, error)
 	CountSubmissionsFiltered(formID string, start, end *time.Time) (int64, error)
 	CountSubmissionsByDay(formID string, start, end *time.Time) ([]models.FormSubmissionDailyCount, error)
+	ListNewMemberForms() ([]models.NewMemberFormSummary, error)
+	ListNewMemberSubmissions(offset, limit int, start, end *time.Time) ([]models.NewMemberSubmission, int64, error)
+	CountNewMemberSubmissions(start, end *time.Time) (int64, error)
+	CountNewMemberSubmissionsByPeriod(period string, start, end *time.Time) ([]models.GrowthBucket, error)
 	DeleteExpired(now time.Time) (int64, error)
 }
 
@@ -293,6 +298,28 @@ func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *g
 	return q
 }
 
+func applyNewMemberFormFilter(q *gorm.DB) *gorm.DB {
+	return q.Where(`(
+		LOWER(COALESCE(forms.settings->>'submissionTarget', '')) IN ('member', 'membership', 'new_member', 'new_members')
+		OR LOWER(COALESCE(forms.settings->>'formType', '')) = 'membership'
+		OR LOWER(COALESCE(forms.slug, '')) IN ('add-new-member', 'new-member', 'new-members', 'membership')
+		OR LOWER(forms.title) LIKE '%new member%'
+		OR LOWER(forms.title) LIKE '%membership%'
+	)`)
+}
+
+func applyNewMemberSubmissionFilters(q *gorm.DB, start, end *time.Time) *gorm.DB {
+	q = q.Joins("JOIN forms ON forms.id = form_submissions.form_id")
+	q = applyNewMemberFormFilter(q)
+	if start != nil {
+		q = q.Where("form_submissions.created_at >= ?", *start)
+	}
+	if end != nil {
+		q = q.Where("form_submissions.created_at <= ?", *end)
+	}
+	return q
+}
+
 func (r *formRepository) ListSubmissions(formID string, offset, limit int, start, end *time.Time) ([]models.FormSubmission, int64, error) {
 	var items []models.FormSubmission
 	var total int64
@@ -369,4 +396,85 @@ func (r *formRepository) CountSubmissionsFiltered(formID string, start, end *tim
 	var count int64
 	err := q.Count(&count).Error
 	return count, err
+}
+
+func (r *formRepository) ListNewMemberForms() ([]models.NewMemberFormSummary, error) {
+	var items []models.NewMemberFormSummary
+
+	err := applyNewMemberFormFilter(r.db.DB.Model(&models.Form{})).
+		Select(`forms.id as form_id,
+			forms.title as form_title,
+			forms.slug,
+			forms.is_published,
+			COUNT(form_submissions.id) as submission_count,
+			MAX(form_submissions.created_at) as last_submission_at`).
+		Joins("LEFT JOIN form_submissions ON form_submissions.form_id = forms.id AND form_submissions.deleted_at IS NULL").
+		Where("forms.deleted_at IS NULL").
+		Group("forms.id, forms.title, forms.slug, forms.is_published").
+		Order("last_submission_at DESC NULLS LAST, forms.updated_at DESC").
+		Scan(&items).Error
+
+	return items, err
+}
+
+func (r *formRepository) ListNewMemberSubmissions(offset, limit int, start, end *time.Time) ([]models.NewMemberSubmission, int64, error) {
+	var items []models.NewMemberSubmission
+	var total int64
+
+	base := applyNewMemberSubmissionFilters(r.db.DB.Model(&models.FormSubmission{}), start, end).
+		Where("form_submissions.deleted_at IS NULL")
+
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := base.Select(`form_submissions.id,
+		form_submissions.form_id,
+		forms.title as form_title,
+		form_submissions.name,
+		form_submissions.email,
+		form_submissions.contact_number,
+		form_submissions.contact_address,
+		form_submissions.registration_code,
+		form_submissions.values,
+		form_submissions.created_at`).
+		Order("form_submissions.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&items).Error
+
+	return items, total, err
+}
+
+func (r *formRepository) CountNewMemberSubmissions(start, end *time.Time) (int64, error) {
+	q := applyNewMemberSubmissionFilters(r.db.DB.Model(&models.FormSubmission{}), start, end).
+		Where("form_submissions.deleted_at IS NULL")
+	var count int64
+	err := q.Count(&count).Error
+	return count, err
+}
+
+func (r *formRepository) CountNewMemberSubmissionsByPeriod(period string, start, end *time.Time) ([]models.GrowthBucket, error) {
+	var rows []models.GrowthBucket
+	trunc := "month"
+	switch period {
+	case "week", "quarter", "year":
+		trunc = period
+	}
+	bucketExpr := fmt.Sprintf("date_trunc('%s', form_submissions.created_at)", trunc)
+
+	q := applyNewMemberSubmissionFilters(
+		r.db.DB.Model(&models.FormSubmission{}).
+			Select("to_char("+bucketExpr+", 'YYYY-MM-DD') as period, COUNT(*) as count").
+			Where("form_submissions.deleted_at IS NULL"),
+		start,
+		end,
+	)
+
+	if err := q.Group(bucketExpr).
+		Order(bucketExpr + " ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

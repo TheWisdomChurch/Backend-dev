@@ -6,9 +6,10 @@ type ApprovalRequestType string
 type ApprovalRequestStatus string
 
 const (
-	ApprovalTypeTestimonial ApprovalRequestType = "testimonial"
-	ApprovalTypeEvent       ApprovalRequestType = "event"
-	ApprovalTypeAdminUser   ApprovalRequestType = "admin_user"
+	ApprovalTypeTestimonial      ApprovalRequestType = "testimonial"
+	ApprovalTypeEvent            ApprovalRequestType = "event"
+	ApprovalTypeAdminUser        ApprovalRequestType = "admin_user"
+	ApprovalTypeLeadershipDelete ApprovalRequestType = "leadership_delete"
 )
 
 const (

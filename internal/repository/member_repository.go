@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"fmt"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 )
@@ -16,6 +17,7 @@ type MemberRepository interface {
 	BirthdayCountsByMonth(activeOnly bool) (map[int]int64, int64, error)
 	ListByMonth(month int, activeOnly bool) ([]models.Member, error)
 	ListByMonthDay(month, day int, activeOnly bool) ([]models.Member, error)
+	Stats() (*models.MemberStatsResponse, error)
 }
 
 type memberRepository struct {
@@ -135,4 +137,50 @@ func (r *memberRepository) ListByMonthDay(month, day int, activeOnly bool) ([]mo
 	}
 	err := q.Order("last_name ASC").Find(&items).Error
 	return items, err
+}
+
+func (r *memberRepository) Stats() (*models.MemberStatsResponse, error) {
+	var total int64
+	if err := r.db.DB.Model(&models.Member{}).Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var active int64
+	if err := r.db.DB.Model(&models.Member{}).Where("is_active = true").Count(&active).Error; err != nil {
+		return nil, err
+	}
+
+	monthly, err := r.countCreatedByPeriod("month")
+	if err != nil {
+		return nil, err
+	}
+	yearly, err := r.countCreatedByPeriod("year")
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.MemberStatsResponse{
+		Total:         total,
+		Active:        active,
+		Inactive:      total - active,
+		MonthlyGrowth: monthly,
+		YearlyGrowth:  yearly,
+	}, nil
+}
+
+func (r *memberRepository) countCreatedByPeriod(period string) ([]models.GrowthBucket, error) {
+	switch period {
+	case "month", "year":
+	default:
+		period = "month"
+	}
+	bucketExpr := fmt.Sprintf("date_trunc('%s', created_at)", period)
+
+	var rows []models.GrowthBucket
+	err := r.db.DB.Model(&models.Member{}).
+		Select("to_char(" + bucketExpr + ", 'YYYY-MM-DD') as period, COUNT(*) as count").
+		Group(bucketExpr).
+		Order(bucketExpr + " ASC").
+		Scan(&rows).Error
+	return rows, err
 }
