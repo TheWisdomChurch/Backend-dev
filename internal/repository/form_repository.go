@@ -302,7 +302,7 @@ func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *g
 func applyNewMemberFormFilter(q *gorm.DB) *gorm.DB {
 	return q.Where(`(
 		LOWER(COALESCE(forms.slug, '')) = 'add-new-member'
-		OR regexp_replace(LOWER(COALESCE(forms.title, '')), '[^a-z0-9]+', ' ', 'g') = 'add new member'
+		OR trim(regexp_replace(LOWER(COALESCE(forms.title, '')), '[^a-z0-9]+', ' ', 'g')) = 'add new member'
 		OR LOWER(COALESCE(forms.settings->>'newMemberSource', '')) = 'add-new-member'
 	)`)
 }

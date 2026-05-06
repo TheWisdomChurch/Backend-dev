@@ -19,6 +19,14 @@ func (r *ApprovalRequestRepository) Create(req *models.ApprovalRequest) error {
 	return r.db.Create(req).Error
 }
 
+func (r *ApprovalRequestRepository) FindByID(id string) (*models.ApprovalRequest, error) {
+	var item models.ApprovalRequest
+	if err := r.db.First(&item, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *ApprovalRequestRepository) Update(req *models.ApprovalRequest) error {
 	return r.db.Save(req).Error
 }
