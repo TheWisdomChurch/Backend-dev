@@ -11,7 +11,9 @@ import (
 
 type ApprovalService interface {
 	CreateRequest(input CreateApprovalRequest) (*models.ApprovalRequest, error)
+	GetRequest(id string) (*models.ApprovalRequest, error)
 	CompleteRequest(t models.ApprovalRequestType, entityID string, status models.ApprovalRequestStatus, approver *models.User) (*models.ApprovalRequest, error)
+	CompleteRequestByID(id string, status models.ApprovalRequestStatus, approver *models.User) (*models.ApprovalRequest, error)
 	ListRequests(types []models.ApprovalRequestType, statuses []models.ApprovalRequestStatus, start, end *time.Time, limit int) ([]models.ApprovalRequest, error)
 }
 
@@ -58,6 +60,22 @@ func (s *approvalService) CreateRequest(input CreateApprovalRequest) (*models.Ap
 	return req, nil
 }
 
+func (s *approvalService) GetRequest(id string) (*models.ApprovalRequest, error) {
+	return s.repo.FindByID(id)
+}
+
+func (s *approvalService) CompleteRequestByID(
+	id string,
+	status models.ApprovalRequestStatus,
+	approver *models.User,
+) (*models.ApprovalRequest, error) {
+	req, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	return s.complete(req, status, approver)
+}
+
 func (s *approvalService) CompleteRequest(
 	t models.ApprovalRequestType,
 	entityID string,
@@ -68,7 +86,14 @@ func (s *approvalService) CompleteRequest(
 	if err != nil {
 		return nil, err
 	}
+	return s.complete(req, status, approver)
+}
 
+func (s *approvalService) complete(
+	req *models.ApprovalRequest,
+	status models.ApprovalRequestStatus,
+	approver *models.User,
+) (*models.ApprovalRequest, error) {
 	now := time.Now().UTC()
 	req.Status = status
 	if approver != nil {
