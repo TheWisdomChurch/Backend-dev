@@ -273,7 +273,18 @@ func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
 	}
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
-		return nil, err
+		if s.approvalSvc == nil {
+			return nil, err
+		}
+		req, reqErr := s.approvalSvc.GetRequest(id)
+		if reqErr != nil || req == nil || req.Type != models.ApprovalTypeAdminUser || req.EntityID == nil {
+			return nil, err
+		}
+		user, err = s.userRepo.FindByID(*req.EntityID)
+		if err != nil {
+			_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusDeleted, nil)
+			return nil, errors.New("admin account no longer exists")
+		}
 	}
 	if user.Role != "admin" {
 		return nil, nil
