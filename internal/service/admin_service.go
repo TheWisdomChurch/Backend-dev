@@ -475,18 +475,18 @@ func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"generatedAt":               time.Now().UTC(),
-		"totalUsers":                totalUsers,
-		"activeUsers":               activeUsers,
-		"adminUsers":                adminUsers,
-		"superAdminUsers":           superAdminUsers,
-		"privilegedUsers":           privilegedUsers,
-		"pendingAdminApprovals":     pendingAdminApprovals,
-		"pendingApprovalRequests":   pendingRequests,
-		"totpEnabledUsers":          totpEnabledUsers,
+		"generatedAt":                time.Now().UTC(),
+		"totalUsers":                 totalUsers,
+		"activeUsers":                activeUsers,
+		"adminUsers":                 adminUsers,
+		"superAdminUsers":            superAdminUsers,
+		"privilegedUsers":            privilegedUsers,
+		"pendingAdminApprovals":      pendingAdminApprovals,
+		"pendingApprovalRequests":    pendingRequests,
+		"totpEnabledUsers":           totpEnabledUsers,
 		"privilegedTotpEnabledUsers": privilegedTOTPUsers,
-		"inactivePrivilegedUsers":   inactivePrivilegedUsers,
-		"securityScore":             securityScore,
+		"inactivePrivilegedUsers":    inactivePrivilegedUsers,
+		"securityScore":              securityScore,
 	}, nil
 }
 
