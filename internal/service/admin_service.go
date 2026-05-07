@@ -65,7 +65,6 @@ func (s *adminServiceImpl) ensureAdminApprovalRequest(user *models.User) error {
 		return errors.New("admin approval workflow is not configured")
 	}
 
-	// Avoid duplicate pending tickets for the same admin user.
 	existing, err := s.approvalSvc.ListRequests(
 		[]models.ApprovalRequestType{models.ApprovalTypeAdminUser},
 		[]models.ApprovalRequestStatus{models.ApprovalStatusPending},
@@ -81,14 +80,11 @@ func (s *adminServiceImpl) ensureAdminApprovalRequest(user *models.User) error {
 		}
 	}
 
-	if _, err := requestAdminApproval(s.approvalSvc, s.notifySvc, user); err != nil {
-		return err
-	}
-
-	return nil
+	_, err = requestAdminApproval(s.approvalSvc, s.notifySvc, user)
+	return err
 }
 
-func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role string) (interface{}, error) {
+func (s *adminServiceImpl) CreateUser(firstName, lastName, emailAddr, password, role string) (interface{}, error) {
 	if s.userRepo == nil {
 		return nil, errors.New("user repository not configured")
 	}
@@ -100,7 +96,7 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role
 
 	firstName = strings.TrimSpace(firstName)
 	lastName = strings.TrimSpace(lastName)
-	emailNorm := normalizeEmail(email)
+	emailNorm := normalizeEmail(emailAddr)
 	password = strings.TrimSpace(password)
 
 	if firstName == "" || lastName == "" || emailNorm == "" || password == "" {
@@ -153,35 +149,43 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, email, password, role
 	return sanitizeAdminUser(user), nil
 }
 
-func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
+func (s *adminServiceImpl) findAdminUserOrRequest(id string) (*models.User, *models.ApprovalRequest, error) {
 	if s.userRepo == nil {
-		return nil, errors.New("user repository not configured")
+		return nil, nil, errors.New("user repository not configured")
 	}
 
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return nil, errors.New("user id or approval request id is required")
+		return nil, nil, errors.New("user id or approval request id is required")
 	}
 
-	var req *models.ApprovalRequest
-
 	user, err := s.userRepo.FindByID(id)
+	if err == nil && user != nil {
+		return user, nil, nil
+	}
+
+	if s.approvalSvc == nil {
+		return nil, nil, errors.New("admin approval workflow is not configured")
+	}
+
+	req, reqErr := s.approvalSvc.GetRequest(id)
+	if reqErr != nil || req == nil || req.Type != models.ApprovalTypeAdminUser || req.EntityID == nil {
+		return nil, nil, errors.New("admin approval request not found")
+	}
+
+	user, err = s.userRepo.FindByID(strings.TrimSpace(*req.EntityID))
 	if err != nil || user == nil {
-		if s.approvalSvc == nil {
-			return nil, errors.New("admin account not found")
-		}
+		_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusDeleted, nil)
+		return nil, req, errors.New("admin account no longer exists")
+	}
 
-		foundReq, reqErr := s.approvalSvc.GetRequest(id)
-		if reqErr != nil || foundReq == nil || foundReq.Type != models.ApprovalTypeAdminUser || foundReq.EntityID == nil {
-			return nil, errors.New("admin approval request not found")
-		}
+	return user, req, nil
+}
 
-		req = foundReq
-		user, err = s.userRepo.FindByID(strings.TrimSpace(*foundReq.EntityID))
-		if err != nil || user == nil {
-			_, _ = s.approvalSvc.CompleteRequestByID(foundReq.ID, models.ApprovalStatusDeleted, nil)
-			return nil, errors.New("admin account no longer exists")
-		}
+func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
+	user, req, err := s.findAdminUserOrRequest(id)
+	if err != nil {
+		return nil, err
 	}
 
 	if normalizedAdminRole(user.Role) != "admin" {
@@ -216,6 +220,42 @@ func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
 	return sanitizeAdminUser(user), nil
 }
 
+func (s *adminServiceImpl) RejectUser(id string, reason string) (interface{}, error) {
+	user, req, err := s.findAdminUserOrRequest(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if normalizedAdminRole(user.Role) != "admin" {
+		return nil, errors.New("only admin accounts can be rejected through this workflow")
+	}
+	if user.AdminApproved && user.IsActive {
+		return nil, errors.New("approved admin accounts cannot be rejected; deactivate or delete the user instead")
+	}
+
+	user.AdminApproved = false
+	user.IsActive = false
+	if strings.TrimSpace(user.PreferredMFAMethod) == "" {
+		user.PreferredMFAMethod = "email_otp"
+	}
+	user.UpdatedAt = time.Now().UTC()
+
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+
+	if s.approvalSvc != nil {
+		if req != nil {
+			_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusRejected, nil)
+		} else {
+			_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusRejected, nil)
+		}
+	}
+
+	sendAdminRejectedEmail(s.sender, s.branding, user, reason)
+	return sanitizeAdminUser(user), nil
+}
+
 func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (interface{}, error) {
 	if s.userRepo == nil {
 		return nil, errors.New("user repository not configured")
@@ -236,34 +276,27 @@ func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (i
 	if v, ok := data["first_name"].(string); ok && strings.TrimSpace(v) != "" {
 		user.FirstName = strings.TrimSpace(v)
 	}
-
 	if v, ok := data["last_name"].(string); ok && strings.TrimSpace(v) != "" {
 		user.LastName = strings.TrimSpace(v)
 	}
-
 	if v, ok := data["email"].(string); ok && strings.TrimSpace(v) != "" {
 		emailNorm := normalizeEmail(v)
 		if emailNorm == "" {
 			return nil, errors.New("invalid email")
 		}
-
 		existing, _ := s.userRepo.FindByEmail(emailNorm)
 		if existing != nil && existing.ID != user.ID {
 			return nil, errors.New("email already in use")
 		}
-
 		user.Email = emailNorm
 	}
-
 	if v, ok := data["role"].(string); ok && strings.TrimSpace(v) != "" {
 		role, err := normalizeRole(v)
 		if err != nil {
 			return nil, err
 		}
-
 		user.Role = role
 	}
-
 	if v, ok := data["password"].(string); ok {
 		password := strings.TrimSpace(v)
 		if password == "" {
@@ -272,12 +305,10 @@ func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (i
 		if len(password) < 8 {
 			return nil, errors.New("password must be at least 8 characters")
 		}
-
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, errors.New("failed to hash password")
 		}
-
 		user.Password = string(hashedPassword)
 	}
 
@@ -286,41 +317,30 @@ func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (i
 	if v, ok := data["admin_approved"].(bool); ok {
 		user.AdminApproved = v
 	}
-
 	if v, ok := data["is_active"].(bool); ok {
 		user.IsActive = v
 	}
 
 	approvalRequestNeeded := false
-
-	// Any promotion into admin must go through super-admin approval.
 	if nextRole == "admin" && oldRole != "admin" {
 		if s.approvalSvc == nil {
 			return nil, errors.New("admin approval workflow is not configured")
 		}
-
 		user.AdminApproved = false
 		user.IsActive = false
 		approvalRequestNeeded = true
 	}
-
-	// Admin account cannot be active while approval is false.
 	if nextRole == "admin" && !user.AdminApproved {
 		user.IsActive = false
 		approvalRequestNeeded = true
 	}
-
-	// Approved admin becomes active.
 	if nextRole == "admin" && user.AdminApproved {
 		user.IsActive = true
 	}
-
-	// Super-admin creation/promotion should only happen through protected super-admin endpoints.
 	if nextRole == "super_admin" {
 		user.AdminApproved = true
 		user.IsActive = true
 	}
-
 	if strings.TrimSpace(user.PreferredMFAMethod) == "" {
 		user.PreferredMFAMethod = "email_otp"
 	}
@@ -364,12 +384,7 @@ func (s *adminServiceImpl) DeleteUser(id string) error {
 
 func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
 	if s.userRepo == nil {
-		return map[string]interface{}{
-			"total_testimonials": 0,
-			"pending_approvals":  0,
-			"total_users":        0,
-			"recent_activity":    []map[string]interface{}{},
-		}, nil
+		return map[string]interface{}{"total_testimonials": 0, "pending_approvals": 0, "total_users": 0, "recent_activity": []map[string]interface{}{}}, nil
 	}
 
 	users, err := s.userRepo.FindAll()
@@ -379,13 +394,7 @@ func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
 
 	pendingRequests := 0
 	if s.approvalSvc != nil {
-		items, listErr := s.approvalSvc.ListRequests(
-			nil,
-			[]models.ApprovalRequestStatus{models.ApprovalStatusPending},
-			nil,
-			nil,
-			500,
-		)
+		items, listErr := s.approvalSvc.ListRequests(nil, []models.ApprovalRequestStatus{models.ApprovalStatusPending}, nil, nil, 500)
 		if listErr == nil {
 			pendingRequests = len(items)
 		}
@@ -409,39 +418,24 @@ func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
 		return nil, err
 	}
 
-	var (
-		totalUsers              int
-		activeUsers             int
-		adminUsers              int
-		superAdminUsers         int
-		privilegedUsers         int
-		pendingAdminApprovals   int
-		totpEnabledUsers        int
-		privilegedTOTPUsers     int
-		inactivePrivilegedUsers int
-	)
+	var totalUsers, activeUsers, adminUsers, superAdminUsers, privilegedUsers, pendingAdminApprovals, totpEnabledUsers, privilegedTOTPUsers, inactivePrivilegedUsers int
 
 	for _, user := range users {
 		totalUsers++
-
 		role := normalizedAdminRole(user.Role)
 		isPrivileged := role == "admin" || role == "super_admin"
-
 		if user.IsActive {
 			activeUsers++
 		}
-
 		if role == "admin" {
 			adminUsers++
 			if !user.AdminApproved || !user.IsActive {
 				pendingAdminApprovals++
 			}
 		}
-
 		if role == "super_admin" {
 			superAdminUsers++
 		}
-
 		if isPrivileged {
 			privilegedUsers++
 			if !user.IsActive {
@@ -451,7 +445,6 @@ func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
 				privilegedTOTPUsers++
 			}
 		}
-
 		if user.TOTPEnabled {
 			totpEnabledUsers++
 		}
@@ -459,13 +452,7 @@ func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
 
 	pendingRequests := 0
 	if s.approvalSvc != nil {
-		items, listErr := s.approvalSvc.ListRequests(
-			nil,
-			[]models.ApprovalRequestStatus{models.ApprovalStatusPending},
-			nil,
-			nil,
-			500,
-		)
+		items, listErr := s.approvalSvc.ListRequests(nil, []models.ApprovalRequestStatus{models.ApprovalStatusPending}, nil, nil, 500)
 		if listErr == nil {
 			pendingRequests = len(items)
 		}
@@ -480,7 +467,6 @@ func (s *adminServiceImpl) GetSecurityOverview() (interface{}, error) {
 		}
 		securityScore = totpScore + approvalScore
 	}
-
 	if securityScore < 0 {
 		securityScore = 0
 	}
@@ -508,7 +494,6 @@ func (s *adminServiceImpl) GetPendingTestimonials() (interface{}, error) {
 	if s.testimonialRepo == nil {
 		return []interface{}{}, nil
 	}
-
 	return s.testimonialRepo.FindByApprovalStatus(false)
 }
 
@@ -516,16 +501,13 @@ func (s *adminServiceImpl) GetAllUsers() (interface{}, error) {
 	if s.userRepo == nil {
 		return []interface{}{}, nil
 	}
-
 	users, err := s.userRepo.FindAll()
 	if err != nil {
 		return nil, err
 	}
-
 	for index := range users {
 		users[index].Password = ""
 	}
-
 	return users, nil
 }
 
@@ -533,16 +515,13 @@ func (s *adminServiceImpl) GetUserByID(userID string) (interface{}, error) {
 	if s.userRepo == nil {
 		return nil, errors.New("user repository not configured")
 	}
-
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, errors.New("user id is required")
 	}
-
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil || user == nil {
 		return nil, errors.New("user not found")
 	}
-
 	return sanitizeAdminUser(user), nil
 }
