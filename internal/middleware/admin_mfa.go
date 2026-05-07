@@ -2,17 +2,18 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/repository"
 )
 
-// RequireAdminMFA enforces that admin/super_admin sessions are protected by TOTP MFA.
-func RequireAdminMFA(userRepo repository.UserRepository) gin.HandlerFunc {
+// RequireApprovedAdmin re-validates elevated sessions against the database.
+// It prevents stale JWT cookies from accessing admin routes after an account is
+// deactivated, demoted, or still awaiting super-admin approval.
+func RequireApprovedAdmin(userRepo repository.UserRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		roleVal, exists := c.Get("role")
+		roleValue, exists := c.Get("role")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"error":      "Unauthorized",
@@ -23,7 +24,7 @@ func RequireAdminMFA(userRepo repository.UserRepository) gin.HandlerFunc {
 			return
 		}
 
-		role, _ := roleVal.(string)
+		role, _ := roleValue.(string)
 		role = normalizeRole(role)
 		if role != "admin" && role != "super_admin" {
 			c.Next()
@@ -52,29 +53,36 @@ func RequireAdminMFA(userRepo repository.UserRepository) gin.HandlerFunc {
 			return
 		}
 
-		if !user.TOTPEnabled {
+		dbRole := normalizeRole(user.Role)
+		if dbRole != "admin" && dbRole != "super_admin" {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":      "Forbidden",
-				"message":    "Admin MFA is required. Enable TOTP to continue.",
-				"code":       "admin_mfa_required",
+				"message":    "This account no longer has admin access. Please log in again.",
+				"code":       "admin_role_required",
 				"statusCode": http.StatusForbidden,
 			})
 			c.Abort()
 			return
 		}
 
-		authMethod := ""
-		if raw, exists := c.Get("auth_method"); exists {
-			if method, ok := raw.(string); ok {
-				authMethod = strings.ToLower(strings.TrimSpace(method))
-			}
+		if dbRole != role {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":      "Forbidden",
+				"message":    "Session role does not match the current account role. Please log in again.",
+				"code":       "session_role_mismatch",
+				"statusCode": http.StatusForbidden,
+			})
+			c.Abort()
+			return
 		}
-		if authMethod != "totp" {
+
+		if !user.IsActive || !user.AdminApproved {
 			c.JSON(http.StatusForbidden, gin.H{
 				"error":          "Forbidden",
-				"message":        "Admin routes require a TOTP-verified session.",
-				"code":           "admin_totp_session_required",
-				"requiredMethod": "totp",
+				"message":        "Your admin account is awaiting super-admin approval.",
+				"code":           "admin_approval_required",
+				"approvalStatus": "pending",
+				"requiredAction": "wait_for_super_admin_approval",
 				"statusCode":     http.StatusForbidden,
 			})
 			c.Abort()

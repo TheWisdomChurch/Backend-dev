@@ -8,11 +8,23 @@ import (
 	"wisdomHouse-backend/internal/models"
 )
 
+func normalizeAdminRoleForApproval(role string) string {
+	cleaned := strings.ToLower(strings.TrimSpace(role))
+	cleaned = strings.ReplaceAll(cleaned, "-", "_")
+	cleaned = strings.ReplaceAll(cleaned, " ", "_")
+	if cleaned == "superadmin" {
+		return "super_admin"
+	}
+	return cleaned
+}
+
 func needsAdminApproval(user *models.User) bool {
 	if user == nil {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(user.Role), "admin") && !user.AdminApproved
+
+	role := normalizeAdminRoleForApproval(user.Role)
+	return (role == "admin" || role == "super_admin") && !user.AdminApproved
 }
 
 func adminDisplayName(user *models.User) string {
@@ -35,34 +47,31 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 	if entityID == "" {
 		return
 	}
+
+	role := normalizeAdminRoleForApproval(user.Role)
+	if role == "" {
+		role = "admin"
+	}
+
 	label := adminDisplayName(user)
 	if label == "" {
 		label = "Admin"
 	}
+	label = fmt.Sprintf("%s access request: %s", role, label)
 
 	requestedByID := entityID
 	requestedByName := adminDisplayName(user)
 	requestedByEmail := strings.TrimSpace(user.Email)
 
 	req, err := approvalSvc.CreateRequest(CreateApprovalRequest{
-		Type:          models.ApprovalTypeAdminUser,
-		EntityID:      &entityID,
-		EntityLabel:   &label,
-		RequestedByID: &requestedByID,
-		RequestedByName: func() *string {
-			if requestedByName == "" {
-				return nil
-			}
-			return &requestedByName
-		}(),
-		RequestedByEmail: func() *string {
-			if requestedByEmail == "" {
-				return nil
-			}
-			return &requestedByEmail
-		}(),
+		Type:             models.ApprovalTypeAdminUser,
+		EntityID:         &entityID,
+		EntityLabel:      &label,
+		RequestedByID:    &requestedByID,
+		RequestedByName:  stringPtrIfNotBlank(requestedByName),
+		RequestedByEmail: stringPtrIfNotBlank(requestedByEmail),
 	})
-	if err != nil {
+	if err != nil || req == nil {
 		return
 	}
 
@@ -77,9 +86,12 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 	if requestedByEmail != "" && requestedByName != "" {
 		details = fmt.Sprintf("%s (%s)", requestedByName, requestedByEmail)
 	}
+	if details == "" {
+		details = "a new admin user"
+	}
 
 	title := "New admin approval request"
-	message := fmt.Sprintf("A new admin account is awaiting approval for %s. Ticket %s.", details, req.TicketCode)
+	message := fmt.Sprintf("A new %s account is awaiting super-admin approval for %s. Ticket %s.", role, details, req.TicketCode)
 	entityType := "admin_user"
 
 	_ = notifySvc.NotifyRoles(AdminNotificationInput{
@@ -91,6 +103,14 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 		EntityID:   &entityID,
 		Roles:      []string{"super_admin"},
 	})
+}
+
+func stringPtrIfNotBlank(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func sendAdminApprovedEmail(sender EmailSender, branding email.Branding, user *models.User) {
