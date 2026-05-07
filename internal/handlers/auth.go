@@ -132,6 +132,103 @@ func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthH
 
 /* ============================================================================
 
+   Role / access helpers
+
+============================================================================ */
+
+func normalizeAccessRole(role string) string {
+	value := strings.ToLower(strings.TrimSpace(role))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	return value
+}
+
+func isAdminAccessRole(role string) bool {
+	switch normalizeAccessRole(role) {
+	case "admin", "super_admin", "superadmin":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSuperAdminAccessRole(role string) bool {
+	switch normalizeAccessRole(role) {
+	case "super_admin", "superadmin":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAccountDeactivatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "deactivated") || strings.Contains(message, "inactive")
+}
+
+func isSafePasswordResetNoopError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, service.ErrUserNotFound) || errors.Is(err, service.ErrAdminPending) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "deactivated") ||
+		strings.Contains(message, "inactive") ||
+		strings.Contains(message, "approval pending") ||
+		strings.Contains(message, "awaiting")
+}
+
+func (h *AuthHandler) writeNoActiveSession(
+	c *gin.Context,
+	message string,
+	accessStatus string,
+	accessCode string,
+	nextStep string,
+) {
+	if strings.TrimSpace(message) == "" {
+		message = "No active session"
+	}
+	if strings.TrimSpace(accessStatus) == "" {
+		accessStatus = "login_required"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": message,
+		"data":    nil,
+		"meta": gin.H{
+			"authenticated": false,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
+		},
+	})
+}
+
+func writeAuthBlockedResponse(c *gin.Context, status int, message string, code string, nextStep string) {
+	if status <= 0 {
+		status = http.StatusForbidden
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "Access blocked"
+	}
+
+	c.JSON(status, gin.H{
+		"status":      "error",
+		"message":     message,
+		"code":        code,
+		"access_code": code,
+		"next_step":   nextStep,
+	})
+}
+
+/* ============================================================================
+
    JWT
 
 ============================================================================ */
@@ -142,6 +239,12 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 	}
 	if user == nil {
 		return "", fmt.Errorf("user is required")
+	}
+	if !user.IsActive {
+		return "", errors.New("account is deactivated")
+	}
+	if isAdminAccessRole(user.Role) && !user.AdminApproved {
+		return "", service.ErrAdminPending
 	}
 
 	now := time.Now().UTC()
@@ -404,7 +507,7 @@ func (h *AuthHandler) loginMetadata(c *gin.Context) service.LoginMetadata {
 	return service.LoginMetadata{
 		IP:        c.ClientIP(),
 		UserAgent: c.Request.UserAgent(),
-		DeviceID: deviceID,
+		DeviceID:  deviceID,
 	}
 }
 
@@ -436,12 +539,16 @@ func deriveAccessStatus(user *models.User, authMethod string) (string, string, s
 		return "login_required", "", ""
 	}
 
-	role := strings.ToLower(strings.TrimSpace(user.Role))
-	role = strings.ReplaceAll(role, "-", "_")
-	role = strings.ReplaceAll(role, " ", "_")
+	role := normalizeAccessRole(user.Role)
 	authMethod = strings.ToLower(strings.TrimSpace(authMethod))
 
-	isAdmin := role == "admin" || role == "super_admin"
+	isAdmin := role == "admin" || role == "super_admin" || role == "superadmin"
+	if !user.IsActive {
+		return "blocked", "account_deactivated", "/login"
+	}
+	if isAdmin && !user.AdminApproved {
+		return "approval_pending", "admin_approval_pending", "/pending-approval"
+	}
 	if !isAdmin {
 		return "ok", "", ""
 	}
@@ -458,6 +565,18 @@ func deriveAccessStatus(user *models.User, authMethod string) (string, string, s
 }
 
 func (h *AuthHandler) issueAuthenticatedSession(c *gin.Context, user *models.User, rememberMe bool, authMethod string) error {
+	if user == nil {
+		return errors.New("user is required")
+	}
+	if !user.IsActive {
+		h.clearAuthCookie(c)
+		return errors.New("account is deactivated")
+	}
+	if isAdminAccessRole(user.Role) && !user.AdminApproved {
+		h.clearAuthCookie(c)
+		return service.ErrAdminPending
+	}
+
 	token, err := h.generateToken(user, rememberMe, authMethod)
 	if err != nil {
 		return err
@@ -499,14 +618,42 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		status := http.StatusUnauthorized
 
 		if errors.Is(err, service.ErrAdminPending) {
-			status = http.StatusForbidden
+			h.clearAuthCookie(c)
+			writeAuthBlockedResponse(
+				c,
+				http.StatusForbidden,
+				"Your admin account is awaiting super-admin approval.",
+				"admin_approval_pending",
+				"/pending-approval",
+			)
+			return
 		} else if errors.Is(err, service.ErrUserNotFound) {
 			status = http.StatusNotFound
 		} else if errors.Is(err, service.ErrWrongPassword) {
 			status = http.StatusUnauthorized
+		} else if isAccountDeactivatedError(err) {
+			h.clearAuthCookie(c)
+			status = http.StatusForbidden
 		}
 
 		utils.ErrorResponse(c, status, err.Error())
+		return
+	}
+
+	if result == nil || result.User == nil {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid login response")
+		return
+	}
+
+	if isAdminAccessRole(result.User.Role) && !result.User.AdminApproved {
+		h.clearAuthCookie(c)
+		writeAuthBlockedResponse(
+			c,
+			http.StatusForbidden,
+			"Your admin account is awaiting super-admin approval.",
+			"admin_approval_pending",
+			"/pending-approval",
+		)
 		return
 	}
 
@@ -531,20 +678,35 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	if err := h.issueAuthenticatedSession(c, result.User, req.RememberMe, result.AuthMethod); err != nil {
+		if errors.Is(err, service.ErrAdminPending) {
+			writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
+
+	accessStatus, accessCode, nextStep := deriveAccessStatus(result.User, result.AuthMethod)
+	responseData := authUserPayload(result.User)
+	responseData["auth_method"] = strings.TrimSpace(result.AuthMethod)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Login successful",
 		"data": gin.H{
-			"user": authUserPayload(result.User),
+			"user": responseData,
+		},
+		"meta": gin.H{
+			"authenticated": true,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
 		},
 	})
 }
 
-// Register creates account but does NOT authenticate or set cookies.
+// Register creates an admin access request only. It never authenticates the user
+// and it never allows public creation of a super-admin account.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
 		FirstName string `json:"first_name" binding:"required,min=2,max=50"`
@@ -563,14 +725,33 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	req.LastName = validation.NormalizeString(req.LastName)
 	req.Password = strings.TrimSpace(req.Password)
 
-	userData, err := h.service.Register(req.FirstName, req.LastName, req.Email, req.Password, req.Role)
+	role := normalizeAccessRole(req.Role)
+	if role == "super_admin" || role == "superadmin" {
+		h.clearAuthCookie(c)
+		writeAuthBlockedResponse(
+			c,
+			http.StatusForbidden,
+			"Super-admin accounts cannot be created from public registration. Create or promote super-admins only through a trusted server-side process.",
+			"super_admin_registration_blocked",
+			"",
+		)
+		return
+	}
+	if role != "admin" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Only admin access requests can be created from this endpoint")
+		return
+	}
+
+	userData, err := h.service.Register(req.FirstName, req.LastName, req.Email, req.Password, role)
 	if err != nil {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	user, ok := userData.(*models.User)
 	if !ok || user == nil {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user data")
 		return
 	}
@@ -578,11 +759,28 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// Safety: ensure registration never leaves the user authenticated.
 	h.clearAuthCookie(c)
 
-	c.JSON(http.StatusCreated, gin.H{
+	statusCode := http.StatusCreated
+	message := "Registration successful. Please log in."
+	accessStatus, accessCode, nextStep := deriveAccessStatus(user, "")
+	if isAdminAccessRole(user.Role) && !user.AdminApproved {
+		statusCode = http.StatusAccepted
+		message = "Admin access request submitted. A super-admin must approve this account before login."
+		accessStatus = "approval_pending"
+		accessCode = "admin_approval_pending"
+		nextStep = "/pending-approval"
+	}
+
+	c.JSON(statusCode, gin.H{
 		"status":  "success",
-		"message": "Registration successful. Please log in.",
+		"message": message,
 		"data": gin.H{
 			"user": authUserPayload(user),
+		},
+		"meta": gin.H{
+			"authenticated": false,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
 		},
 	})
 }
@@ -590,40 +788,31 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "success",
-			"message": "No active session",
-			"data":    nil,
-			"meta": gin.H{
-				"authenticated": false,
-				"access_status": "login_required",
-			},
-		})
+		h.writeNoActiveSession(c, "No active session", "login_required", "", "")
 		return
 	}
 
 	id, ok := userID.(string)
-	if !ok || id == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "success",
-			"message": "No active session",
-			"data":    nil,
-			"meta": gin.H{
-				"authenticated": false,
-				"access_status": "login_required",
-			},
-		})
+	if !ok || strings.TrimSpace(id) == "" {
+		h.clearAuthCookie(c)
+		h.writeNoActiveSession(c, "Invalid session", "login_required", "invalid_session", "/login")
 		return
 	}
 
 	userData, err := h.service.GetUserByID(id)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "User not found")
+		h.clearAuthCookie(c)
+		if isAccountDeactivatedError(err) {
+			h.writeNoActiveSession(c, "Account is deactivated", "blocked", "account_deactivated", "/login")
+			return
+		}
+		h.writeNoActiveSession(c, "User not found", "login_required", "session_user_not_found", "/login")
 		return
 	}
 
 	user, ok := userData.(*models.User)
 	if !ok || user == nil {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user data")
 		return
 	}
@@ -636,6 +825,12 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	}
 
 	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
+	if accessCode == "admin_approval_pending" || accessCode == "account_deactivated" {
+		h.clearAuthCookie(c)
+		h.writeNoActiveSession(c, "Session blocked", accessStatus, accessCode, nextStep)
+		return
+	}
+
 	responseData := authUserPayload(user)
 	responseData["auth_method"] = strings.TrimSpace(authMethod)
 
@@ -794,19 +989,22 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	}
 
 	id, ok := userID.(string)
-	if !ok || id == "" {
+	if !ok || strings.TrimSpace(id) == "" {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusUnauthorized, "Invalid session")
 		return
 	}
 
 	userData, err := h.service.GetUserByID(id)
 	if err != nil {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusNotFound, "User not found")
 		return
 	}
 
 	user, ok := userData.(*models.User)
 	if !ok || user == nil {
+		h.clearAuthCookie(c)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user data")
 		return
 	}
@@ -820,16 +1018,33 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 			authMethod = strings.TrimSpace(method)
 		}
 	}
-	if authMethod == "" {
+
+	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
+	if accessCode == "admin_approval_pending" || accessCode == "account_deactivated" {
+		h.clearAuthCookie(c)
+		writeAuthBlockedResponse(c, http.StatusForbidden, "Session is no longer permitted.", accessCode, nextStep)
+		return
+	}
+
+	// Never downgrade a TOTP-verified admin session to a generic refresh method.
+	// If the auth method is missing for an admin, force the user through login/MFA again.
+	if isAdminAccessRole(user.Role) && accessStatus != "ok" {
+		utils.ErrorResponse(c, http.StatusForbidden, accessCode)
+		return
+	}
+	if strings.TrimSpace(authMethod) == "" {
 		authMethod = "session_refresh"
 	}
 
 	if err := h.issueAuthenticatedSession(c, user, remembered, authMethod); err != nil {
+		if errors.Is(err, service.ErrAdminPending) {
+			writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
 
-	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
 	responseData := authUserPayload(user)
 	responseData["auth_method"] = strings.TrimSpace(authMethod)
 
@@ -907,10 +1122,10 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 
 	req.Email = validation.NormalizeEmail(req.Email)
 
-	// Do NOT leak if the user exists. For ErrUserNotFound we still return 200.
-	resp, err := h.service.RequestPasswordReset(req.Email, "")
+	// Do NOT leak if the user exists, is pending approval, or is inactive.
+	_, err := h.service.RequestPasswordReset(req.Email, "")
 	if err != nil {
-		if errors.Is(err, service.ErrUserNotFound) {
+		if isSafePasswordResetNoopError(err) {
 			utils.SuccessResponse(c, http.StatusOK,
 				"If an account exists for that email, a password reset email has been sent.",
 				nil,
@@ -924,7 +1139,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Password reset email sent", resp)
+	utils.SuccessResponse(c, http.StatusOK, "If an account exists for that email, a password reset email has been sent.", nil)
 }
 
 func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
@@ -983,16 +1198,40 @@ func (h *AuthHandler) VerifyLoginOTP(c *gin.Context) {
 		return
 	}
 
+	if user == nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid verification response")
+		return
+	}
+	if isAdminAccessRole(user.Role) && !user.AdminApproved {
+		h.clearAuthCookie(c)
+		writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
+		return
+	}
+
 	if err := h.issueAuthenticatedSession(c, user, req.RememberMe, authMethod); err != nil {
+		if errors.Is(err, service.ErrAdminPending) {
+			writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
+
+	accessStatus, accessCode, nextStep := deriveAccessStatus(user, authMethod)
+	responseData := authUserPayload(user)
+	responseData["auth_method"] = strings.TrimSpace(authMethod)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Login verified",
 		"data": gin.H{
-			"user": authUserPayload(user),
+			"user": responseData,
+		},
+		"meta": gin.H{
+			"authenticated": true,
+			"access_status": accessStatus,
+			"access_code":   accessCode,
+			"next_step":     nextStep,
 		},
 	})
 }
@@ -1015,7 +1254,9 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 		if errors.Is(err, service.ErrUserNotFound) {
 			status = http.StatusNotFound
 		} else if errors.Is(err, service.ErrAdminPending) {
-			status = http.StatusForbidden
+			h.clearAuthCookie(c)
+			writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
+			return
 		}
 
 		utils.ErrorResponse(c, status, err.Error())
@@ -1288,7 +1529,19 @@ func (h *AuthHandler) HandleGoogleOAuthCallback(c *gin.Context) {
 		if errors.Is(err, service.ErrAdminPending) {
 			status = http.StatusForbidden
 		}
+		h.clearAuthCookie(c)
 		h.renderOAuthError(c, status, err.Error())
+		return
+	}
+
+	if result == nil || result.User == nil {
+		h.clearAuthCookie(c)
+		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in did not return a valid user")
+		return
+	}
+	if isAdminAccessRole(result.User.Role) && !result.User.AdminApproved {
+		h.clearAuthCookie(c)
+		h.renderOAuthError(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.")
 		return
 	}
 
@@ -1298,6 +1551,11 @@ func (h *AuthHandler) HandleGoogleOAuthCallback(c *gin.Context) {
 	}
 
 	if err := h.issueAuthenticatedSession(c, result.User, state.RememberMe, result.AuthMethod); err != nil {
+		h.clearAuthCookie(c)
+		if errors.Is(err, service.ErrAdminPending) {
+			h.renderOAuthError(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.")
+			return
+		}
 		h.renderOAuthError(c, http.StatusInternalServerError, "Failed to create sign-in session")
 		return
 	}
