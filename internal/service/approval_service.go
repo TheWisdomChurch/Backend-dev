@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,28 @@ func NewApprovalService(repo *repository.ApprovalRequestRepository, seq *reposit
 }
 
 func (s *approvalService) CreateRequest(input CreateApprovalRequest) (*models.ApprovalRequest, error) {
+	if s == nil || s.repo == nil || s.sequenceRepo == nil {
+		return nil, errors.New("approval service is not configured")
+	}
+	if strings.TrimSpace(string(input.Type)) == "" {
+		return nil, errors.New("approval request type is required")
+	}
+
+	entityID := ""
+	if input.EntityID != nil {
+		entityID = strings.TrimSpace(*input.EntityID)
+	}
+
+	// Keep approval requests idempotent for the same pending entity.
+	// This prevents duplicate super-admin tickets if registration is retried.
+	if entityID != "" {
+		if existing, err := s.repo.FindByEntity(input.Type, entityID); err == nil && existing != nil {
+			if existing.Status == models.ApprovalStatusPending {
+				return existing, nil
+			}
+		}
+	}
+
 	prefix := s.ticketPrefix(input.Type, time.Now().UTC())
 	seq, err := s.sequenceRepo.Next(prefix)
 	if err != nil {
@@ -61,6 +84,13 @@ func (s *approvalService) CreateRequest(input CreateApprovalRequest) (*models.Ap
 }
 
 func (s *approvalService) GetRequest(id string) (*models.ApprovalRequest, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("approval repository is not configured")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("approval request id is required")
+	}
 	return s.repo.FindByID(id)
 }
 
@@ -69,6 +99,13 @@ func (s *approvalService) CompleteRequestByID(
 	status models.ApprovalRequestStatus,
 	approver *models.User,
 ) (*models.ApprovalRequest, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("approval repository is not configured")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("approval request id is required")
+	}
 	req, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -82,6 +119,13 @@ func (s *approvalService) CompleteRequest(
 	status models.ApprovalRequestStatus,
 	approver *models.User,
 ) (*models.ApprovalRequest, error) {
+	if s == nil || s.repo == nil {
+		return nil, errors.New("approval repository is not configured")
+	}
+	entityID = strings.TrimSpace(entityID)
+	if entityID == "" {
+		return nil, errors.New("approval entity id is required")
+	}
 	req, err := s.repo.FindByEntity(t, entityID)
 	if err != nil {
 		return nil, err
@@ -94,6 +138,13 @@ func (s *approvalService) complete(
 	status models.ApprovalRequestStatus,
 	approver *models.User,
 ) (*models.ApprovalRequest, error) {
+	if req == nil {
+		return nil, errors.New("approval request not found")
+	}
+	if status == "" {
+		return nil, errors.New("approval status is required")
+	}
+
 	now := time.Now().UTC()
 	req.Status = status
 	if approver != nil {
@@ -102,8 +153,8 @@ func (s *approvalService) complete(
 		if name != "" {
 			req.ApprovedByName = &name
 		}
-		if approver.Email != "" {
-			email := approver.Email
+		if strings.TrimSpace(approver.Email) != "" {
+			email := strings.TrimSpace(approver.Email)
 			req.ApprovedByEmail = &email
 		}
 	}
@@ -121,6 +172,12 @@ func (s *approvalService) ListRequests(
 	start, end *time.Time,
 	limit int,
 ) ([]models.ApprovalRequest, error) {
+	if s == nil || s.repo == nil {
+		return []models.ApprovalRequest{}, nil
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
 	return s.repo.List(types, statuses, start, end, limit)
 }
 
