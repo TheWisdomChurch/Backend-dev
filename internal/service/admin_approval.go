@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,23 +9,14 @@ import (
 	"wisdomHouse-backend/internal/models"
 )
 
-func normalizeAdminRoleForApproval(role string) string {
-	cleaned := strings.ToLower(strings.TrimSpace(role))
-	cleaned = strings.ReplaceAll(cleaned, "-", "_")
-	cleaned = strings.ReplaceAll(cleaned, " ", "_")
-	if cleaned == "superadmin" {
-		return "super_admin"
-	}
-	return cleaned
-}
-
 func needsAdminApproval(user *models.User) bool {
 	if user == nil {
 		return false
 	}
-
-	role := normalizeAdminRoleForApproval(user.Role)
-	return (role == "admin" || role == "super_admin") && !user.AdminApproved
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	role = strings.ReplaceAll(role, "-", "_")
+	role = strings.ReplaceAll(role, " ", "_")
+	return role == "admin" && !user.AdminApproved
 }
 
 func adminDisplayName(user *models.User) string {
@@ -38,45 +30,52 @@ func adminDisplayName(user *models.User) string {
 	return strings.TrimSpace(user.Email)
 }
 
-func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificationService, user *models.User) {
-	if approvalSvc == nil || !needsAdminApproval(user) {
-		return
+func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificationService, user *models.User) (*models.ApprovalRequest, error) {
+	if !needsAdminApproval(user) {
+		return nil, nil
+	}
+	if approvalSvc == nil {
+		return nil, errors.New("admin approval service is not configured")
 	}
 
 	entityID := strings.TrimSpace(user.ID)
 	if entityID == "" {
-		return
-	}
-
-	role := normalizeAdminRoleForApproval(user.Role)
-	if role == "" {
-		role = "admin"
+		return nil, errors.New("admin user id is required for approval request")
 	}
 
 	label := adminDisplayName(user)
 	if label == "" {
 		label = "Admin"
 	}
-	label = fmt.Sprintf("%s access request: %s", role, label)
 
 	requestedByID := entityID
 	requestedByName := adminDisplayName(user)
 	requestedByEmail := strings.TrimSpace(user.Email)
 
 	req, err := approvalSvc.CreateRequest(CreateApprovalRequest{
-		Type:             models.ApprovalTypeAdminUser,
-		EntityID:         &entityID,
-		EntityLabel:      &label,
-		RequestedByID:    &requestedByID,
-		RequestedByName:  stringPtrIfNotBlank(requestedByName),
-		RequestedByEmail: stringPtrIfNotBlank(requestedByEmail),
+		Type:          models.ApprovalTypeAdminUser,
+		EntityID:      &entityID,
+		EntityLabel:   &label,
+		RequestedByID: &requestedByID,
+		RequestedByName: func() *string {
+			if requestedByName == "" {
+				return nil
+			}
+			return &requestedByName
+		}(),
+		RequestedByEmail: func() *string {
+			if requestedByEmail == "" {
+				return nil
+			}
+			return &requestedByEmail
+		}(),
 	})
-	if err != nil || req == nil {
-		return
+	if err != nil {
+		return nil, err
 	}
 
 	if notifySvc == nil {
-		return
+		return req, nil
 	}
 
 	details := requestedByName
@@ -86,12 +85,12 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 	if requestedByEmail != "" && requestedByName != "" {
 		details = fmt.Sprintf("%s (%s)", requestedByName, requestedByEmail)
 	}
-	if details == "" {
-		details = "a new admin user"
+	if strings.TrimSpace(details) == "" {
+		details = "a new admin account"
 	}
 
 	title := "New admin approval request"
-	message := fmt.Sprintf("A new %s account is awaiting super-admin approval for %s. Ticket %s.", role, details, req.TicketCode)
+	message := fmt.Sprintf("A new admin account is awaiting super-admin approval for %s. Ticket %s.", details, req.TicketCode)
 	entityType := "admin_user"
 
 	_ = notifySvc.NotifyRoles(AdminNotificationInput{
@@ -103,14 +102,8 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 		EntityID:   &entityID,
 		Roles:      []string{"super_admin"},
 	})
-}
 
-func stringPtrIfNotBlank(value string) *string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	return &trimmed
+	return req, nil
 }
 
 func sendAdminApprovedEmail(sender EmailSender, branding email.Branding, user *models.User) {
