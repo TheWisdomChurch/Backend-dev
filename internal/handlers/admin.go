@@ -115,7 +115,11 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Invalid user data")
 		return
 	}
-	utils.SuccessResponse(c, http.StatusCreated, "User created", presentAdminUser(*created, isSuperAdmin(c)))
+	message := "User created"
+	if normalizeRole(created.Role) == "admin" && (!created.AdminApproved || !created.IsActive) {
+		message = "Admin access request submitted for super-admin approval"
+	}
+	utils.SuccessResponse(c, http.StatusCreated, message, presentAdminUser(*created, isSuperAdmin(c)))
 }
 
 type updateUserRequest struct {
@@ -274,6 +278,32 @@ func (h *AdminHandler) ApproveUser(c *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "User approved", presentAdminUser(*approved, isSuperAdmin(c)))
+}
+
+type rejectUserRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (h *AdminHandler) RejectUser(c *gin.Context) {
+	id, ok := userIDParam(c)
+	if !ok {
+		return
+	}
+
+	var req rejectUserRequest
+	_ = c.ShouldBindJSON(&req)
+
+	user, err := h.svc.RejectUser(id, req.Reason)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	rejected, ok := user.(*models.User)
+	if !ok || rejected == nil {
+		utils.SuccessResponse(c, http.StatusOK, "User rejected", user)
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "User rejected", presentAdminUser(*rejected, isSuperAdmin(c)))
 }
 
 type adminUserResponse struct {
