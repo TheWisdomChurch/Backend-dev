@@ -16,6 +16,7 @@ const (
 const (
 	ApprovalStatusPending  ApprovalRequestStatus = "pending"
 	ApprovalStatusApproved ApprovalRequestStatus = "approved"
+	ApprovalStatusRejected ApprovalRequestStatus = "rejected"
 	ApprovalStatusDeleted  ApprovalRequestStatus = "deleted"
 )
 
