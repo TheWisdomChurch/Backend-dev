@@ -930,43 +930,45 @@ func setupRouter(
 	superAdmin.PATCH("/testimonials/:id/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Approve)
-	
+
+	admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), func(c *gin.Context) {
+		page, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
+		if err != nil || page < 1 {
+			page = 1
+		}
+
+		limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "50")))
+		if err != nil || limit < 1 {
+			limit = 50
+		}
+		if limit > 200 {
+			limit = 200
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "success",
+			"message":    "Audit logs are not configured yet",
+			"data":       []gin.H{},
+			"items":      []gin.H{},
+			"records":    []gin.H{},
+			"total":      0,
+			"page":       page,
+			"limit":      limit,
+			"totalPages": 0,
+			"meta": gin.H{
+				"page":        page,
+				"limit":       limit,
+				"total_items": 0,
+				"total_pages": 0,
+				"has_next":    false,
+				"has_prev":    false,
+			},
+		})
+	})
+
 	return router
 }
-admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), func(c *gin.Context) {
-	page, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
-	if err != nil || page < 1 {
-		page = 1
-	}
 
-	limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "50")))
-	if err != nil || limit < 1 {
-		limit = 50
-	}
-	if limit > 200 {
-		limit = 200
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":     "success",
-		"message":    "Audit logs are not configured yet",
-		"data":       []gin.H{},
-		"items":      []gin.H{},
-		"records":    []gin.H{},
-		"total":      0,
-		"page":       page,
-		"limit":      limit,
-		"totalPages": 0,
-		"meta": gin.H{
-			"page":        page,
-			"limit":       limit,
-			"total_items": 0,
-			"total_pages": 0,
-			"has_next":    false,
-			"has_prev":    false,
-		},
-	})
-})
 // -----------------------------------------------------------------------------
 // main
 // -----------------------------------------------------------------------------
