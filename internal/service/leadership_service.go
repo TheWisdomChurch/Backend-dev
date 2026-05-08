@@ -247,18 +247,37 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 		return errors.New("approval service not configured")
 	}
 
-	if _, err := s.repo.GetByID(id); err != nil {
-		return err
+	entityID := strings.TrimSpace(id)
+	if entityID == "" {
+		return errors.New("leadership member id or approval request id is required")
 	}
+
+	if _, err := s.repo.GetByID(entityID); err != nil {
+		req, reqErr := s.approvalSvc.GetRequest(entityID)
+		if reqErr != nil {
+			return err
+		}
+		if req.Type != models.ApprovalTypeLeadershipDelete {
+			return errors.New("approval request is not for leadership deletion")
+		}
+		if req.EntityID == nil || strings.TrimSpace(*req.EntityID) == "" {
+			return errors.New("approval request has no leadership member id")
+		}
+		entityID = strings.TrimSpace(*req.EntityID)
+		if _, err := s.repo.GetByID(entityID); err != nil {
+			return err
+		}
+	}
+
 	if _, err := s.approvalSvc.CompleteRequest(
 		models.ApprovalTypeLeadershipDelete,
-		id,
+		entityID,
 		models.ApprovalStatusApproved,
 		approver,
 	); err != nil {
 		return err
 	}
-	return s.repo.Delete(id)
+	return s.repo.Delete(entityID)
 }
 
 func (s *leadershipService) Delete(id string) error {
