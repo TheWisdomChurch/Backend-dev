@@ -91,10 +91,11 @@ func presentApprovalRequest(req models.ApprovalRequest) approvalRequestResponse 
 		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve event", Method: http.MethodPatch, URL: "/api/v1/admin/events/" + entityID + "/approve"}
 		resp.DeleteAction = &approvalRequestActionLink{Label: "Reject/delete event", Method: http.MethodDelete, URL: "/api/v1/admin/events/" + entityID}
 	case models.ApprovalTypeLeadershipDelete:
-		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve leadership delete", Method: http.MethodPost, URL: "/api/v1/admin/leadership/" + entityID + "/delete/approve"}
-		resp.RejectAction = &approvalRequestActionLink{Label: "Decline leadership request", Method: http.MethodPost, URL: "/api/v1/admin/leadership/" + entityID + "/decline"}
+		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve leadership delete", Method: http.MethodPost, URL: "/api/v1/admin/leadership/" + req.ID + "/delete/approve"}
+		resp.RejectAction = &approvalRequestActionLink{Label: "Reject leadership delete", Method: http.MethodPost, URL: "/api/v1/admin/requests/" + req.ID + "/reject"}
 	case models.ApprovalTypeWorkforceDelete:
-		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve workforce delete", Method: http.MethodPost, URL: "/api/v1/admin/workforce/" + entityID + "/delete/approve"}
+		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve workforce delete", Method: http.MethodPost, URL: "/api/v1/admin/workforce/" + req.ID + "/delete/approve"}
+		resp.RejectAction = &approvalRequestActionLink{Label: "Reject workforce delete", Method: http.MethodPost, URL: "/api/v1/admin/requests/" + req.ID + "/reject"}
 	}
 
 	return resp
@@ -170,6 +171,38 @@ func (h *ApprovalRequestHandler) Get(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Request loaded", presentApprovalRequest(*item))
+}
+
+func (h *ApprovalRequestHandler) Approve(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "request id is required")
+		return
+	}
+
+	item, err := h.svc.CompleteRequestByID(id, models.ApprovalStatusApproved, nil)
+	if err != nil || item == nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Approval request not found")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Request approved", presentApprovalRequest(*item))
+}
+
+func (h *ApprovalRequestHandler) Reject(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "request id is required")
+		return
+	}
+
+	item, err := h.svc.CompleteRequestByID(id, models.ApprovalStatusRejected, nil)
+	if err != nil || item == nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Approval request not found")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Request rejected", presentApprovalRequest(*item))
 }
 
 func (h *ApprovalRequestHandler) Timeline(c *gin.Context) {
