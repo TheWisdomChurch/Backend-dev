@@ -203,6 +203,7 @@ func (s *notificationService) SendNotification(req *models.SendNotificationReque
 		}
 
 		body := email.RenderNotificationEmail(email.NotificationTemplateData{
+			Branding:      s.branding,
 			Title:         notification.Title,
 			Message:       notification.Message,
 			Event:         event,
