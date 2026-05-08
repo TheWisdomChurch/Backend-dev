@@ -8,6 +8,7 @@ import (
 )
 
 type NotificationTemplateData struct {
+	Branding      Branding
 	Title         string
 	Message       string
 	Event         *models.Event
@@ -15,6 +16,7 @@ type NotificationTemplateData struct {
 }
 
 func RenderNotificationEmail(data NotificationTemplateData) string {
+	b := normalizeBranding(data.Branding)
 	safeTitle := html.EscapeString(strings.TrimSpace(data.Title))
 	safeMessage := html.EscapeString(strings.TrimSpace(data.Message))
 	safeMessage = strings.ReplaceAll(safeMessage, "\n", "<br>")
@@ -43,12 +45,14 @@ func RenderNotificationEmail(data NotificationTemplateData) string {
 	}
 
 	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family:Arial,sans-serif;line-height:1.6;color:#1f2933;background:#f7f9fc;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;padding:24px;border:1px solid #e5e5e5;\">" +
+		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.6;color:#1f2933;background:#f7f9fc;padding:24px;\">" +
+		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
+		renderLogoBlock(b) +
 		"<p style=\"margin-top:0;font-size:16px;\">" + greeting + "</p>" +
 		"<h2 style=\"margin:8px 0 12px;font-size:22px;color:#0b2447;\">" + safeTitle + "</h2>" +
 		"<p style=\"margin:0 0 16px;font-size:15px;\">" + safeMessage + "</p>" +
 		eventBlock.String() +
-		"<p style=\"margin-top:24px;font-size:13px;color:#6b7280;\">You are receiving this email because you subscribed to Wisdom House Church updates.</p>" +
+		"<p style=\"margin-top:24px;font-size:13px;color:#6b7280;\">You are receiving this email because you subscribed to " + html.EscapeString(b.AppName) + " updates.</p>" +
+		footerBlock(b) +
 		"</div></body></html>"
 }
