@@ -250,15 +250,36 @@ func (h *LeadershipHandler) Delete(c *gin.Context) {
 
 // Super-admin: approve leadership deletion
 func (h *LeadershipHandler) ApproveDelete(c *gin.Context) {
-	id, ok := parseUUIDParam(c, "id", "leadership member id")
+	id, ok := parseUUIDParam(c, "id", "leadership member id or approval request id")
 	if !ok {
 		return
 	}
+
 	if err := h.svc.ApproveDelete(id, h.currentUser(c)); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		message := strings.TrimSpace(err.Error())
+		if message == "" {
+			message = "Failed to approve leadership delete request"
+		}
+
+		lowerMessage := strings.ToLower(message)
+
+		switch {
+		case strings.Contains(lowerMessage, "approval service"):
+			utils.ErrorResponse(c, http.StatusInternalServerError, message)
+
+		case strings.Contains(lowerMessage, "not found"):
+			utils.ErrorResponse(c, http.StatusNotFound, message)
+
+		default:
+			utils.ErrorResponse(c, http.StatusBadRequest, message)
+		}
+
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "Leadership member deleted", nil)
+
+	utils.SuccessResponse(c, http.StatusOK, "Leadership delete request approved", gin.H{
+		"deleted": true,
+	})
 }
 
 func (h *LeadershipHandler) BirthdayStats(c *gin.Context) {
