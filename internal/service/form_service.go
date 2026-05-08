@@ -1523,9 +1523,10 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.Capacity != nil && *s.Capacity < 0 {
 		return nil, errors.New("capacity cannot be negative")
 	}
-	// Response emails are mandatory for all forms.
-	forcedResponseEmail := true
-	s.ResponseEmailEnabled = &forcedResponseEmail
+	if s.ResponseEmailEnabled == nil {
+		defaultResponseEmail := true
+		s.ResponseEmailEnabled = &defaultResponseEmail
+	}
 	if s.ClosesAt != nil && strings.TrimSpace(*s.ClosesAt) != "" {
 		normalized, err := normalizeFlexibleTime(*s.ClosesAt)
 		if err != nil {
