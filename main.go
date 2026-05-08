@@ -872,6 +872,8 @@ func setupRouter(
 	// Approval requests
 	admin.GET("/requests", middleware.RequirePermission(middleware.PermissionApprovalsRead), approvalRequestHandler.List)
 	admin.GET("/requests/timeline", middleware.RequirePermission(middleware.PermissionApprovalsRead), approvalRequestHandler.Timeline)
+	admin.POST("/requests/:id/approve", middleware.RequirePermission(middleware.PermissionApprovalsRead), approvalRequestHandler.Approve)
+	admin.POST("/requests/:id/reject", middleware.RequirePermission(middleware.PermissionApprovalsRead), approvalRequestHandler.Reject)
 
 	// Email templates
 	admin.POST("/email/templates/send", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateHandler.SendTemplate)
