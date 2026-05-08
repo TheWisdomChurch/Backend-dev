@@ -274,6 +274,7 @@ func (s *memberService) SendAnnouncement(req *models.SendMemberEmailRequest) (*m
 		}
 
 		body := email.RenderNotificationEmail(email.NotificationTemplateData{
+			Branding:      s.branding,
 			Title:         subject,
 			Message:       message,
 			Event:         event,

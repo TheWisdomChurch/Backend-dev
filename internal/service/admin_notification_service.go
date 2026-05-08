@@ -80,6 +80,7 @@ func (s *adminNotificationService) NotifyRoles(input AdminNotificationInput) err
 				message = fmt.Sprintf("%s\n\nOpen the admin portal: %s", message, portal)
 			}
 			body := email.RenderNotificationEmail(email.NotificationTemplateData{
+				Branding:      s.branding,
 				Title:         subject,
 				Message:       message,
 				RecipientName: &recipientName,
