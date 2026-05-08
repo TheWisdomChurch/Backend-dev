@@ -778,9 +778,47 @@ func setupRouter(
 		middleware.AuditLogger("admin"),
 	)
 
+	auditLogsHandler := func(c *gin.Context) {
+		page, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
+		if err != nil || page < 1 {
+			page = 1
+		}
+
+		limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "50")))
+		if err != nil || limit < 1 {
+			limit = 50
+		}
+		if limit > 200 {
+			limit = 200
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":     "success",
+			"message":    "Audit logs are not configured yet",
+			"data":       []gin.H{},
+			"items":      []gin.H{},
+			"records":    []gin.H{},
+			"total":      0,
+			"page":       page,
+			"limit":      limit,
+			"totalPages": 0,
+			"meta": gin.H{
+				"page":        page,
+				"limit":       limit,
+				"total_items": 0,
+				"total_pages": 0,
+				"has_next":    false,
+				"has_prev":    false,
+			},
+		})
+	}
+
 	admin.GET("/dashboard", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetDashboardStats)
 	admin.GET("/security/overview", middleware.RequirePermission(middleware.PermissionSecurityRead), adminHandler.GetSecurityOverview)
 	admin.GET("/testimonials/pending", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetPendingTestimonials)
+	admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
+	admin.GET("/audit", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
+	admin.GET("/activity", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 
 	admin.GET("/users", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ListUsers)
 	admin.GET("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.GetUserByID)
@@ -847,6 +885,7 @@ func setupRouter(
 	admin.GET("/email/marketing/audience/preview", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.PreviewAudience)
 	admin.GET("/email/compose/history", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.ListComposeHistory)
 	admin.POST("/email/compose/send", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.SendComposeEmail)
+	admin.GET("/campaigns", middleware.RequirePermission(middleware.PermissionAdminRead), adminEmailHandler.ListComposeHistory)
 
 	// Uploads
 	admin.POST("/uploads/images", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadImage)
@@ -930,41 +969,6 @@ func setupRouter(
 	superAdmin.PATCH("/testimonials/:id/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Approve)
-
-	admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), func(c *gin.Context) {
-		page, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
-		if err != nil || page < 1 {
-			page = 1
-		}
-
-		limit, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "50")))
-		if err != nil || limit < 1 {
-			limit = 50
-		}
-		if limit > 200 {
-			limit = 200
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":     "success",
-			"message":    "Audit logs are not configured yet",
-			"data":       []gin.H{},
-			"items":      []gin.H{},
-			"records":    []gin.H{},
-			"total":      0,
-			"page":       page,
-			"limit":      limit,
-			"totalPages": 0,
-			"meta": gin.H{
-				"page":        page,
-				"limit":       limit,
-				"total_items": 0,
-				"total_pages": 0,
-				"has_next":    false,
-				"has_prev":    false,
-			},
-		})
-	})
 
 	return router
 }
