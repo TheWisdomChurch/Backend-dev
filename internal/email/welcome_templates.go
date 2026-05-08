@@ -199,7 +199,7 @@ func RenderLoginAlertEmail(data LoginAlertTemplateData) string {
 
 func normalizeBranding(b Branding) Branding {
 	if strings.TrimSpace(b.AppName) == "" {
-		b.AppName = "Wisdom House"
+		b.AppName = "The Wisdom Church"
 	}
 	if strings.TrimSpace(b.PublicURL) == "" {
 		b.PublicURL = "http://localhost:8080"
@@ -211,6 +211,29 @@ func normalizeBranding(b Branding) Branding {
 		b.TemplateAssetBaseURL = strings.TrimRight(strings.TrimSpace(b.TemplateAssetBaseURL), "/")
 	}
 	return b
+}
+
+func brandLogoURL(b Branding) string {
+	if logo := strings.TrimSpace(b.LogoURL); logo != "" {
+		return logo
+	}
+
+	for _, rawBase := range []string{b.AdminPortalURL, b.FrontendURL, b.PublicURL} {
+		base := strings.TrimSpace(rawBase)
+		if base == "" {
+			continue
+		}
+		parsed, err := url.Parse(base)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			continue
+		}
+		parsed.Path = "/OIP.webp"
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+
+	return ""
 }
 
 func adminPortalURL(b Branding) string {
@@ -251,10 +274,23 @@ func adminLoginURL(b Branding) string {
 }
 
 func renderLogoBlock(b Branding) string {
-	if strings.TrimSpace(b.LogoURL) == "" {
-		return "<div style=\"font-size:18px;font-weight:700;color:#0b2447;margin-bottom:16px;\">" + html.EscapeString(b.AppName) + "</div>"
+	b = normalizeBranding(b)
+	logoURL := brandLogoURL(b)
+	logoCell := "<td style=\"vertical-align:middle;padding:0 18px 0 0;\"><div style=\"width:54px;height:54px;border-radius:16px;background:#0f172a;color:#facc15;font-size:20px;line-height:54px;text-align:center;font-weight:900;\">W</div></td>"
+	if logoURL != "" {
+		logoCell = "<td style=\"vertical-align:middle;padding:0 18px 0 0;\"><img src=\"" + html.EscapeString(logoURL) + "\" alt=\"" + html.EscapeString(b.AppName) + " logo\" width=\"54\" height=\"54\" style=\"display:block;width:54px;height:54px;object-fit:cover;border-radius:16px;border:1px solid #e5e7eb;\" /></td>"
 	}
-	return "<div style=\"margin-bottom:20px;\"><img src=\"" + html.EscapeString(b.LogoURL) + "\" alt=\"" + html.EscapeString(b.AppName) + " logo\" style=\"max-width:160px;height:auto;\"></div>"
+	return "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 24px;border-collapse:collapse;\">" +
+		"<tr>" +
+		logoCell +
+		"<td style=\"width:1px;background:#e2e8f0;padding:0;\"></td>" +
+		"<td style=\"vertical-align:middle;padding:0 0 0 18px;\">" +
+		"<div style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:11px;line-height:1.05;font-weight:900;letter-spacing:.18em;color:#0f172a;text-transform:uppercase;\">" +
+		"<div>THE</div><div style=\"margin-top:3px;\">WISDOM</div><div style=\"margin-top:3px;\">CHURCH</div>" +
+		"</div>" +
+		"</td>" +
+		"</tr>" +
+		"</table>"
 }
 
 func footerBlock(b Branding) string {
