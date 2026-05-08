@@ -345,20 +345,57 @@ func (s *workforceService) ApproveDelete(id string, approver *models.User) error
 		return errors.New("approval service not configured")
 	}
 
-	member, err := s.repo.GetByID(id)
-	if err != nil {
-		return err
+	entityID := strings.TrimSpace(id)
+	if entityID == "" {
+		return errors.New("workforce member id or approval request id is required")
 	}
+
+	member, err := s.repo.GetByID(entityID)
+	var requestID string
+	if err != nil {
+		req, reqErr := s.approvalSvc.GetRequest(entityID)
+		if reqErr != nil {
+			if _, completeErr := s.approvalSvc.CompleteRequest(
+				models.ApprovalTypeWorkforceDelete,
+				entityID,
+				models.ApprovalStatusApproved,
+				approver,
+			); completeErr == nil {
+				return nil
+			}
+			return err
+		}
+		if req.Type != models.ApprovalTypeWorkforceDelete {
+			return errors.New("approval request is not for workforce deletion")
+		}
+		if req.EntityID == nil || strings.TrimSpace(*req.EntityID) == "" {
+			return errors.New("approval request has no workforce member id")
+		}
+		requestID = req.ID
+		entityID = strings.TrimSpace(*req.EntityID)
+		member, err = s.repo.GetByID(entityID)
+		if err != nil {
+			if _, completeErr := s.approvalSvc.CompleteRequestByID(
+				requestID,
+				models.ApprovalStatusApproved,
+				approver,
+			); completeErr == nil {
+				return nil
+			}
+			return err
+		}
+	}
+
 	req, err := s.approvalSvc.CompleteRequest(
 		models.ApprovalTypeWorkforceDelete,
-		id,
+		entityID,
 		models.ApprovalStatusApproved,
 		approver,
 	)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.Delete(id); err != nil {
+	if err := s.repo.Delete(entityID); err != nil {
 		return err
 	}
 	s.notifyWorkforceDeleteApproved(member, req)

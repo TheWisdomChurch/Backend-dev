@@ -255,6 +255,14 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 	if _, err := s.repo.GetByID(entityID); err != nil {
 		req, reqErr := s.approvalSvc.GetRequest(entityID)
 		if reqErr != nil {
+			if _, completeErr := s.approvalSvc.CompleteRequest(
+				models.ApprovalTypeLeadershipDelete,
+				entityID,
+				models.ApprovalStatusApproved,
+				approver,
+			); completeErr == nil {
+				return nil
+			}
 			return err
 		}
 		if req.Type != models.ApprovalTypeLeadershipDelete {
@@ -265,6 +273,13 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 		}
 		entityID = strings.TrimSpace(*req.EntityID)
 		if _, err := s.repo.GetByID(entityID); err != nil {
+			if _, completeErr := s.approvalSvc.CompleteRequestByID(
+				req.ID,
+				models.ApprovalStatusApproved,
+				approver,
+			); completeErr == nil {
+				return nil
+			}
 			return err
 		}
 	}
