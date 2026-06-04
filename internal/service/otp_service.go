@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,6 +14,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -22,6 +24,13 @@ const otpLength = 6
 
 var otpTTL = 10 * time.Minute
 
+// OTP rate-limit constants.
+const (
+	otpSendMaxPerWindow   = 5               // max OTP sends per email per window
+	otpVerifyMaxFails     = 5               // max failed verifications before block
+	otpRateLimitWindow    = 10 * time.Minute
+)
+
 type OTPService interface {
 	SendOTP(req *models.SendOTPRequest) (*models.SendOTPResponse, error)
 	VerifyOTP(req *models.VerifyOTPRequest) (*models.VerifyOTPResponse, error)
@@ -29,14 +38,69 @@ type OTPService interface {
 }
 
 type otpService struct {
-	repo     *repository.OTPRepository
-	userRepo repository.UserRepository
-	sender   EmailSender
-	branding email.Branding
+	repo       *repository.OTPRepository
+	userRepo   repository.UserRepository
+	sender     EmailSender
+	branding   email.Branding
+	redisCache *cache.RedisClient // nil when Redis is not configured
 }
 
-func NewOTPService(repo *repository.OTPRepository, sender EmailSender, branding email.Branding, userRepo repository.UserRepository) OTPService {
-	return &otpService{repo: repo, sender: sender, branding: branding, userRepo: userRepo}
+func NewOTPService(repo *repository.OTPRepository, sender EmailSender, branding email.Branding, userRepo repository.UserRepository, redisCache *cache.RedisClient) OTPService {
+	return &otpService{repo: repo, sender: sender, branding: branding, userRepo: userRepo, redisCache: redisCache}
+}
+
+// otpSendRateLimitKey returns the Redis key used to track OTP send attempts.
+func otpSendRateLimitKey(email string) string {
+	return "otp:send:" + email
+}
+
+// otpVerifyFailKey returns the Redis key used to track failed OTP verifications.
+func otpVerifyFailKey(email, purpose string) string {
+	return "otp:fail:" + email + ":" + purpose
+}
+
+// checkOTPSendLimit returns an error if the send rate limit is exceeded.
+func (s *otpService) checkOTPSendLimit(emailAddr string) error {
+	if s.redisCache == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	allowed, err := s.redisCache.RateLimit(ctx, otpSendRateLimitKey(emailAddr), otpSendMaxPerWindow, otpRateLimitWindow)
+	if err != nil {
+		// Fail open — don't block users if Redis is down
+		return nil
+	}
+	if !allowed {
+		return errors.New("too many OTP requests, please wait before requesting again")
+	}
+	return nil
+}
+
+// recordOTPVerifyFail increments the failure counter; returns true when limit exceeded.
+func (s *otpService) recordOTPVerifyFail(emailAddr, purpose string) bool {
+	if s.redisCache == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	key := otpVerifyFailKey(emailAddr, purpose)
+	// RateLimit call: check if we've exceeded otpVerifyMaxFails within the window.
+	allowed, err := s.redisCache.RateLimit(ctx, key, otpVerifyMaxFails, otpRateLimitWindow)
+	if err != nil {
+		return false
+	}
+	return !allowed
+}
+
+// resetOTPVerifyFails clears the failure counter after a successful verification.
+func (s *otpService) resetOTPVerifyFails(emailAddr, purpose string) {
+	if s.redisCache == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = s.redisCache.Delete(ctx, otpVerifyFailKey(emailAddr, purpose))
 }
 
 func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPResponse, error) {
@@ -50,6 +114,11 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 	}
 
 	purpose := strings.TrimSpace(req.Purpose)
+
+	// Enforce send rate limit before any DB work.
+	if err := s.checkOTPSendLimit(emailAddr); err != nil {
+		return nil, err
+	}
 
 	// Only registered & active users should receive login / password reset OTP
 	if s.userRepo != nil && (strings.HasPrefix(purpose, "login") || strings.HasPrefix(purpose, "password_reset")) {
@@ -187,10 +256,18 @@ func (s *otpService) verifyOTP(req *models.VerifyOTPRequest, consume bool) (*mod
 		}
 	}
 
+	// Check whether this email+purpose has exceeded the failure limit.
+	if s.recordOTPVerifyFail(emailAddr, purpose) {
+		return nil, errors.New("too many incorrect attempts, please request a new code")
+	}
+
 	candidate := hashOTP(otp.CodeSalt, code)
 	if subtle.ConstantTimeCompare([]byte(candidate), []byte(otp.CodeHash)) != 1 {
 		return nil, errors.New("invalid code")
 	}
+
+	// Successful verification — clear the failure counter.
+	s.resetOTPVerifyFails(emailAddr, purpose)
 
 	if consume {
 		usedAt := time.Now().UTC()
