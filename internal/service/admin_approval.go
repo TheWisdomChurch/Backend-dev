@@ -111,6 +111,70 @@ func requestAdminApproval(approvalSvc ApprovalService, notifySvc AdminNotificati
 	return req, nil
 }
 
+// requestAdminApprovalTx creates the approval request record only (no side-effects).
+// Intended for use inside a database transaction. Call notifyAdminNewRegistration
+// outside the transaction for the notification side-effect.
+func requestAdminApprovalTx(approvalSvc ApprovalService, user *models.User) error {
+	if !needsAdminApproval(user) {
+		return nil
+	}
+	if approvalSvc == nil {
+		return errors.New("admin approval service is not configured")
+	}
+	entityID := strings.TrimSpace(user.ID)
+	if entityID == "" {
+		return errors.New("admin user id is required for approval request")
+	}
+	label := adminDisplayName(user)
+	if label == "" {
+		label = "Admin"
+	}
+	requestedByID := entityID
+	requestedByName := adminDisplayName(user)
+	requestedByEmail := strings.TrimSpace(user.Email)
+	var namePtr, emailPtr *string
+	if requestedByName != "" {
+		namePtr = &requestedByName
+	}
+	if requestedByEmail != "" {
+		emailPtr = &requestedByEmail
+	}
+	_, err := approvalSvc.CreateRequest(CreateApprovalRequest{
+		Type:             models.ApprovalTypeAdminUser,
+		EntityID:         &entityID,
+		EntityLabel:      &label,
+		RequestedByID:    &requestedByID,
+		RequestedByName:  namePtr,
+		RequestedByEmail: emailPtr,
+	})
+	return err
+}
+
+// notifyAdminNewRegistration sends the admin-notification for a new registration.
+// Call this outside any DB transaction.
+func notifyAdminNewRegistration(notifySvc AdminNotificationService, user *models.User) {
+	if notifySvc == nil || user == nil {
+		return
+	}
+	entityID := strings.TrimSpace(user.ID)
+	entityType := "admin_user"
+	name := adminDisplayName(user)
+	details := name
+	if name == "" {
+		details = "a new admin account"
+	}
+	title := "New admin approval request"
+	message := fmt.Sprintf("A new admin account is awaiting super-admin approval for %s.", details)
+	_ = notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "admin_request",
+		Title:      title,
+		Message:    message,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"super_admin"},
+	})
+}
+
 func sendAdminApprovedEmail(sender EmailSender, branding email.Branding, user *models.User) {
 	if sender == nil || user == nil || strings.TrimSpace(user.Email) == "" {
 		return

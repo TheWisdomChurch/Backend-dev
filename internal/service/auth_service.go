@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
@@ -20,6 +21,7 @@ import (
 
 // AuthService implementation
 type authServiceImpl struct {
+	db              *gorm.DB // for transaction management
 	userRepo        repository.UserRepository
 	otp             OTPService
 	sender          EmailSender
@@ -58,12 +60,13 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
+func NewAuthService(db *gorm.DB, userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
 	var protector *authutil.Protector
 	if p, err := authutil.NewProtector(authSecret); err == nil {
 		protector = p
 	}
 	return &authServiceImpl{
+		db:              db,
 		userRepo:        userRepo,
 		otp:             otp,
 		sender:          sender,
@@ -688,18 +691,36 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 		}(),
 	}
 
-	// Save user
-	if err := s.userRepo.Create(user); err != nil {
-		return nil, err
+	// Wrap user creation + approval request in a transaction for atomicity.
+	if s.db != nil {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			txRepo := s.userRepo.WithTx(tx)
+			if err := txRepo.Create(user); err != nil {
+				return err
+			}
+			if needsAdminApproval(user) {
+				if err := requestAdminApprovalTx(s.approvalSvc, user); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	} else {
+		// Fallback when db is not injected (tests / legacy path).
+		if err := s.userRepo.Create(user); err != nil {
+			return nil, err
+		}
 	}
 
+	// Side-effects outside the transaction (email, non-critical notifications).
 	if needsAdminApproval(user) {
-		requestAdminApproval(s.approvalSvc, s.notifySvc, user)
+		notifyAdminNewRegistration(s.notifySvc, user)
 	} else {
 		s.sendAdminWelcome(user)
 	}
 
-	// Remove password from response
 	user.Password = ""
 	return user, nil
 }
