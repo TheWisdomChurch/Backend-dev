@@ -10,6 +10,7 @@ import (
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/sanitize"
 )
 
 type MemberService interface {
@@ -178,9 +179,9 @@ func (s *memberService) Create(req *models.CreateMemberRequest) (*models.Member,
 	}
 
 	member := &models.Member{
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
-		Email:         strings.TrimSpace(req.Email),
+		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
+		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
+		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
 		Phone:         optionalStringPtr(ptrString(req.Phone)),
 		IsActive:      isActive,
 		BirthdayMonth: month,
