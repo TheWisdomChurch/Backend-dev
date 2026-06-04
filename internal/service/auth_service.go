@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -39,8 +40,9 @@ var ErrWrongPassword = errors.New("incorrect password")
 var ErrAdminTOTPRequired = errors.New("admin accounts with authenticator enabled must complete totp verification")
 
 const (
-	failedLoginThreshold  = 3
+	failedLoginThreshold  = 5
 	failedLoginWindow     = 15 * time.Minute
+	accountLockDuration   = 30 * time.Minute
 	loginOTPPurposePrefix = "login:"
 	otpEntryPath          = "/verify-otp"
 	resetEntryPath        = "/reset-password"
@@ -99,6 +101,26 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 		return nil, ErrAdminPending
 	}
 
+	// Auto-unlock if the lock period has passed.
+	if user.IsLocked && user.LockedUntil != nil && time.Now().UTC().After(*user.LockedUntil) {
+		user.IsLocked = false
+		user.LockedUntil = nil
+		user.FailedLoginCount = 0
+		_ = s.userRepo.Update(user)
+	}
+
+	if user.IsLocked {
+		remaining := "a few minutes"
+		if user.LockedUntil != nil {
+			d := time.Until(*user.LockedUntil).Round(time.Minute)
+			if d > 0 {
+				remaining = d.String()
+			}
+		}
+		return nil, fmt.Errorf("account temporarily locked due to too many failed login attempts. Try again in %s", remaining)
+	}
+
+	// Reset stale failed-login counter.
 	if user.LastFailedLoginAt != nil && time.Since(*user.LastFailedLoginAt) > failedLoginWindow {
 		user.FailedLoginCount = 0
 	}
@@ -194,18 +216,29 @@ func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadat
 		user.FailedLoginCount++
 	}
 	user.LastFailedLoginAt = &now
-	_ = s.userRepo.Update(user)
+
+	// Lock the account when the threshold is reached.
+	if user.FailedLoginCount >= failedLoginThreshold {
+		user.IsLocked = true
+		lockedUntil := now.Add(accountLockDuration)
+		user.LockedUntil = &lockedUntil
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		slog.Warn("auth_service: failed to persist failed-login state", "user_id", user.ID, "error", err)
+	}
 
 	if s.security != nil {
 		s.security.RecordEvent("failed_login", user, meta, map[string]interface{}{
 			"failed_count": user.FailedLoginCount,
+			"locked":       user.IsLocked,
 		})
 	}
 
-	if user.FailedLoginCount == failedLoginThreshold {
+	if user.FailedLoginCount >= failedLoginThreshold {
 		s.sendFailedLoginAlert(user, meta)
 		if s.security != nil {
-			s.security.NotifySuspiciousLogin(user, meta, "Multiple failed login attempts")
+			s.security.NotifySuspiciousLogin(user, meta, "Account locked after multiple failed login attempts")
 		}
 	}
 }
