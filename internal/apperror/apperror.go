@@ -26,11 +26,9 @@ func (e *AppError) Unwrap() error { return e.cause }
 
 // As performs an errors.As-style check and returns the *AppError if found.
 func As(err error) (*AppError, bool) {
-	var ae *AppError
 	if err == nil {
 		return nil, false
 	}
-	// Walk the chain manually to avoid importing "errors" here.
 	for {
 		if ae, ok := err.(*AppError); ok {
 			return ae, true
