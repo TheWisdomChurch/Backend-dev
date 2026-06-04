@@ -1170,7 +1170,7 @@ func main() {
 		adminNotificationService,
 	)
 
-	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo, redisCache)
 
 	securityService := service.NewSecurityService(
 		securityEventRepo,
