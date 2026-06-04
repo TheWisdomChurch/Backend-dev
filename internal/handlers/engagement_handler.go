@@ -17,6 +17,7 @@ import (
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/sanitize"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
@@ -91,17 +92,17 @@ func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 	}
 
 	row := models.PastoralCareRequest{
-		Title:         strings.TrimSpace(req.Title),
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
+		Title:         sanitize.Text(strings.TrimSpace(req.Title)),
+		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
+		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
 		Phone:         strings.TrimSpace(req.Phone),
-		Email:         strings.TrimSpace(req.Email),
-		Address:       strings.TrimSpace(req.Address),
+		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
+		Address:       sanitize.Text(strings.TrimSpace(req.Address)),
 		EventDate:     strings.TrimSpace(req.EventDate),
-		EventType:     strings.TrimSpace(req.EventType),
-		ChurchRole:    strings.TrimSpace(req.ChurchRole),
-		CustomRole:    strings.TrimSpace(req.CustomRole),
-		Comments:      strings.TrimSpace(req.Comments),
+		EventType:     sanitize.Text(strings.TrimSpace(req.EventType)),
+		ChurchRole:    sanitize.Text(strings.TrimSpace(req.ChurchRole)),
+		CustomRole:    sanitize.Text(strings.TrimSpace(req.CustomRole)),
+		Comments:      sanitize.Text(strings.TrimSpace(req.Comments)),
 		SourceChannel: source,
 	}
 
@@ -144,12 +145,16 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 	}
 
 	row := models.GivingIntent{
-		Title:         strings.TrimSpace(req.Title),
-		Description:   strings.TrimSpace(req.Description),
+		Title:         sanitize.Text(strings.TrimSpace(req.Title)),
+		Description:   sanitize.Text(strings.TrimSpace(req.Description)),
 		SourceChannel: source,
 	}
 	if len(req.Metadata) > 0 {
-		raw, _ := json.Marshal(req.Metadata)
+		raw, err := json.Marshal(req.Metadata)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid metadata format")
+			return
+		}
 		row.Metadata = raw
 	}
 
@@ -191,12 +196,12 @@ func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
 	}
 
 	row := models.ContactMessage{
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
-		Email:         strings.TrimSpace(req.Email),
+		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
+		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
+		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
 		Phone:         strings.TrimSpace(req.Phone),
-		Topic:         strings.TrimSpace(req.Topic),
-		Message:       strings.TrimSpace(req.Message),
+		Topic:         sanitize.Text(strings.TrimSpace(req.Topic)),
+		Message:       sanitize.Text(strings.TrimSpace(req.Message)),
 		SourceChannel: source,
 		Metadata:      req.Metadata,
 	}

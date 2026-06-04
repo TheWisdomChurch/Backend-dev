@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -139,7 +140,10 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, emailAddr, password, 
 
 	if pendingAdmin {
 		if err := s.ensureAdminApprovalRequest(user); err != nil {
-			_ = s.userRepo.DeleteHard(user.ID)
+			if delErr := s.userRepo.DeleteHard(user.ID); delErr != nil {
+				slog.Error("admin_service: failed to rollback user creation after approval request failure",
+					"user_id", user.ID, "error", delErr)
+			}
 			return nil, errors.New("failed to create admin approval request")
 		}
 	} else {
@@ -175,7 +179,9 @@ func (s *adminServiceImpl) findAdminUserOrRequest(id string) (*models.User, *mod
 
 	user, err = s.userRepo.FindByID(strings.TrimSpace(*req.EntityID))
 	if err != nil || user == nil {
-		_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusDeleted, nil)
+		if _, completeErr := s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusDeleted, nil); completeErr != nil {
+			slog.Warn("admin_service: failed to mark orphaned approval request as deleted", "request_id", req.ID, "error", completeErr)
+		}
 		return nil, req, errors.New("admin account no longer exists")
 	}
 
@@ -206,10 +212,14 @@ func (s *adminServiceImpl) ApproveUser(id string) (interface{}, error) {
 	}
 
 	if s.approvalSvc != nil {
+		var completeErr error
 		if req != nil {
-			_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusApproved, nil)
+			_, completeErr = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusApproved, nil)
 		} else {
-			_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusApproved, nil)
+			_, completeErr = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusApproved, nil)
+		}
+		if completeErr != nil {
+			slog.Warn("admin_service: failed to complete approval request on user approve", "user_id", user.ID, "error", completeErr)
 		}
 	}
 
@@ -245,10 +255,14 @@ func (s *adminServiceImpl) RejectUser(id string, reason string) (interface{}, er
 	}
 
 	if s.approvalSvc != nil {
+		var completeErr error
 		if req != nil {
-			_, _ = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusRejected, nil)
+			_, completeErr = s.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusRejected, nil)
 		} else {
-			_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusRejected, nil)
+			_, completeErr = s.approvalSvc.CompleteRequest(models.ApprovalTypeAdminUser, user.ID, models.ApprovalStatusRejected, nil)
+		}
+		if completeErr != nil {
+			slog.Warn("admin_service: failed to complete approval request on user reject", "user_id", user.ID, "error", completeErr)
 		}
 	}
 
