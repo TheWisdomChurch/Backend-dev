@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm/clause"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -20,11 +20,11 @@ const (
 )
 
 type SiteContentHandler struct {
-	db *database.Database
+	repo repository.SiteContentRepository
 }
 
 func NewSiteContentHandler(db *database.Database) *SiteContentHandler {
-	return &SiteContentHandler{db: db}
+	return &SiteContentHandler{repo: repository.NewSiteContentRepository(db)}
 }
 
 type HomepageAdPayload struct {
@@ -73,7 +73,7 @@ var defaultConfession = ConfessionPopupPayload{
 
 func (h *SiteContentHandler) GetHomepageAd(c *gin.Context) {
 	var payload HomepageAdPayload
-	if err := h.loadContent(siteContentHomepageAdKey, &payload); err != nil {
+	if err := h.loadContent(c, siteContentHomepageAdKey, &payload); err != nil {
 		payload = defaultHomepageAd
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Homepage ad content loaded", payload)
@@ -81,7 +81,7 @@ func (h *SiteContentHandler) GetHomepageAd(c *gin.Context) {
 
 func (h *SiteContentHandler) GetConfessionPopup(c *gin.Context) {
 	var payload ConfessionPopupPayload
-	if err := h.loadContent(siteContentConfessionKey, &payload); err != nil {
+	if err := h.loadContent(c, siteContentConfessionKey, &payload); err != nil {
 		payload = defaultConfession
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Confession popup content loaded", payload)
@@ -89,7 +89,7 @@ func (h *SiteContentHandler) GetConfessionPopup(c *gin.Context) {
 
 func (h *SiteContentHandler) GetAdminHomepageAd(c *gin.Context) {
 	var payload HomepageAdPayload
-	if err := h.loadContent(siteContentHomepageAdKey, &payload); err != nil {
+	if err := h.loadContent(c, siteContentHomepageAdKey, &payload); err != nil {
 		payload = defaultHomepageAd
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Homepage ad content loaded", payload)
@@ -101,23 +101,20 @@ func (h *SiteContentHandler) UpdateAdminHomepageAd(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid homepage ad payload")
 		return
 	}
-
 	if payload.Title == "" || payload.Headline == "" {
 		utils.ErrorResponse(c, http.StatusBadRequest, "title and headline are required")
 		return
 	}
-
-	if err := h.saveContent(siteContentHomepageAdKey, payload, c.GetString("email")); err != nil {
+	if err := h.saveContent(c, siteContentHomepageAdKey, payload, c.GetString("email")); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to save homepage ad content")
 		return
 	}
-
 	utils.SuccessResponse(c, http.StatusOK, "Homepage ad content updated", payload)
 }
 
 func (h *SiteContentHandler) GetAdminConfessionPopup(c *gin.Context) {
 	var payload ConfessionPopupPayload
-	if err := h.loadContent(siteContentConfessionKey, &payload); err != nil {
+	if err := h.loadContent(c, siteContentConfessionKey, &payload); err != nil {
 		payload = defaultConfession
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Confession popup content loaded", payload)
@@ -129,56 +126,44 @@ func (h *SiteContentHandler) UpdateAdminConfessionPopup(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid confession popup payload")
 		return
 	}
-
 	if payload.WelcomeTitle == "" || payload.ConfessionText == "" {
 		utils.ErrorResponse(c, http.StatusBadRequest, "welcomeTitle and confessionText are required")
 		return
 	}
-
-	if err := h.saveContent(siteContentConfessionKey, payload, c.GetString("email")); err != nil {
+	if err := h.saveContent(c, siteContentConfessionKey, payload, c.GetString("email")); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to save confession popup content")
 		return
 	}
-
 	utils.SuccessResponse(c, http.StatusOK, "Confession popup content updated", payload)
 }
 
-func (h *SiteContentHandler) loadContent(key string, out interface{}) error {
-	ctx, cancel := contextWithTimeout()
+func (h *SiteContentHandler) loadContent(c *gin.Context, key string, out interface{}) error {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-
-	var row models.SiteContent
-	if err := h.db.WithContext(ctx).Where("key = ?", key).First(&row).Error; err != nil {
+	row, err := h.repo.GetByKey(ctx, key)
+	if err != nil {
 		return err
 	}
 	return json.Unmarshal(row.Payload, out)
 }
 
-func (h *SiteContentHandler) saveContent(key string, payload interface{}, updatedBy string) error {
+func (h *SiteContentHandler) saveContent(c *gin.Context, key string, payload interface{}, updatedBy string) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-
 	var updatedByPtr *string
 	if updatedBy != "" {
-		updatedByCopy := updatedBy
-		updatedByPtr = &updatedByCopy
+		cp := updatedBy
+		updatedByPtr = &cp
 	}
-
-	ctx, cancel := contextWithTimeout()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-
-	row := models.SiteContent{
+	return h.repo.Upsert(ctx, &models.SiteContent{
 		Key:       key,
 		Payload:   raw,
 		UpdatedBy: updatedByPtr,
-	}
-
-	return h.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "key"}},
-		DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_by", "updated_at"}),
-	}).Create(&row).Error
+	})
 }
 
 func contextWithTimeout() (context.Context, context.CancelFunc) {
