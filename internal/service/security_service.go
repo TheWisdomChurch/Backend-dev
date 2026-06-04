@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"wisdomHouse-backend/internal/email"
@@ -45,7 +46,11 @@ func (s *securityServiceImpl) RecordEvent(eventType string, user *models.User, m
 	}
 	var metaJSON []byte
 	if len(details) > 0 {
-		metaJSON, _ = json.Marshal(details)
+		var err error
+		metaJSON, err = json.Marshal(details)
+		if err != nil {
+			slog.Warn("security_service: failed to marshal event metadata", "event_type", eventType, "error", err)
+		}
 	}
 
 	ev := &models.SecurityEvent{
@@ -59,7 +64,9 @@ func (s *securityServiceImpl) RecordEvent(eventType string, user *models.User, m
 	if len(metaJSON) > 0 {
 		ev.Metadata = metaJSON
 	}
-	_ = s.eventsRepo.Create(ev)
+	if err := s.eventsRepo.Create(ev); err != nil {
+		slog.Error("security_service: failed to persist security event", "event_type", eventType, "error", err)
+	}
 }
 
 func (s *securityServiceImpl) NotifySuspiciousLogin(user *models.User, meta LoginMetadata, reason string) {
@@ -79,7 +86,9 @@ func (s *securityServiceImpl) NotifySuspiciousLogin(user *models.User, meta Logi
 	})
 
 	subject := fmt.Sprintf("[%s] Verify a recent sign-in", s.branding.AppName)
-	_ = s.sender.SendHTML(user.Email, subject, body)
+	if err := s.sender.SendHTML(user.Email, subject, body); err != nil {
+		slog.Warn("security_service: failed to send suspicious login alert", "user_id", safeUserID(user), "error", err)
+	}
 }
 
 func safeEmail(u *models.User) string {
