@@ -19,6 +19,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"wisdomHouse-backend/internal/apperror"
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/database"
@@ -620,7 +621,8 @@ func setupRouter(
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 
-	router.Use(gin.Recovery())
+	router.Use(gin.CustomRecovery(apperror.PanicRecoveryHandler))
+	router.Use(apperror.Handler())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.SecurityHeaders(secure))

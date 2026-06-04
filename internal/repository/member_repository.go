@@ -170,9 +170,9 @@ func (r *memberRepository) Stats() (*models.MemberStatsResponse, error) {
 
 func (r *memberRepository) countCreatedByPeriod(period string) ([]models.GrowthBucket, error) {
 	switch period {
-	case "month", "year":
+	case "month", "year", "week", "quarter":
 	default:
-		period = "month"
+		return nil, fmt.Errorf("invalid period %q: must be one of month, year, week, quarter", period)
 	}
 	bucketExpr := fmt.Sprintf("date_trunc('%s', created_at)", period)
 

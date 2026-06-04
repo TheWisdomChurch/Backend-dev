@@ -26,7 +26,7 @@ func NewTrustedDeviceRepository(db *database.Database) TrustedDeviceRepository {
 
 func (r *trustedDeviceRepository) Find(userID, deviceID string) (*models.TrustedDevice, error) {
 	var dev models.TrustedDevice
-	err := r.db.Where("user_id = ? AND device_id = ?", userID, deviceID).First(&dev).Error
+	err := r.db.Where("user_id = ? AND device_id = ? AND expires_at > ?", userID, deviceID, time.Now().UTC()).First(&dev).Error
 	if err != nil {
 		return nil, err
 	}
