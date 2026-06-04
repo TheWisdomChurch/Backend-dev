@@ -1186,6 +1186,7 @@ func main() {
 	)
 
 	authService := service.NewAuthService(
+		db.DB,
 		userRepo,
 		otpService,
 		emailSender,
