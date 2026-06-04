@@ -483,5 +483,7 @@ func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 		Department:    member.Department,
 	})
 	subject := "Welcome to the workforce"
-	_ = s.sender.SendHTML(addr, subject, body)
+	if err := s.sender.SendHTML(addr, subject, body); err != nil {
+		slog.Warn("workforce_service: failed to send approval email", "member_id", member.ID, "error", err)
+	}
 }
