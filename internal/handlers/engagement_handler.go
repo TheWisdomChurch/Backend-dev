@@ -23,7 +23,7 @@ import (
 )
 
 type EngagementHandler struct {
-	db        *database.Database
+	repo      repository.EngagementRepository
 	notifySvc service.AdminNotificationService
 	sender    service.EmailSender
 	tplRepo   repository.EmailTemplateRepository
@@ -38,7 +38,7 @@ func NewEngagementHandler(
 	branding email.Branding,
 ) *EngagementHandler {
 	return &EngagementHandler{
-		db:        db,
+		repo:      repository.NewEngagementRepository(db),
 		notifySvc: notifySvc,
 		sender:    sender,
 		tplRepo:   tplRepo,
@@ -107,7 +107,7 @@ func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreatePastoralCareRequest(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit pastoral care request")
 		return
 	}
@@ -155,7 +155,7 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreateGivingIntent(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to capture giving intent")
 		return
 	}
@@ -203,7 +203,7 @@ func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreateContactMessage(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit contact message")
 		return
 	}
@@ -235,19 +235,8 @@ func (h *EngagementHandler) ListPastoralCareRequests(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.PastoralCareRequest{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load pastoral care requests")
-		return
-	}
-
-	var items []models.PastoralCareRequest
-	if err := h.db.WithContext(ctx).
-		Model(&models.PastoralCareRequest{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListPastoralCareRequests(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load pastoral care requests")
 		return
 	}
@@ -269,19 +258,8 @@ func (h *EngagementHandler) ListGivingIntents(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.GivingIntent{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving intents")
-		return
-	}
-
-	var items []models.GivingIntent
-	if err := h.db.WithContext(ctx).
-		Model(&models.GivingIntent{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListGivingIntents(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving intents")
 		return
 	}
@@ -303,19 +281,8 @@ func (h *EngagementHandler) ListContactMessages(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.ContactMessage{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
-		return
-	}
-
-	var items []models.ContactMessage
-	if err := h.db.WithContext(ctx).
-		Model(&models.ContactMessage{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListContactMessages(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
 		return
 	}
