@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/sanitize"
 )
 
 type WorkforceService interface {
@@ -110,7 +112,7 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 		Department:    strings.TrimSpace(req.Department),
 		SourceChannel: strings.TrimSpace(req.SourceChannel),
 		Status:        status,
-		Notes:         req.Notes,
+		Notes:         sanitize.TextPtr(req.Notes),
 		BirthdayMonth: month,
 		BirthdayDay:   day,
 	}
@@ -145,7 +147,7 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 		updates["status"] = *req.Status
 	}
 	if req.Notes != nil {
-		updates["notes"] = req.Notes
+		updates["notes"] = sanitize.TextPtr(req.Notes)
 	}
 	if req.BirthdayMonth != nil || req.BirthdayDay != nil || req.Birthday != nil {
 		month, day, err := parseBirthday(req.BirthdayMonth, req.BirthdayDay, req.Birthday)
@@ -423,7 +425,7 @@ func (s *workforceService) notifyWorkforceDeleteRequest(member *models.Workforce
 	message := fmt.Sprintf("%s was marked for deletion from %s. Super admin approval is required before removal.", fullName, member.Department)
 	entityType := "workforce_delete"
 	entityID := member.ID
-	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+	if err := s.notifySvc.NotifyRoles(AdminNotificationInput{
 		Type:       "workforce_delete_request",
 		Title:      title,
 		Message:    message,
@@ -431,7 +433,9 @@ func (s *workforceService) notifyWorkforceDeleteRequest(member *models.Workforce
 		EntityType: &entityType,
 		EntityID:   &entityID,
 		Roles:      []string{"super_admin"},
-	})
+	}); err != nil {
+		slog.Warn("workforce_service: failed to send delete-request notification", "member_id", member.ID, "error", err)
+	}
 }
 
 func (s *workforceService) notifyWorkforceDeleteApproved(member *models.WorkforceMember, req *models.ApprovalRequest) {
@@ -450,7 +454,7 @@ func (s *workforceService) notifyWorkforceDeleteApproved(member *models.Workforc
 	if req != nil {
 		ticket = &req.TicketCode
 	}
-	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+	if err := s.notifySvc.NotifyRoles(AdminNotificationInput{
 		Type:       "workforce_delete_approved",
 		Title:      title,
 		Message:    message,
@@ -458,7 +462,9 @@ func (s *workforceService) notifyWorkforceDeleteApproved(member *models.Workforc
 		EntityType: &entityType,
 		EntityID:   &entityID,
 		Roles:      []string{"admin"},
-	})
+	}); err != nil {
+		slog.Warn("workforce_service: failed to send delete-approved notification", "member_id", member.ID, "error", err)
+	}
 }
 
 func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
@@ -477,5 +483,7 @@ func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 		Department:    member.Department,
 	})
 	subject := "Welcome to the workforce"
-	_ = s.sender.SendHTML(addr, subject, body)
+	if err := s.sender.SendHTML(addr, subject, body); err != nil {
+		slog.Warn("workforce_service: failed to send approval email", "member_id", member.ID, "error", err)
+	}
 }

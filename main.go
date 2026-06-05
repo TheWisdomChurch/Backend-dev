@@ -19,11 +19,13 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+	"wisdomHouse-backend/internal/apperror"
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/handlers"
+	appLogger "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
@@ -592,6 +594,7 @@ func (noopEmailSender) DisabledReason() string {
 func setupRouter(
 	cfg *config.Config,
 	userRepo repository.UserRepository,
+	healthHandler *handlers.HealthHandler,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
@@ -620,7 +623,8 @@ func setupRouter(
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 
-	router.Use(gin.Recovery())
+	router.Use(gin.CustomRecovery(apperror.PanicRecoveryHandler))
+	router.Use(apperror.Handler())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.SecurityHeaders(secure))
@@ -636,9 +640,10 @@ func setupRouter(
 		SkipPathPrefixes:  []string{"/api/v1/auth/login", "/api/v1/auth/otp/"},
 	}))
 
-	// Swagger + basic health
+	// Swagger + health
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	router.GET("/healthz", healthHandler.Liveness)
+	router.GET("/readyz", healthHandler.Readiness)
 	router.GET("/forms/:slug", formHandler.ViewPublicFormPage)
 	router.GET("/form/:slug", formHandler.RedirectLegacyPublicFormPage)
 	router.GET("/reports/forms/:slug", formHandler.ViewPublicFormReport)
@@ -996,6 +1001,9 @@ func main() {
 	}
 	cfg.App.Environment = env
 
+	// Initialise structured logger — must run before any component that logs.
+	appLogger.Init(cfg.App.LogLevel, cfg.App.Environment)
+
 	disableOTP := isTrueEnv("DISABLE_OTP")
 	disableLoginOTP := isTrueEnv("DISABLE_LOGIN_OTP")
 	disableEmail := isTrueEnv("DISABLE_EMAIL") || disableOTP
@@ -1162,7 +1170,7 @@ func main() {
 		adminNotificationService,
 	)
 
-	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo)
+	otpService := service.NewOTPService(otpRepo, emailSender, branding, userRepo, redisCache)
 
 	securityService := service.NewSecurityService(
 		securityEventRepo,
@@ -1178,6 +1186,7 @@ func main() {
 	)
 
 	authService := service.NewAuthService(
+		db.DB,
 		userRepo,
 		otpService,
 		emailSender,
@@ -1331,9 +1340,12 @@ func main() {
 	// -------------------------------------------------------------------------
 	// HTTP server
 	// -------------------------------------------------------------------------
+	healthHandler := handlers.NewHealthHandler(db, redisCache)
+
 	router := setupRouter(
 		cfg,
 		userRepo,
+		healthHandler,
 		testimonialHandler,
 		authHandler,
 		adminHandler,
