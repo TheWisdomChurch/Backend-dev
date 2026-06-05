@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -56,7 +58,11 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load users")
 		return
 	}
-	items, _ := users.([]models.User)
+	items, ok := users.([]models.User)
+	if !ok {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to process user data")
+		return
+	}
 	resp := make([]adminUserResponse, 0, len(items))
 	actorSuper := isSuperAdmin(c)
 	for _, user := range items {
@@ -291,7 +297,15 @@ func (h *AdminHandler) RejectUser(c *gin.Context) {
 	}
 
 	var req rejectUserRequest
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		// io.EOF means empty body — reason is optional, continue
+	}
 
 	user, err := h.svc.RejectUser(id, req.Reason)
 	if err != nil {

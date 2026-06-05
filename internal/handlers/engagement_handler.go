@@ -17,13 +17,14 @@ import (
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
+	"wisdomHouse-backend/internal/sanitize"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
 type EngagementHandler struct {
-	db        *database.Database
+	repo      repository.EngagementRepository
 	notifySvc service.AdminNotificationService
 	sender    service.EmailSender
 	tplRepo   repository.EmailTemplateRepository
@@ -38,7 +39,7 @@ func NewEngagementHandler(
 	branding email.Branding,
 ) *EngagementHandler {
 	return &EngagementHandler{
-		db:        db,
+		repo:      repository.NewEngagementRepository(db),
 		notifySvc: notifySvc,
 		sender:    sender,
 		tplRepo:   tplRepo,
@@ -91,23 +92,23 @@ func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 	}
 
 	row := models.PastoralCareRequest{
-		Title:         strings.TrimSpace(req.Title),
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
+		Title:         sanitize.Text(strings.TrimSpace(req.Title)),
+		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
+		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
 		Phone:         strings.TrimSpace(req.Phone),
-		Email:         strings.TrimSpace(req.Email),
-		Address:       strings.TrimSpace(req.Address),
+		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
+		Address:       sanitize.Text(strings.TrimSpace(req.Address)),
 		EventDate:     strings.TrimSpace(req.EventDate),
-		EventType:     strings.TrimSpace(req.EventType),
-		ChurchRole:    strings.TrimSpace(req.ChurchRole),
-		CustomRole:    strings.TrimSpace(req.CustomRole),
-		Comments:      strings.TrimSpace(req.Comments),
+		EventType:     sanitize.Text(strings.TrimSpace(req.EventType)),
+		ChurchRole:    sanitize.Text(strings.TrimSpace(req.ChurchRole)),
+		CustomRole:    sanitize.Text(strings.TrimSpace(req.CustomRole)),
+		Comments:      sanitize.Text(strings.TrimSpace(req.Comments)),
 		SourceChannel: source,
 	}
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreatePastoralCareRequest(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit pastoral care request")
 		return
 	}
@@ -144,18 +145,22 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 	}
 
 	row := models.GivingIntent{
-		Title:         strings.TrimSpace(req.Title),
-		Description:   strings.TrimSpace(req.Description),
+		Title:         sanitize.Text(strings.TrimSpace(req.Title)),
+		Description:   sanitize.Text(strings.TrimSpace(req.Description)),
 		SourceChannel: source,
 	}
 	if len(req.Metadata) > 0 {
-		raw, _ := json.Marshal(req.Metadata)
+		raw, err := json.Marshal(req.Metadata)
+		if err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid metadata format")
+			return
+		}
 		row.Metadata = raw
 	}
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreateGivingIntent(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to capture giving intent")
 		return
 	}
@@ -191,19 +196,19 @@ func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
 	}
 
 	row := models.ContactMessage{
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
-		Email:         strings.TrimSpace(req.Email),
+		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
+		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
+		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
 		Phone:         strings.TrimSpace(req.Phone),
-		Topic:         strings.TrimSpace(req.Topic),
-		Message:       strings.TrimSpace(req.Message),
+		Topic:         sanitize.Text(strings.TrimSpace(req.Topic)),
+		Message:       sanitize.Text(strings.TrimSpace(req.Message)),
 		SourceChannel: source,
 		Metadata:      req.Metadata,
 	}
 
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&row).Error; err != nil {
+	if err := h.repo.CreateContactMessage(ctx, &row); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit contact message")
 		return
 	}
@@ -235,19 +240,8 @@ func (h *EngagementHandler) ListPastoralCareRequests(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.PastoralCareRequest{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load pastoral care requests")
-		return
-	}
-
-	var items []models.PastoralCareRequest
-	if err := h.db.WithContext(ctx).
-		Model(&models.PastoralCareRequest{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListPastoralCareRequests(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load pastoral care requests")
 		return
 	}
@@ -269,19 +263,8 @@ func (h *EngagementHandler) ListGivingIntents(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.GivingIntent{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving intents")
-		return
-	}
-
-	var items []models.GivingIntent
-	if err := h.db.WithContext(ctx).
-		Model(&models.GivingIntent{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListGivingIntents(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving intents")
 		return
 	}
@@ -303,19 +286,8 @@ func (h *EngagementHandler) ListContactMessages(c *gin.Context) {
 	ctx, cancel := engagementContextWithTimeout()
 	defer cancel()
 
-	var total int64
-	if err := h.db.WithContext(ctx).Model(&models.ContactMessage{}).Count(&total).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
-		return
-	}
-
-	var items []models.ContactMessage
-	if err := h.db.WithContext(ctx).
-		Model(&models.ContactMessage{}).
-		Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&items).Error; err != nil {
+	items, total, err := h.repo.ListContactMessages(ctx, offset, limit)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load contact messages")
 		return
 	}
