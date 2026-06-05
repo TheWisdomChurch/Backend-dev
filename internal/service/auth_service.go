@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
@@ -19,6 +21,7 @@ import (
 
 // AuthService implementation
 type authServiceImpl struct {
+	db              *gorm.DB // for transaction management
 	userRepo        repository.UserRepository
 	otp             OTPService
 	sender          EmailSender
@@ -39,8 +42,9 @@ var ErrWrongPassword = errors.New("incorrect password")
 var ErrAdminTOTPRequired = errors.New("admin accounts with authenticator enabled must complete totp verification")
 
 const (
-	failedLoginThreshold  = 3
+	failedLoginThreshold  = 5
 	failedLoginWindow     = 15 * time.Minute
+	accountLockDuration   = 30 * time.Minute
 	loginOTPPurposePrefix = "login:"
 	otpEntryPath          = "/verify-otp"
 	resetEntryPath        = "/reset-password"
@@ -56,12 +60,13 @@ var allowedRoles = map[string]string{
 }
 
 // NewAuthService creates a new auth service
-func NewAuthService(userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
+func NewAuthService(db *gorm.DB, userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
 	var protector *authutil.Protector
 	if p, err := authutil.NewProtector(authSecret); err == nil {
 		protector = p
 	}
 	return &authServiceImpl{
+		db:              db,
 		userRepo:        userRepo,
 		otp:             otp,
 		sender:          sender,
@@ -99,6 +104,26 @@ func (s *authServiceImpl) Login(email, password string, meta LoginMetadata) (*Lo
 		return nil, ErrAdminPending
 	}
 
+	// Auto-unlock if the lock period has passed.
+	if user.IsLocked && user.LockedUntil != nil && time.Now().UTC().After(*user.LockedUntil) {
+		user.IsLocked = false
+		user.LockedUntil = nil
+		user.FailedLoginCount = 0
+		_ = s.userRepo.Update(user)
+	}
+
+	if user.IsLocked {
+		remaining := "a few minutes"
+		if user.LockedUntil != nil {
+			d := time.Until(*user.LockedUntil).Round(time.Minute)
+			if d > 0 {
+				remaining = d.String()
+			}
+		}
+		return nil, fmt.Errorf("account temporarily locked due to too many failed login attempts. Try again in %s", remaining)
+	}
+
+	// Reset stale failed-login counter.
 	if user.LastFailedLoginAt != nil && time.Since(*user.LastFailedLoginAt) > failedLoginWindow {
 		user.FailedLoginCount = 0
 	}
@@ -194,18 +219,29 @@ func (s *authServiceImpl) recordFailedLogin(user *models.User, meta LoginMetadat
 		user.FailedLoginCount++
 	}
 	user.LastFailedLoginAt = &now
-	_ = s.userRepo.Update(user)
+
+	// Lock the account when the threshold is reached.
+	if user.FailedLoginCount >= failedLoginThreshold {
+		user.IsLocked = true
+		lockedUntil := now.Add(accountLockDuration)
+		user.LockedUntil = &lockedUntil
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		slog.Warn("auth_service: failed to persist failed-login state", "user_id", user.ID, "error", err)
+	}
 
 	if s.security != nil {
 		s.security.RecordEvent("failed_login", user, meta, map[string]interface{}{
 			"failed_count": user.FailedLoginCount,
+			"locked":       user.IsLocked,
 		})
 	}
 
-	if user.FailedLoginCount == failedLoginThreshold {
+	if user.FailedLoginCount >= failedLoginThreshold {
 		s.sendFailedLoginAlert(user, meta)
 		if s.security != nil {
-			s.security.NotifySuspiciousLogin(user, meta, "Multiple failed login attempts")
+			s.security.NotifySuspiciousLogin(user, meta, "Account locked after multiple failed login attempts")
 		}
 	}
 }
@@ -655,18 +691,36 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 		}(),
 	}
 
-	// Save user
-	if err := s.userRepo.Create(user); err != nil {
-		return nil, err
+	// Wrap user creation + approval request in a transaction for atomicity.
+	if s.db != nil {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			txRepo := s.userRepo.WithTx(tx)
+			if err := txRepo.Create(user); err != nil {
+				return err
+			}
+			if needsAdminApproval(user) {
+				if err := requestAdminApprovalTx(s.approvalSvc, user); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	} else {
+		// Fallback when db is not injected (tests / legacy path).
+		if err := s.userRepo.Create(user); err != nil {
+			return nil, err
+		}
 	}
 
+	// Side-effects outside the transaction (email, non-critical notifications).
 	if needsAdminApproval(user) {
-		requestAdminApproval(s.approvalSvc, s.notifySvc, user)
+		notifyAdminNewRegistration(s.notifySvc, user)
 	} else {
 		s.sendAdminWelcome(user)
 	}
 
-	// Remove password from response
 	user.Password = ""
 	return user, nil
 }

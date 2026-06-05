@@ -206,6 +206,11 @@ func (r *RedisClient) Close() error {
 	return r.client.Close()
 }
 
+// Ping checks Redis connectivity. Used by the readiness endpoint.
+func (r *RedisClient) Ping(ctx context.Context) error {
+	return r.client.Ping(ctx).Err()
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a

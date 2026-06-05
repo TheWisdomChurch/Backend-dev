@@ -11,18 +11,20 @@ import (
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
 )
 
 type AnalyticsHandler struct {
-	db             *database.Database
+	svc            service.AnalyticsService
 	decisionEngine service.DecisionSupportService
 }
 
 func NewAnalyticsHandler(db *database.Database, redisCache *cache.RedisClient) *AnalyticsHandler {
+	repo := repository.NewAnalyticsRepository(db)
 	return &AnalyticsHandler{
-		db:             db,
+		svc:            service.NewAnalyticsService(repo),
 		decisionEngine: service.NewDecisionSupportService(db, redisCache),
 	}
 }
@@ -31,62 +33,13 @@ func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	var totalEvents int64
-	var upcomingEvents int64
-
-	if err := h.db.WithContext(ctx).Model(&models.Event{}).Count(&totalEvents).Error; err != nil {
+	result, err := h.svc.GetAdminAnalytics(ctx)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
 		return
 	}
 
-	if err := h.db.WithContext(ctx).
-		Model(&models.Event{}).
-		Where("status = ?", models.EventStatusUpcoming).
-		Count(&upcomingEvents).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
-		return
-	}
-
-	type sumRow struct{ Sum int64 }
-	var row sumRow
-	if err := h.db.WithContext(ctx).
-		Model(&models.Event{}).
-		Select("COALESCE(SUM(attendees),0) as sum").
-		Scan(&row).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
-		return
-	}
-	totalAttendees := row.Sum
-
-	type catRow struct {
-		Category string
-		Count    int64
-	}
-	var cats []catRow
-	if err := h.db.WithContext(ctx).
-		Model(&models.Event{}).
-		Select("category, COUNT(*) as count").
-		Group("category").
-		Scan(&cats).Error; err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
-		return
-	}
-
-	eventsByCategory := map[string]uint64{}
-	for _, r := range cats {
-		eventsByCategory[r.Category] = uint64(r.Count)
-	}
-
-	// Keep structure stable for frontend; you can implement real month grouping later.
-	monthlyStats := []gin.H{}
-
-	utils.SuccessResponse(c, http.StatusOK, "Analytics retrieved successfully", gin.H{
-		"totalEvents":      totalEvents,
-		"upcomingEvents":   upcomingEvents,
-		"totalAttendees":   totalAttendees,
-		"eventsByCategory": eventsByCategory,
-		"monthlyStats":     monthlyStats,
-	})
+	utils.SuccessResponse(c, http.StatusOK, "Analytics retrieved successfully", result)
 }
 
 func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
@@ -137,17 +90,18 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 	if userID == "" {
 		userID = req.Session.UserID
 	}
-	userIDPtr := func() *string {
-		if userID == "" {
-			return nil
-		}
-		out := userID
-		return &out
-	}()
+	var userIDPtr *string
+	if userID != "" {
+		userIDPtr = &userID
+	}
 
-	rawPayload, _ := json.Marshal(req)
+	rawPayload, err := json.Marshal(req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to serialize analytics payload")
+		return
+	}
 
-	record := models.AnalyticsBatch{
+	batch := &models.AnalyticsBatch{
 		BatchID:    req.BatchID,
 		SessionID:  req.Session.SessionID,
 		UserID:     userIDPtr,
@@ -157,7 +111,8 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	if err := h.db.WithContext(ctx).Create(&record).Error; err != nil {
+
+	if err := h.svc.IngestBatch(ctx, batch); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to persist analytics events")
 		return
 	}

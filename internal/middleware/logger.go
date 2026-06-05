@@ -1,37 +1,13 @@
 package middleware
 
 import (
-	"log"
-	"time"
-
 	"github.com/gin-gonic/gin"
+	"wisdomHouse-backend/internal/logger"
 )
 
-func Logger(level string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		path := c.Request.URL.Path
-		raw := c.Request.URL.RawQuery
-
-		c.Next()
-
-		if raw != "" {
-			path = path + "?" + raw
-		}
-
-		log.Printf("level=%s method=%s path=%s status=%d latency=%s ip=%s",
-			level,
-			c.Request.Method,
-			path,
-			c.Writer.Status(),
-			time.Since(start),
-			c.ClientIP(),
-		)
-
-		if len(c.Errors) > 0 {
-			for _, e := range c.Errors.Errors() {
-				log.Printf("level=error path=%s err=%q", path, e)
-			}
-		}
-	}
+// Logger returns a Gin request-logging middleware backed by log/slog.
+// The level parameter is accepted for backward-compatibility but filtering
+// is now controlled by logger.Init(level, env) called at startup.
+func Logger(_ string) gin.HandlerFunc {
+	return logger.GinMiddleware()
 }

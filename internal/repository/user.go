@@ -21,6 +21,8 @@ type UserRepository interface {
 	Delete(id string) error
 	DeleteHard(id string) error
 	GetTotalCount() (int64, error)
+	// WithTx returns a new repository scoped to the given transaction.
+	WithTx(tx *gorm.DB) UserRepository
 }
 
 // User repository implementation
@@ -31,6 +33,10 @@ type userRepository struct {
 // NewUserRepository creates a new user repository
 func NewUserRepository(db *database.Database) UserRepository {
 	return &userRepository{db: db.DB}
+}
+
+func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
+	return &userRepository{db: tx}
 }
 
 func (r *userRepository) Create(user *models.User) error {
