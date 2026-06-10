@@ -10,7 +10,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o wisdom-house .
+RUN CGO_ENABLED=0 GOOS=linux go build -o wisdom-house ./cmd/api
 
 # =========================
 # Development
@@ -46,11 +46,12 @@ FROM alpine:latest AS production
 
 RUN apk --no-cache add ca-certificates postgresql-client
 
-WORKDIR /root/
+WORKDIR /app
 
-COPY --from=builder /app/wisdom-house .
-COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/wisdom-house /app/wisdom-house
+COPY --from=builder /app/migrations /app/migrations
 
 EXPOSE 8080
+ENV PORT=8080
 
-CMD ["./wisdom-house"]
+CMD ["/app/wisdom-house"]
