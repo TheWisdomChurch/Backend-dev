@@ -1,0 +1,171 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                   WISDOM HOUSE BACKEND - PROJECT STRUCTURE                 ║
+║                        Professional Enterprise Grade                        ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+📦 ROOT DIRECTORY
+├── README.md                    ← Start here
+├── DEVELOPMENT.md               ← Development guide
+├── SECURITY_CHECKLIST.md        ← Security best practices
+├── USER_STORIES.md              ← Product requirements
+├── makefile                     ← Build automation (make help)
+│
+├── go.mod & go.sum             ← Go dependencies
+├── dockerfile                  ← Docker image definition
+├── docker-compose.yml          ← Local development stack
+├── docker-compose.prod.yml     ← Production stack
+│
+├── .env                        ← Development config (DO NOT COMMIT)
+├── .env.example                ← Template for .env
+├── .env.production             ← Production config template
+├── .gitignore                  ← Git ignore rules
+│
+├── 📁 cmd/                     ← Application entry points
+│   └── api/
+│       └── main.go             ← Server startup logic
+│
+├── 📁 internal/                ← Core application code
+│   ├── apperror/              ← Error handling
+│   ├── authutil/              ← Auth utilities
+│   ├── cache/                 ← Redis caching layer
+│   ├── config/                ← Configuration management
+│   ├── database/              ← DB connections & queries
+│   ├── email/                 ← Email service
+│   ├── exportpdf/             ← PDF generation
+│   ├── handlers/              ← HTTP request handlers
+│   ├── logger/                ← Logging setup
+│   ├── middleware/            ← HTTP middleware
+│   ├── models/                ← Data structures
+│   ├── repository/            ← Database access layer
+│   ├── sanitize/              ← Input sanitization
+│   ├── service/               ← Business logic
+│   ├── validation/            ← Input validation
+│   └── worker/                ← Background jobs
+│
+├── 📁 pkg/                     ← Public utilities
+│   └── utils/                 ← Shared helpers
+│
+├── 📁 migrations/              ← Database migrations
+│
+├── 📁 scripts/                 ← Build & deployment scripts
+│
+├── 📁 .github/                 ← GitHub workflows
+│
+└── 📁 .ai/                 ← AI settings
+    └── settings.json          ← CLI permissions
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                              QUICK COMMANDS                                 ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+Development:
+  make help              Show all commands
+  make run               Start server (port 8080)
+  make watch             Auto-reload on changes
+  make test              Run unit tests
+  make test-coverage     Generate coverage report
+  make lint              Format & vet code
+  make clean             Remove build artifacts
+
+Building:
+  make build             Build debug binary → bin/wisdomhousebe
+  make build-prod        Build optimized binary
+  make docker-build      Build Docker image
+
+Database:
+  make migrate           Run migrations
+  make seed              Load test data
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                           ARCHITECTURE LAYERS                               ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────┐
+│         HTTP Handler Layer                  │
+│  internal/handlers/                         │
+│  - Request parsing                          │
+│  - Response formatting                      │
+│  - Middleware chain                         │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│      Business Logic Layer                   │
+│  internal/service/                          │
+│  - Domain logic                             │
+│  - Validation                               │
+│  - Cross-service calls                      │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│     Data Access Layer                       │
+│  internal/repository/                       │
+│  - Database queries                         │
+│  - Cache operations                         │
+│  - Transaction management                   │
+└──────────────────┬──────────────────────────┘
+                   │
+        ┌──────────┴──────────┐
+        │                     │
+   ┌────▼────┐          ┌────▼────┐
+   │PostgreSQL│         │Redis    │
+   │  15      │         │ 7       │
+   └──────────┘         └─────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                         ENVIRONMENT CONFIGURATION                           ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+Development:    .env (auto-created)
+Production:     .env.production (template provided)
+Example:        .env.example (template)
+
+KEY VARIABLES:
+  ENVIRONMENT         development | production
+  SERVER_PORT         8080
+  DATABASE_URL        PostgreSQL connection
+  REDIS_URL           Redis connection
+  AUTH_SECRET_KEY     JWT signing key
+  CORS_ALLOW_ORIGIN   Frontend URL
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                            BEST PRACTICES                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+✅ DO:
+   - Keep handlers thin (< 50 lines)
+   - Put business logic in services
+   - Use repository pattern for data access
+   - Write tests for services
+   - Use context for cancellation
+   - Log structured messages
+   - Handle errors explicitly
+   - Use dependency injection
+
+❌ DON'T:
+   - Put business logic in handlers
+   - Access database directly from handlers
+   - Global state in handlers
+   - Panic in production code
+   - Ignore error returns
+   - Hardcode configuration values
+   - Long-running operations in handlers
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                          USEFUL RESOURCES                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+Documentation:
+  README.md             Project overview
+  DEVELOPMENT.md        Development setup & workflow
+  SECURITY_CHECKLIST.md Security guidelines
+
+API Docs:
+  Swagger:              http://localhost:8080/swagger
+  Health check:         http://localhost:8080/api/v1/health
+
+Learn More:
+  Go:      https://golang.org/doc/effective_go
+  Gin:     https://github.com/gin-gonic/gin
+  GORM:    https://gorm.io/docs
+  Postgres: https://www.postgresql.org/docs
+
