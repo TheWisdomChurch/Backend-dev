@@ -33,3 +33,38 @@ Admin_portal/
 
 # Nested frontend/admin repo
 Admin_portal/
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+wisdomhousebe
+*.out
+
+# Test binaries
+*.test
+
+# Output of go coverage
+*.out
+.coverage/
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
