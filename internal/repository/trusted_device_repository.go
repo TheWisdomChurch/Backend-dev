@@ -14,6 +14,8 @@ type TrustedDeviceRepository interface {
 	Find(userID, deviceID string) (*models.TrustedDevice, error)
 	Upsert(device *models.TrustedDevice) error
 	MarkUntrusted(userID, deviceID string) error
+	// WithTx returns a new repository scoped to the given transaction.
+	WithTx(tx *gorm.DB) TrustedDeviceRepository
 }
 
 type trustedDeviceRepository struct {
@@ -22,6 +24,10 @@ type trustedDeviceRepository struct {
 
 func NewTrustedDeviceRepository(db *database.Database) TrustedDeviceRepository {
 	return &trustedDeviceRepository{db: db.DB}
+}
+
+func (r *trustedDeviceRepository) WithTx(tx *gorm.DB) TrustedDeviceRepository {
+	return &trustedDeviceRepository{db: tx}
 }
 
 func (r *trustedDeviceRepository) Find(userID, deviceID string) (*models.TrustedDevice, error) {
