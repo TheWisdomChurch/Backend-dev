@@ -1055,6 +1055,12 @@ func main() {
 		logger.Fatalf("❌ Database connection failed: %v", err)
 	}
 
+	// Run database migrations
+	migrationsDir := "migrations"
+	if err := database.RunMigrations(db.DB, migrationsDir); err != nil {
+		logger.Fatalf("❌ Failed to run migrations: %v", err)
+	}
+
 	// Migration-only mode
 	if isTrueEnv("RUN_AUTOMIGRATE") {
 		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
