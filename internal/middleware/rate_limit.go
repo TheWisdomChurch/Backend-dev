@@ -12,20 +12,20 @@ import (
 
 // RateLimitConfig defines limits per endpoint
 var RateLimitConfig = map[string]RateLimit{
-	// Auth endpoints - generous limits for good UX
+	// Auth endpoints - very generous limits for critical session management
 	"/api/v1/auth/me": {
-		RequestsPerSecond: 10,  // 10 req/sec per user
-		BurstSize:        50,   // Allow bursts of 50
+		RequestsPerSecond: 100, // 100 req/sec per user (session checks happen frequently)
+		BurstSize:        500,  // Allow large bursts for concurrent requests
 		Window:           1 * time.Second,
 	},
 	"/api/v1/auth/login/verify-otp": {
-		RequestsPerSecond: 5,  // 5 attempts per second
-		BurstSize:        10,  // Max 10 in quick succession
+		RequestsPerSecond: 10,  // 10 attempts per second (more lenient than before)
+		BurstSize:        30,   // Max 30 in quick succession
 		Window:           1 * time.Second,
 	},
 	"/api/v1/auth/login": {
-		RequestsPerSecond: 3, // 3 logins per second
-		BurstSize:        5,  // Burst up to 5
+		RequestsPerSecond: 10,  // 10 logins per second (very lenient)
+		BurstSize:        20,   // Burst up to 20
 		Window:           1 * time.Second,
 	},
 }
