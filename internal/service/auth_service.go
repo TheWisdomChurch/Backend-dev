@@ -349,11 +349,29 @@ func (s *authServiceImpl) markLoginComplete(user *models.User, meta LoginMetadat
 	user.FailedLoginCount = 0
 	user.LastFailedLoginAt = nil
 
-	if err := s.userRepo.Update(user); err != nil {
-		return errors.New("failed to update profile")
+	// Wrap user update + trusted device upsert in a transaction for atomicity.
+	if s.db != nil && s.trustedDevs != nil {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			txUserRepo := s.userRepo.WithTx(tx)
+			txDeviceRepo := s.trustedDevs.WithTx(tx)
+			if err := txUserRepo.Update(user); err != nil {
+				return errors.New("failed to update profile")
+			}
+			if err := s.upsertTrustedDeviceTx(user, meta, true, txDeviceRepo); err != nil {
+				return err
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else {
+		// Fallback when db is not injected (tests / legacy path).
+		if err := s.userRepo.Update(user); err != nil {
+			return errors.New("failed to update profile")
+		}
+		s.upsertTrustedDevice(user, meta, true)
 	}
 
-	s.upsertTrustedDevice(user, meta, true)
 	return nil
 }
 
@@ -546,6 +564,29 @@ func (s *authServiceImpl) buildOTPLink(path, purpose, email string) string {
 	parsed.RawQuery = q.Encode()
 
 	return parsed.String()
+}
+
+// upsertTrustedDeviceTx is for use inside a transaction.
+func (s *authServiceImpl) upsertTrustedDeviceTx(user *models.User, meta LoginMetadata, trusted bool, txDeviceRepo repository.TrustedDeviceRepository) error {
+	if user == nil || meta.DeviceID == "" {
+		return nil
+	}
+	dev := &models.TrustedDevice{
+		UserID:     user.ID,
+		DeviceID:   meta.DeviceID,
+		LastIP:     meta.IP,
+		UserAgent:  meta.UserAgent,
+		Trusted:    trusted,
+		LastSeenAt: time.Now().UTC(),
+		ExpiresAt:  time.Now().UTC().Add(trustedDeviceTTL),
+	}
+	if err := txDeviceRepo.Upsert(dev); err != nil {
+		return err
+	}
+	if s.security != nil {
+		s.security.RecordEvent("trusted_device_updated", user, meta, map[string]interface{}{"trusted": trusted})
+	}
+	return nil
 }
 
 func (s *authServiceImpl) upsertTrustedDevice(user *models.User, meta LoginMetadata, trusted bool) {
