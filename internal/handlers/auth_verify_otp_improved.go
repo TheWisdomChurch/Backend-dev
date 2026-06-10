@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/service"
-	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -86,8 +85,10 @@ func (h *AuthHandler) ImprovedVerifyLoginOTP(c *gin.Context) {
 		// Record failed attempt
 		h.recordOTPAttempt(c, req.Email, false)
 
-		// Return specific error messages
-		if errors.Is(err, service.ErrInvalidOTP) {
+		// Return specific error messages based on error string
+		errMsg := strings.ToLower(err.Error())
+
+		if strings.Contains(errMsg, "invalid") || strings.Contains(errMsg, "incorrect") {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "error",
 				"message": "Incorrect OTP code",
@@ -101,7 +102,7 @@ func (h *AuthHandler) ImprovedVerifyLoginOTP(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(err, service.ErrOTPExpired) {
+		if strings.Contains(errMsg, "expired") {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "error",
 				"message": "OTP code has expired",
@@ -112,13 +113,24 @@ func (h *AuthHandler) ImprovedVerifyLoginOTP(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(err, service.ErrUserNotFound) {
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "account") {
 			// Don't reveal if user exists (security)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "error",
 				"message": "Verification failed",
 				"errors": gin.H{
 					"email": "Unable to verify with the provided email and code",
+				},
+			})
+			return
+		}
+
+		if errors.Is(err, service.ErrAdminPending) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin approval pending",
+				"errors": gin.H{
+					"general": "Your admin account is awaiting super-admin approval.",
 				},
 			})
 			return
@@ -253,12 +265,5 @@ func (h *AuthHandler) clearOTPAttempts(c *gin.Context, email string) {
 	// TODO: Implement with cache layer
 }
 
-// Helper to check if user has admin role
-func isAdminAccessRole(role string) bool {
-	adminRoles := map[string]bool{
-		"admin":      true,
-		"superadmin": true,
-		"superadmin_pending": true,
-	}
-	return adminRoles[strings.ToLower(role)]
-}
+// Note: isAdminAccessRole is already defined in auth.go
+// This function reuses the same helper
