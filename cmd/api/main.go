@@ -1252,6 +1252,11 @@ func main() {
 		adminNotificationService,
 		cfg.Auth.MFAIssuer,
 		cfg.Auth.SecretKey,
+		service.AuthServiceOptions{
+			PasswordHashCost: cfg.Auth.PasswordHashCost,
+			PasswordPolicy:   authutil.PolicyFromConfig(cfg.Auth.PasswordMinLength),
+			HIBPEnabled:      cfg.Auth.HIBPEnabled,
+		},
 	)
 
 	adminService := service.NewAdminService(
