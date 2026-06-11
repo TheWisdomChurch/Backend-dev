@@ -2,7 +2,6 @@
 package handlers
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
