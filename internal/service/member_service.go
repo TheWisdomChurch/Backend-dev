@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -35,10 +36,36 @@ type memberService struct {
 	eventRepo *repository.EventRepository
 	sender    EmailSender
 	branding  email.Branding
+	protector *authutil.Protector
 }
 
-func NewMemberService(repo repository.MemberRepository, formRepo repository.FormRepository, eventRepo *repository.EventRepository, sender EmailSender, branding email.Branding) MemberService {
-	return &memberService{repo: repo, formRepo: formRepo, eventRepo: eventRepo, sender: sender, branding: branding}
+func NewMemberService(repo repository.MemberRepository, formRepo repository.FormRepository, eventRepo *repository.EventRepository, sender EmailSender, branding email.Branding, authSecret string) MemberService {
+	var protector *authutil.Protector
+	if p, err := authutil.NewProtector(authSecret); err == nil {
+		protector = p
+	}
+	return &memberService{repo: repo, formRepo: formRepo, eventRepo: eventRepo, sender: sender, branding: branding, protector: protector}
+}
+
+// decryptMember decrypts PhoneEnc into Phone and clears the ciphertext field so
+// it is never included in API responses. Falls back to the legacy plaintext phone
+// column when no encrypted value is present (covers pre-migration records).
+func (s *memberService) decryptMember(m *models.Member) {
+	if m == nil || s.protector == nil {
+		return
+	}
+	if m.PhoneEnc != nil {
+		if dec, err := s.protector.DecryptString(*m.PhoneEnc); err == nil {
+			m.Phone = &dec
+		}
+		m.PhoneEnc = nil
+	}
+}
+
+func (s *memberService) decryptMembers(members []models.Member) {
+	for i := range members {
+		s.decryptMember(&members[i])
+	}
 }
 
 func startOfWeek(t time.Time) time.Time {
@@ -62,7 +89,12 @@ func (s *memberService) List(page, limit int, active *bool) ([]models.Member, in
 		limit = 10
 	}
 	offset := (page - 1) * limit
-	return s.repo.List(offset, limit, active)
+	members, total, err := s.repo.List(offset, limit, active)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.decryptMembers(members)
+	return members, total, nil
 }
 
 func (s *memberService) Stats() (*models.MemberStatsResponse, error) {
@@ -182,15 +214,26 @@ func (s *memberService) Create(req *models.CreateMemberRequest) (*models.Member,
 		FirstName:     sanitize.Text(strings.TrimSpace(req.FirstName)),
 		LastName:      sanitize.Text(strings.TrimSpace(req.LastName)),
 		Email:         strings.ToLower(strings.TrimSpace(req.Email)),
-		Phone:         optionalStringPtr(ptrString(req.Phone)),
 		IsActive:      isActive,
 		BirthdayMonth: month,
 		BirthdayDay:   day,
 	}
 
+	if req.Phone != nil {
+		phone := strings.TrimSpace(*req.Phone)
+		if phone != "" && s.protector != nil {
+			enc, err := s.protector.EncryptString(phone)
+			if err != nil {
+				return nil, errors.New("failed to encrypt phone number")
+			}
+			member.PhoneEnc = &enc
+		}
+	}
+
 	if err := s.repo.Create(member); err != nil {
 		return nil, err
 	}
+	s.decryptMember(member)
 	return member, nil
 }
 
@@ -206,7 +249,19 @@ func (s *memberService) Update(id string, req *models.UpdateMemberRequest) (*mod
 		updates["email"] = strings.TrimSpace(*req.Email)
 	}
 	if req.Phone != nil {
-		updates["phone"] = strings.TrimSpace(*req.Phone)
+		phone := strings.TrimSpace(*req.Phone)
+		if s.protector != nil {
+			if phone != "" {
+				enc, err := s.protector.EncryptString(phone)
+				if err != nil {
+					return nil, errors.New("failed to encrypt phone number")
+				}
+				updates["phone_enc"] = enc
+			} else {
+				updates["phone_enc"] = nil
+			}
+			updates["phone"] = nil // clear legacy plaintext column
+		}
 	}
 	if req.IsActive != nil {
 		updates["is_active"] = *req.IsActive
@@ -224,7 +279,12 @@ func (s *memberService) Update(id string, req *models.UpdateMemberRequest) (*mod
 		return nil, errors.New("no updates provided")
 	}
 
-	return s.repo.Update(id, updates)
+	member, err := s.repo.Update(id, updates)
+	if err != nil {
+		return nil, err
+	}
+	s.decryptMember(member)
+	return member, nil
 }
 
 func (s *memberService) Delete(id string) error {
@@ -310,7 +370,12 @@ func (s *memberService) BirthdaysByMonth(month int) ([]models.Member, error) {
 	if month < 1 || month > 12 {
 		return nil, errors.New("month must be 1-12")
 	}
-	return s.repo.ListByMonth(month, true)
+	members, err := s.repo.ListByMonth(month, true)
+	if err != nil {
+		return nil, err
+	}
+	s.decryptMembers(members)
+	return members, nil
 }
 
 func (s *memberService) BirthdaysToday(now time.Time) ([]models.Member, error) {
@@ -319,7 +384,12 @@ func (s *memberService) BirthdaysToday(now time.Time) ([]models.Member, error) {
 	}
 	month := int(now.Month())
 	day := now.Day()
-	return s.repo.ListByMonthDay(month, day, true)
+	members, err := s.repo.ListByMonthDay(month, day, true)
+	if err != nil {
+		return nil, err
+	}
+	s.decryptMembers(members)
+	return members, nil
 }
 
 func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error) {

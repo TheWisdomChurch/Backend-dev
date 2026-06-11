@@ -7,7 +7,8 @@ type Member struct {
 	FirstName string  `gorm:"size:100;not null" json:"firstName"`
 	LastName  string  `gorm:"size:100;not null" json:"lastName"`
 	Email     string  `gorm:"size:255;not null;index:idx_members_email" json:"email"`
-	Phone     *string `gorm:"size:50" json:"phone,omitempty"`
+	Phone     *string `gorm:"column:phone;size:50" json:"phone,omitempty"`
+	PhoneEnc  *string `gorm:"column:phone_enc;type:text" json:"-"` // AES-256-GCM ciphertext; decrypted into Phone by service layer
 	IsActive  bool    `gorm:"not null;default:true" json:"isActive"`
 
 	// Birthday is stored as month/day components so yearly birthday automation works without storing a birth year.
