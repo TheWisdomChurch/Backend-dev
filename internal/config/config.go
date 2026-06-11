@@ -108,6 +108,17 @@ type CORSConfig struct {
 type JWTConfig struct {
 	Secret     string        `json:"-" env:"JWT_SECRET"`
 	Expiration time.Duration `json:"expiration" env:"JWT_EXPIRATION"`
+
+	// RS256 key pair (optional — falls back to HS256 when not set).
+	// Generate with: openssl genrsa -out jwt_private.pem 2048
+	//                openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+	PrivateKeyPath string `json:"-" env:"JWT_PRIVATE_KEY_PATH"`
+	PublicKeyPath  string `json:"-" env:"JWT_PUBLIC_KEY_PATH"`
+
+	// Short-lived access token TTL. Defaults to 15 minutes.
+	AccessTokenTTL time.Duration `json:"access_token_ttl" env:"JWT_ACCESS_TOKEN_TTL"`
+	// Long-lived refresh token TTL. Defaults to 7 days.
+	RefreshTokenTTL time.Duration `json:"refresh_token_ttl" env:"JWT_REFRESH_TOKEN_TTL"`
 }
 
 type AuthConfig struct {
@@ -123,6 +134,11 @@ type AuthConfig struct {
 	GoogleClientSecret           string        `json:"-" env:"AUTH_GOOGLE_CLIENT_SECRET"`
 	GoogleRedirectURL            string        `json:"google_redirect_url" env:"AUTH_GOOGLE_REDIRECT_URL"`
 	GoogleHostedDomain           string        `json:"google_hosted_domain" env:"AUTH_GOOGLE_HOSTED_DOMAIN"`
+
+	// Password policy
+	PasswordMinLength int  `json:"password_min_length" env:"AUTH_PASSWORD_MIN_LENGTH"`
+	PasswordHashCost  int  `json:"password_hash_cost"  env:"AUTH_PASSWORD_HASH_COST"`
+	HIBPEnabled       bool `json:"hibp_enabled"        env:"AUTH_HIBP_ENABLED"`
 }
 
 type AppConfig struct {
@@ -271,8 +287,12 @@ func Load() (*Config, error) {
 			MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
 		},
 		JWT: JWTConfig{
-			Secret:     getEnv("JWT_SECRET", ""),
-			Expiration: getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
+			Secret:          getEnv("JWT_SECRET", ""),
+			Expiration:      getEnvAsDuration("JWT_EXPIRATION", 24*time.Hour),
+			PrivateKeyPath:  getEnv("JWT_PRIVATE_KEY_PATH", ""),
+			PublicKeyPath:   getEnv("JWT_PUBLIC_KEY_PATH", ""),
+			AccessTokenTTL:  getEnvAsDuration("JWT_ACCESS_TOKEN_TTL", 15*time.Minute),
+			RefreshTokenTTL: getEnvAsDuration("JWT_REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		},
 		Auth: AuthConfig{
 			SessionIdleTimeout:           getEnvAsDuration("AUTH_SESSION_IDLE_TIMEOUT", 30*time.Minute),
@@ -287,6 +307,9 @@ func Load() (*Config, error) {
 			GoogleClientSecret:           getEnv("AUTH_GOOGLE_CLIENT_SECRET", ""),
 			GoogleRedirectURL:            getEnv("AUTH_GOOGLE_REDIRECT_URL", ""),
 			GoogleHostedDomain:           getEnv("AUTH_GOOGLE_HOSTED_DOMAIN", ""),
+			PasswordMinLength:            getEnvAsInt("AUTH_PASSWORD_MIN_LENGTH", 12),
+			PasswordHashCost:             getEnvAsInt("AUTH_PASSWORD_HASH_COST", 12),
+			HIBPEnabled:                  getEnvAsBool("AUTH_HIBP_ENABLED", false),
 		},
 		App: AppConfig{
 			Environment:               env,
