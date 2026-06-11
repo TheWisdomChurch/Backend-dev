@@ -1275,7 +1275,7 @@ func main() {
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
 	leadershipService := service.NewLeadershipService(leadershipRepo, formRepo, adminNotificationService, approvalService, emailSender, branding)
-	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding)
+	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding, cfg.Auth.SecretKey)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	formService := service.NewFormService(
