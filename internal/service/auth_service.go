@@ -38,6 +38,7 @@ type authServiceImpl struct {
 	passwordPolicy   *authutil.PasswordPolicy
 	hibpClient       *authutil.HIBPClient
 	hibpEnabled      bool
+	geoDetector      *authutil.GeoDetector
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -68,6 +69,7 @@ type AuthServiceOptions struct {
 	PasswordHashCost int
 	PasswordPolicy   *authutil.PasswordPolicy
 	HIBPEnabled      bool
+	GeoDetector      *authutil.GeoDetector
 }
 
 // NewAuthService creates a new auth service
