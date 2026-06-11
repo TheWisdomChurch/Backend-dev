@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"wisdomHouse-backend/internal/apperror"
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/database"
@@ -595,6 +597,8 @@ func setupRouter(
 	cfg *config.Config,
 	userRepo repository.UserRepository,
 	userCache *cache.UserCache,
+	rsaPublicKey *rsa.PublicKey,
+	tokenBlocklist *authutil.TokenBlocklist,
 	healthHandler *handlers.HealthHandler,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
@@ -653,7 +657,11 @@ func setupRouter(
 
 	api := router.Group("/api/v1")
 
-	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
+	authGuard := middleware.AuthMiddleware(middleware.AuthMiddlewareOptions{
+		JWTSecret:    cfg.JWT.Secret,
+		RSAPublicKey: rsaPublicKey,
+		Blocklist:    tokenBlocklist,
+	})
 	sessionFreshnessGuard := middleware.SessionFreshnessMiddleware(userRepo, userCache)
 	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
 	csrfProtector := middleware.NewCSRFProtector(middleware.CSRFOptions{
@@ -688,7 +696,12 @@ func setupRouter(
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
 	auth.GET("/oauth/google/callback", authHandler.HandleGoogleOAuthCallback)
-	auth.GET("/me", middleware.OptionalAuthMiddleware(cfg.JWT.Secret), authHandler.GetCurrentUser)
+	auth.GET("/me", middleware.OptionalAuthMiddleware(middleware.AuthMiddlewareOptions{
+		JWTSecret:    cfg.JWT.Secret,
+		RSAPublicKey: rsaPublicKey,
+		Blocklist:    tokenBlocklist,
+	}), authHandler.GetCurrentUser)
+	auth.POST("/token/refresh", authHandler.RotateRefreshToken)
 
 	authProtected := auth.Group("")
 	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
@@ -1094,6 +1107,7 @@ func main() {
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 	storeRepo := repository.NewStoreRepository(db)
+	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache client (optional)
@@ -1124,6 +1138,32 @@ func main() {
 	var userCache *cache.UserCache
 	if redisCache != nil {
 		userCache = cache.NewUserCache(redisCache, cache.DefaultUserCacheTTL)
+	}
+
+	// -------------------------------------------------------------------------
+	// RSA key pair for JWT RS256 (optional — falls back to HS256)
+	// -------------------------------------------------------------------------
+	rsaKeyPair, err := authutil.LoadRSAKeyPair(cfg.JWT.PrivateKeyPath, cfg.JWT.PublicKeyPath)
+	if err != nil {
+		logger.Fatalf("❌ Failed to load RSA key pair: %v", err)
+	}
+	if rsaKeyPair != nil {
+		logger.Println("✅ JWT RS256 key pair loaded")
+	} else if env != "production" {
+		// Generate ephemeral keys in dev so RS256 can be tested without config.
+		rsaKeyPair, err = authutil.GenerateEphemeralRSAKeyPair()
+		if err != nil {
+			logger.Printf("⚠️ Could not generate ephemeral RSA key pair, using HS256: %v", err)
+		} else {
+			logger.Println("⚠️ JWT RS256: using ephemeral dev key pair (configure JWT_PRIVATE_KEY_PATH for production)")
+		}
+	}
+
+	// JTI blocklist — requires Redis. No-op when Redis is unavailable.
+	var tokenBlocklist *authutil.TokenBlocklist
+	if redisCache != nil {
+		tokenBlocklist = authutil.NewTokenBlocklist(redisCache)
+		logger.Println("✅ JWT token blocklist (JTI) initialized")
 	}
 
 	// -------------------------------------------------------------------------
@@ -1265,10 +1305,17 @@ func main() {
 	// Handlers
 	// -------------------------------------------------------------------------
 	testimonialHandler := handlers.NewTestimonialHandler(testimonialService, userRepo)
+	var rsaPrivKey *rsa.PrivateKey
+	if rsaKeyPair != nil {
+		rsaPrivKey = rsaKeyPair.Private
+	}
+
 	authHandler := handlers.NewAuthHandler(authService, handlers.AuthHandlerOptions{
 		JWTSecret:                    cfg.JWT.Secret,
+		RSAPrivateKey:                rsaPrivKey,
 		Secure:                       strings.TrimSpace(cfg.App.Environment) == "production",
-		AccessTokenTTL:               cfg.JWT.Expiration,
+		AccessTokenTTL:               cfg.JWT.AccessTokenTTL,
+		RefreshTokenTTL:              cfg.JWT.RefreshTokenTTL,
 		RememberMeTTL:                cfg.Auth.RememberMeTTL,
 		SessionIdleTimeout:           cfg.Auth.SessionIdleTimeout,
 		RememberedSessionIdleTimeout: cfg.Auth.RememberedSessionIdleTimeout,
@@ -1278,6 +1325,9 @@ func main() {
 		GoogleClientSecret:           cfg.Auth.GoogleClientSecret,
 		GoogleRedirectURL:            cfg.Auth.GoogleRedirectURL,
 		GoogleHostedDomain:           cfg.Auth.GoogleHostedDomain,
+		RefreshTokenRepo:             refreshTokenRepo,
+		Blocklist:                    tokenBlocklist,
+		PasswordHashCost:             cfg.Auth.PasswordHashCost,
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService)
@@ -1355,10 +1405,17 @@ func main() {
 	// -------------------------------------------------------------------------
 	healthHandler := handlers.NewHealthHandler(db, redisCache)
 
+	var rsaPubKey *rsa.PublicKey
+	if rsaKeyPair != nil {
+		rsaPubKey = rsaKeyPair.Public
+	}
+
 	router := setupRouter(
 		cfg,
 		userRepo,
 		userCache,
+		rsaPubKey,
+		tokenBlocklist,
 		healthHandler,
 		testimonialHandler,
 		authHandler,
