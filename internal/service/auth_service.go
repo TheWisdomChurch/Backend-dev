@@ -21,19 +21,23 @@ import (
 
 // AuthService implementation
 type authServiceImpl struct {
-	db              *gorm.DB // for transaction management
-	userRepo        repository.UserRepository
-	otp             OTPService
-	sender          EmailSender
-	branding        email.Branding
-	security        SecurityService
-	trustedDevs     repository.TrustedDeviceRepository
-	disableOTP      bool
-	disableLoginOTP bool
-	approvalSvc     ApprovalService
-	notifySvc       AdminNotificationService
-	totpProtector   *authutil.Protector
-	mfaIssuer       string
+	db               *gorm.DB // for transaction management
+	userRepo         repository.UserRepository
+	otp              OTPService
+	sender           EmailSender
+	branding         email.Branding
+	security         SecurityService
+	trustedDevs      repository.TrustedDeviceRepository
+	disableOTP       bool
+	disableLoginOTP  bool
+	approvalSvc      ApprovalService
+	notifySvc        AdminNotificationService
+	totpProtector    *authutil.Protector
+	mfaIssuer        string
+	passwordHashCost int
+	passwordPolicy   *authutil.PasswordPolicy
+	hibpClient       *authutil.HIBPClient
+	hibpEnabled      bool
 }
 
 var ErrAdminPending = errors.New("admin approval pending")
@@ -59,26 +63,43 @@ var allowedRoles = map[string]string{
 	"super admin": "super_admin",
 }
 
+// AuthServiceOptions holds optional configuration for NewAuthService.
+type AuthServiceOptions struct {
+	PasswordHashCost int
+	PasswordPolicy   *authutil.PasswordPolicy
+	HIBPEnabled      bool
+}
+
 // NewAuthService creates a new auth service
-func NewAuthService(db *gorm.DB, userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string) AuthService {
+func NewAuthService(db *gorm.DB, userRepo repository.UserRepository, otp OTPService, sender EmailSender, branding email.Branding, security SecurityService, trustedDevs repository.TrustedDeviceRepository, disableOTP bool, disableLoginOTP bool, approvalSvc ApprovalService, notifySvc AdminNotificationService, mfaIssuer string, authSecret string, opts AuthServiceOptions) AuthService {
 	var protector *authutil.Protector
 	if p, err := authutil.NewProtector(authSecret); err == nil {
 		protector = p
 	}
+	if opts.PasswordHashCost <= 0 {
+		opts.PasswordHashCost = 12
+	}
+	if opts.PasswordPolicy == nil {
+		opts.PasswordPolicy = authutil.DefaultPasswordPolicy()
+	}
 	return &authServiceImpl{
-		db:              db,
-		userRepo:        userRepo,
-		otp:             otp,
-		sender:          sender,
-		branding:        branding,
-		security:        security,
-		trustedDevs:     trustedDevs,
-		disableOTP:      disableOTP,
-		disableLoginOTP: disableLoginOTP,
-		approvalSvc:     approvalSvc,
-		notifySvc:       notifySvc,
-		totpProtector:   protector,
-		mfaIssuer:       strings.TrimSpace(mfaIssuer),
+		db:               db,
+		userRepo:         userRepo,
+		otp:              otp,
+		sender:           sender,
+		branding:         branding,
+		security:         security,
+		trustedDevs:      trustedDevs,
+		disableOTP:       disableOTP,
+		disableLoginOTP:  disableLoginOTP,
+		approvalSvc:      approvalSvc,
+		notifySvc:        notifySvc,
+		totpProtector:    protector,
+		mfaIssuer:        strings.TrimSpace(mfaIssuer),
+		passwordHashCost: opts.PasswordHashCost,
+		passwordPolicy:   opts.PasswordPolicy,
+		hibpClient:       authutil.NewHIBPClient(),
+		hibpEnabled:      opts.HIBPEnabled,
 	}
 }
 
@@ -510,7 +531,11 @@ func (s *authServiceImpl) ResetPasswordWithOTP(emailStr, code, purpose, newPassw
 		return errors.New("account is deactivated")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err := s.passwordPolicy.Validate(newPassword); err != nil {
+		return err
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.passwordHashCost)
 	if err != nil {
 		return errors.New("failed to hash password")
 	}
@@ -710,8 +735,18 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 		return nil, errors.New("user already exists")
 	}
 
+	if err := s.passwordPolicy.Validate(password); err != nil {
+		return nil, err
+	}
+
+	if s.hibpEnabled {
+		if breached, _ := s.hibpClient.IsBreached(password); breached {
+			return nil, errors.New("this password has appeared in a known data breach — please choose a different password")
+		}
+	}
+
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), s.passwordHashCost)
 	if err != nil {
 		return nil, err
 	}
@@ -888,8 +923,18 @@ func (s *authServiceImpl) ChangePassword(userID, currentPassword, newPassword st
 		return errors.New("current password is incorrect")
 	}
 
+	if err := s.passwordPolicy.Validate(newPassword); err != nil {
+		return err
+	}
+
+	if s.hibpEnabled {
+		if breached, _ := s.hibpClient.IsBreached(newPassword); breached {
+			return errors.New("this password has appeared in a known data breach — please choose a different password")
+		}
+	}
+
 	// Hash new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), s.passwordHashCost)
 	if err != nil {
 		return errors.New("failed to hash password")
 	}
