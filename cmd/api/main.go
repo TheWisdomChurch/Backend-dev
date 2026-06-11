@@ -594,6 +594,7 @@ func (noopEmailSender) DisabledReason() string {
 func setupRouter(
 	cfg *config.Config,
 	userRepo repository.UserRepository,
+	userCache *cache.UserCache,
 	healthHandler *handlers.HealthHandler,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
@@ -653,7 +654,7 @@ func setupRouter(
 	api := router.Group("/api/v1")
 
 	authGuard := middleware.AuthMiddleware(cfg.JWT.Secret)
-	sessionFreshnessGuard := middleware.SessionFreshnessMiddleware(userRepo)
+	sessionFreshnessGuard := middleware.SessionFreshnessMiddleware(userRepo, userCache)
 	sessionGuard := middleware.SessionTimeout(cfg.Auth.SessionIdleTimeout, cfg.Auth.RememberedSessionIdleTimeout, secure)
 	csrfProtector := middleware.NewCSRFProtector(middleware.CSRFOptions{
 		SecretKey:  cfg.Auth.SecretKey,
@@ -1119,6 +1120,12 @@ func main() {
 		}
 	}
 
+	// User session cache — eliminates one DB round-trip per authenticated request.
+	var userCache *cache.UserCache
+	if redisCache != nil {
+		userCache = cache.NewUserCache(redisCache, cache.DefaultUserCacheTTL)
+	}
+
 	// -------------------------------------------------------------------------
 	// Email sender (Brevo / SES)
 	// -------------------------------------------------------------------------
@@ -1351,6 +1358,7 @@ func main() {
 	router := setupRouter(
 		cfg,
 		userRepo,
+		userCache,
 		healthHandler,
 		testimonialHandler,
 		authHandler,
