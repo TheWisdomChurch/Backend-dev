@@ -179,6 +179,8 @@ func main() {
 	givingRepo := repository.NewGivingRepository(db)
 	attendanceRepo := repository.NewAttendanceRepository(db)
 	cellGroupRepo := repository.NewCellGroupRepository(db)
+	prayerRequestRepo := repository.NewPrayerRequestRepository(db)
+	ministryRepo := repository.NewMinistryRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -393,6 +395,8 @@ func main() {
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
 	cellGroupService := service.NewCellGroupService(cellGroupRepo)
+	prayerRequestService := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	ministryService := service.NewMinistryService(ministryRepo)
 
 	// -------------------------------------------------------------------------
 	// Handlers
@@ -458,6 +462,8 @@ func main() {
 	givingV2Handler := handlers.NewGivingV2Handler(givingService)
 	attendanceHandler := handlers.NewAttendanceHandler(attendanceService)
 	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
+	prayerRequestHandler := handlers.NewPrayerRequestHandler(prayerRequestService)
+	ministryHandler := handlers.NewMinistryHandler(ministryService)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -556,6 +562,8 @@ func main() {
 		givingV2Handler,
 		attendanceHandler,
 		cellGroupHandler,
+		prayerRequestHandler,
+		ministryHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
