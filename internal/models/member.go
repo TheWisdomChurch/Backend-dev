@@ -10,6 +10,7 @@ type Member struct {
 	Phone     *string `gorm:"column:phone;size:50" json:"phone,omitempty"`
 	PhoneEnc  *string `gorm:"column:phone_enc;type:text" json:"-"` // AES-256-GCM ciphertext; decrypted into Phone by service layer
 	IsActive  bool    `gorm:"not null;default:true" json:"isActive"`
+	CampusID  *string `gorm:"type:uuid;index" json:"campusId,omitempty"`
 
 	// Birthday is stored as month/day components so yearly birthday automation works without storing a birth year.
 	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
