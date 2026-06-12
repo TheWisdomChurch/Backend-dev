@@ -43,16 +43,16 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     CONSTRAINT attendance_records_session_member_unique UNIQUE (session_id, member_id)
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attendance_sessions_date
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_date
     ON attendance_sessions(date DESC) WHERE deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attendance_sessions_campus_date
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_campus_date
     ON attendance_sessions(campus_id, date DESC)
     WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attendance_records_session
+CREATE INDEX IF NOT EXISTS idx_attendance_records_session
     ON attendance_records(session_id) WHERE deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_attendance_records_member
+CREATE INDEX IF NOT EXISTS idx_attendance_records_member
     ON attendance_records(member_id, checked_in_at DESC)
     WHERE member_id IS NOT NULL AND deleted_at IS NULL;
