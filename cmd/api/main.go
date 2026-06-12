@@ -23,6 +23,7 @@ import (
 	"wisdomHouse-backend/internal/handlers"
 	appLogger "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/metrics"
+	"wisdomHouse-backend/internal/realtime"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/service/payment"
@@ -241,6 +242,9 @@ func main() {
 		geoDetector = authutil.NewGeoDetector(redisCache)
 		logger.Println("✅ Geo anomaly detector initialized")
 	}
+
+	// SSE hub — Redis pub/sub fan-out added when Redis is available.
+	sseHub := realtime.New(nil, logger)
 
 	// -------------------------------------------------------------------------
 	// Email sender
@@ -464,6 +468,7 @@ func main() {
 	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
 	prayerRequestHandler := handlers.NewPrayerRequestHandler(prayerRequestService)
 	ministryHandler := handlers.NewMinistryHandler(ministryService)
+	sseHandler := handlers.NewSSEHandler(sseHub)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -479,6 +484,7 @@ func main() {
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 
+	go sseHub.Start(cleanupCtx)
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 	go startFormReminderScheduler(cleanupCtx, logger, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 
@@ -564,6 +570,7 @@ func main() {
 		cellGroupHandler,
 		prayerRequestHandler,
 		ministryHandler,
+		sseHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {

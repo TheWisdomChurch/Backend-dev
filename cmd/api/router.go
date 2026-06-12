@@ -57,6 +57,7 @@ func setupRouter(
 	cellGroupHandler *handlers.CellGroupHandler,
 	prayerRequestHandler *handlers.PrayerRequestHandler,
 	ministryHandler *handlers.MinistryHandler,
+	sseHandler *handlers.SSEHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -332,6 +333,9 @@ func setupRouter(
 	admin.GET("/ministries/:id/members", ministryHandler.ListMembers)
 	admin.DELETE("/ministries/:id/members/:member_id", ministryHandler.RemoveMember)
 	admin.GET("/members/:member_id/ministries", ministryHandler.MemberMinistries)
+
+	// SSE — real-time event stream (requires auth, no CSRF needed for GET)
+	admin.GET("/events/stream", sseHandler.Stream)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms
