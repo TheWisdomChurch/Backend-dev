@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"log"
 	"net/http"
 	"strings"
@@ -203,4 +204,84 @@ func (h *MemberHandler) SendAnnouncement(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Member announcement sent", resp)
+}
+
+// ImportCSV accepts a multipart CSV upload and bulk-imports members.
+// Required columns (case-insensitive): first_name, last_name, email
+// Optional columns: phone, birthday, is_active
+//
+// POST /api/v1/admin/members/import
+func (h *MemberHandler) ImportCSV(c *gin.Context) {
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "file field is required")
+		return
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1 // variable columns OK
+
+	headers, err := reader.Read()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "CSV is empty or unreadable")
+		return
+	}
+
+	// Normalise header names → column index map
+	colIdx := make(map[string]int, len(headers))
+	for i, h := range headers {
+		colIdx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	required := []string{"first_name", "last_name", "email"}
+	for _, col := range required {
+		if _, ok := colIdx[col]; !ok {
+			utils.ErrorResponse(c, http.StatusBadRequest, "CSV missing required column: "+col)
+			return
+		}
+	}
+
+	col := func(row []string, name string) string {
+		idx, ok := colIdx[name]
+		if !ok || idx >= len(row) {
+			return ""
+		}
+		return row[idx]
+	}
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Failed to parse CSV: "+err.Error())
+		return
+	}
+	if len(records) == 0 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "CSV has no data rows")
+		return
+	}
+
+	rows := make([]service.CSVMemberRow, 0, len(records))
+	for _, r := range records {
+		rows = append(rows, service.CSVMemberRow{
+			FirstName: col(r, "first_name"),
+			LastName:  col(r, "last_name"),
+			Email:     col(r, "email"),
+			Phone:     col(r, "phone"),
+			Birthday:  col(r, "birthday"),
+			IsActive:  col(r, "is_active"),
+		})
+	}
+
+	result, err := h.svc.BulkImport(rows)
+	if err != nil {
+		log.Printf("member CSV import failed: %v", err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Import failed")
+		return
+	}
+
+	status := http.StatusOK
+	if result.Imported == 0 {
+		status = http.StatusUnprocessableEntity
+	}
+	utils.SuccessResponse(c, status, "Import complete", result)
 }
