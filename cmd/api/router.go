@@ -55,6 +55,8 @@ func setupRouter(
 	givingV2Handler *handlers.GivingV2Handler,
 	attendanceHandler *handlers.AttendanceHandler,
 	cellGroupHandler *handlers.CellGroupHandler,
+	prayerRequestHandler *handlers.PrayerRequestHandler,
+	ministryHandler *handlers.MinistryHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -186,6 +188,9 @@ func setupRouter(
 	api.GET("/store/products", storeHandler.ListProducts)
 	api.POST("/store/orders", storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
+	// PRAYER REQUESTS — public submission (aggressive rate limit applied at infra level)
+	api.POST("/prayer-requests", prayerRequestHandler.Submit)
+
 	api.GET("/giving/options", givingHandler.ListOptions)
 	api.GET("/giving/categories", givingV2Handler.ListCategories)
 	api.POST("/giving/initiate/:provider", givingV2Handler.Initiate)
@@ -308,6 +313,25 @@ func setupRouter(
 	admin.POST("/cell-groups/:id/meetings", cellGroupHandler.CreateMeeting)
 	admin.GET("/cell-groups/:id/meetings", cellGroupHandler.ListMeetings)
 	admin.GET("/members/:member_id/cell-groups", cellGroupHandler.MemberGroups)
+
+	// PRAYER REQUESTS — admin management (every read is sensitive pastoral data)
+	admin.GET("/prayer-requests", prayerRequestHandler.List)
+	admin.GET("/prayer-requests/:id", prayerRequestHandler.Get)
+	admin.PATCH("/prayer-requests/:id/status", prayerRequestHandler.UpdateStatus)
+	admin.PATCH("/prayer-requests/:id/assign", prayerRequestHandler.Assign)
+	admin.POST("/prayer-requests/:id/notes", prayerRequestHandler.AddNotes)
+	admin.DELETE("/prayer-requests/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), prayerRequestHandler.Delete)
+
+	// MINISTRIES
+	admin.POST("/ministries", ministryHandler.Create)
+	admin.GET("/ministries", ministryHandler.List)
+	admin.GET("/ministries/:id", ministryHandler.Get)
+	admin.PATCH("/ministries/:id", ministryHandler.Update)
+	admin.DELETE("/ministries/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), ministryHandler.Delete)
+	admin.POST("/ministries/:id/members", ministryHandler.AddMember)
+	admin.GET("/ministries/:id/members", ministryHandler.ListMembers)
+	admin.DELETE("/ministries/:id/members/:member_id", ministryHandler.RemoveMember)
+	admin.GET("/members/:member_id/ministries", ministryHandler.MemberMinistries)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms
