@@ -438,6 +438,7 @@ func setupRouter(
 	admin.GET("/store/orders", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.ListOrdersAdmin)
 	admin.PATCH("/store/orders/:orderId/status", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.UpdateOrderStatus)
 	admin.POST("/members/notify", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.SendAnnouncement)
+	admin.POST("/members/import", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.ImportCSV)
 
 	// Leadership admin
 	admin.GET("/leadership", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.List)
