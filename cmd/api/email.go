@@ -1,0 +1,205 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+
+	"wisdomHouse-backend/internal/config"
+	"wisdomHouse-backend/internal/email"
+	"wisdomHouse-backend/internal/service"
+)
+
+type chainedEmailSender struct {
+	primary      service.EmailSender
+	fallback     service.EmailSender
+	primaryName  string
+	fallbackName string
+	logger       *log.Logger
+}
+
+type observedEmailSender struct {
+	inner  service.EmailSender
+	logger *log.Logger
+}
+
+func (s observedEmailSender) SendHTML(to, subject, body string) error {
+	if s.inner == nil {
+		return nil
+	}
+	err := s.inner.SendHTML(to, subject, body)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("❌ Email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	}
+	return err
+}
+
+func (s observedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	if s.inner == nil {
+		return nil
+	}
+	if multipart, ok := s.inner.(interface {
+		SendHTMLText(to, subject, htmlBody, textBody string) error
+	}); ok {
+		err := multipart.SendHTMLText(to, subject, htmlBody, textBody)
+		if err != nil && s.logger != nil {
+			s.logger.Printf("❌ Multipart email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+		}
+		return err
+	}
+	err := s.inner.SendHTML(to, subject, htmlBody)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("❌ HTML email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	}
+	return err
+}
+
+func maskEmail(raw string) string {
+	e := strings.TrimSpace(strings.ToLower(raw))
+	parts := strings.Split(e, "@")
+	if len(parts) != 2 {
+		return "invalid-email"
+	}
+	local := parts[0]
+	domain := parts[1]
+	if local == "" {
+		return "***@" + domain
+	}
+	if len(local) <= 2 {
+		return local[:1] + "***@" + domain
+	}
+	return local[:2] + "***@" + domain
+}
+
+func (s chainedEmailSender) SendHTML(to, subject, body string) error {
+	if s.primary == nil {
+		if s.fallback != nil {
+			return s.fallback.SendHTML(to, subject, body)
+		}
+		return nil
+	}
+	if err := s.primary.SendHTML(to, subject, body); err != nil {
+		if s.fallback != nil {
+			if s.logger != nil {
+				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
+			}
+			if err2 := s.fallback.SendHTML(to, subject, body); err2 == nil {
+				return nil
+			} else {
+				return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, err2)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (s chainedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	sendMultipart := func(sender service.EmailSender) error {
+		if sender == nil {
+			return nil
+		}
+		if multipart, ok := sender.(interface {
+			SendHTMLText(to, subject, htmlBody, textBody string) error
+		}); ok {
+			return multipart.SendHTMLText(to, subject, htmlBody, textBody)
+		}
+		return sender.SendHTML(to, subject, htmlBody)
+	}
+
+	if s.primary == nil {
+		if s.fallback != nil {
+			return sendMultipart(s.fallback)
+		}
+		return nil
+	}
+	if err := sendMultipart(s.primary); err != nil {
+		if s.fallback != nil {
+			if s.logger != nil {
+				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
+			}
+			if err2 := sendMultipart(s.fallback); err2 == nil {
+				return nil
+			} else {
+				return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, err2)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender {
+	if cfg == nil {
+		return noopEmailSender{}
+	}
+
+	var primary service.EmailSender
+	var fallback service.EmailSender
+	var primaryName string
+	var fallbackName string
+
+	if strings.TrimSpace(cfg.SMTP.Host) != "" {
+		s, err := email.NewSender(
+			cfg.Redis.URL,
+			cfg.SMTP.Host,
+			cfg.SMTP.Port,
+			cfg.SMTP.User,
+			cfg.SMTP.Password,
+			cfg.SMTP.From,
+			cfg.SMTP.TLS,
+		)
+		if err != nil {
+			logger.Printf("⚠️ SMTP sender not initialized: %v", err)
+		} else {
+			primary = s
+			primaryName = "SMTP"
+			logger.Println("✅ Email sender initialized (SMTP relay)")
+		}
+	}
+
+	if hasAnyEnv("BREVO_API_KEY", "BREVO_FROM_EMAIL", "BREVO_FROM_NAME", "BREVO_BASE_URL") {
+		s, err := email.NewBrevoSender(cfg.Redis.URL, "", "", "", "")
+		if err != nil {
+			logger.Printf("⚠️ Brevo email sender not initialized: %v", err)
+		} else if primary == nil {
+			primary = s
+			primaryName = "Brevo"
+			logger.Println("✅ Email sender initialized (Brevo API)")
+		} else if fallback == nil {
+			fallback = s
+			fallbackName = "Brevo"
+			logger.Println("✅ Email fallback configured (Brevo API)")
+		}
+	}
+
+	if primary == nil {
+		logger.Println("⚠️ Email sender not configured (no SMTP/Brevo/SES). Outbound email disabled.")
+		return noopEmailSender{}
+	}
+	if fallback == nil {
+		return primary
+	}
+	return chainedEmailSender{
+		primary:      primary,
+		fallback:     fallback,
+		primaryName:  primaryName,
+		fallbackName: fallbackName,
+		logger:       logger,
+	}
+}
+
+type noopEmailSender struct{}
+
+func (noopEmailSender) SendHTML(string, string, string) error {
+	return errors.New("outbound email sending is disabled or not configured")
+}
+
+func (noopEmailSender) SendHTMLText(string, string, string, string) error {
+	return errors.New("outbound email sending is disabled or not configured")
+}
+
+func (noopEmailSender) DisabledReason() string {
+	return "outbound email sending is disabled or not configured"
+}
