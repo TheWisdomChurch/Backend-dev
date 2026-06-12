@@ -17,11 +17,11 @@ CREATE TABLE IF NOT EXISTS prayer_requests (
     deleted_at   TIMESTAMPTZ
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_prayer_requests_status
+CREATE INDEX IF NOT EXISTS idx_prayer_requests_status
     ON prayer_requests(status, created_at DESC) WHERE deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_prayer_requests_member
+CREATE INDEX IF NOT EXISTS idx_prayer_requests_member
     ON prayer_requests(member_id) WHERE member_id IS NOT NULL AND deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_prayer_requests_assigned
+CREATE INDEX IF NOT EXISTS idx_prayer_requests_assigned
     ON prayer_requests(assigned_to) WHERE assigned_to IS NOT NULL AND deleted_at IS NULL;
