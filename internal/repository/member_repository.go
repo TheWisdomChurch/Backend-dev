@@ -18,6 +18,8 @@ type MemberRepository interface {
 	ListByMonth(month int, activeOnly bool) ([]models.Member, error)
 	ListByMonthDay(month, day int, activeOnly bool) ([]models.Member, error)
 	Stats() (*models.MemberStatsResponse, error)
+
+	BulkCreate(members []models.Member) (int, error)
 }
 
 type memberRepository struct {
@@ -166,6 +168,14 @@ func (r *memberRepository) Stats() (*models.MemberStatsResponse, error) {
 		MonthlyGrowth: monthly,
 		YearlyGrowth:  yearly,
 	}, nil
+}
+
+func (r *memberRepository) BulkCreate(members []models.Member) (int, error) {
+	if len(members) == 0 {
+		return 0, nil
+	}
+	result := r.db.DB.CreateInBatches(members, 100)
+	return int(result.RowsAffected), result.Error
 }
 
 func (r *memberRepository) countCreatedByPeriod(period string) ([]models.GrowthBucket, error) {
