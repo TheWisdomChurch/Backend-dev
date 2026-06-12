@@ -178,6 +178,7 @@ func main() {
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
 	givingRepo := repository.NewGivingRepository(db)
 	attendanceRepo := repository.NewAttendanceRepository(db)
+	cellGroupRepo := repository.NewCellGroupRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -391,6 +392,7 @@ func main() {
 	}
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
+	cellGroupService := service.NewCellGroupService(cellGroupRepo)
 
 	// -------------------------------------------------------------------------
 	// Handlers
@@ -455,6 +457,7 @@ func main() {
 	givingHandler := handlers.NewGivingHandler()
 	givingV2Handler := handlers.NewGivingV2Handler(givingService)
 	attendanceHandler := handlers.NewAttendanceHandler(attendanceService)
+	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -552,6 +555,7 @@ func main() {
 		engagementHandler,
 		givingV2Handler,
 		attendanceHandler,
+		cellGroupHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
