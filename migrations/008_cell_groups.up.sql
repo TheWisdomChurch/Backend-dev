@@ -36,6 +36,6 @@ CREATE TABLE IF NOT EXISTS cell_group_meetings (
     deleted_at     TIMESTAMPTZ
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cell_groups_campus    ON cell_groups(campus_id) WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cell_group_members_m  ON cell_group_members(member_id) WHERE deleted_at IS NULL;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cell_group_meetings_g ON cell_group_meetings(group_id, date DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cell_groups_campus    ON cell_groups(campus_id) WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cell_group_members_m  ON cell_group_members(member_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cell_group_meetings_g ON cell_group_meetings(group_id, date DESC) WHERE deleted_at IS NULL;

@@ -33,5 +33,5 @@ CREATE TABLE IF NOT EXISTS ministry_members (
     CONSTRAINT ministry_members_unique UNIQUE (ministry_id, member_id)
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ministries_campus   ON ministries(campus_id) WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ministry_members_m  ON ministry_members(member_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ministries_campus   ON ministries(campus_id) WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ministry_members_m  ON ministry_members(member_id) WHERE deleted_at IS NULL;
