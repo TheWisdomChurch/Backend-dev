@@ -80,7 +80,7 @@ func (p *CSRFProtector) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		token, err := p.EnsureToken(c)
+		secret, token, err := p.ensureSecretAndToken(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"status":     "error",
@@ -101,7 +101,10 @@ func (p *CSRFProtector) Middleware() gin.HandlerFunc {
 		}
 
 		presented := strings.TrimSpace(c.GetHeader(p.headerName))
-		if presented == "" || subtle.ConstantTimeCompare([]byte(presented), []byte(token)) != 1 {
+		// verify() parses the nonce from the presented token and recomputes the MAC
+		// against the cookie secret — so every request can have a unique nonce while
+		// still being verifiable without server-side state.
+		if presented == "" || !p.verify(secret, presented) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"status":     "error",
 				"error":      "Forbidden",
@@ -115,21 +118,29 @@ func (p *CSRFProtector) Middleware() gin.HandlerFunc {
 	}
 }
 
+// EnsureToken returns a per-request CSRF token for use in API responses or tests.
 func (p *CSRFProtector) EnsureToken(c *gin.Context) (string, error) {
+	_, token, err := p.ensureSecretAndToken(c)
+	return token, err
+}
+
+// ensureSecretAndToken returns both the raw cookie secret and the signed nonce-bearing token.
+func (p *CSRFProtector) ensureSecretAndToken(c *gin.Context) (secret, token string, err error) {
 	if p == nil || len(p.secretKey) == 0 {
-		return "", http.ErrNoCookie
+		return "", "", http.ErrNoCookie
 	}
 
-	secret, err := LatestCookieValue(c.Request, p.cookieName)
+	secret, err = LatestCookieValue(c.Request, p.cookieName)
 	if err != nil || strings.TrimSpace(secret) == "" {
 		secret, err = generateCSRFSecret()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		p.setCSRFCookie(c, secret)
 	}
 
-	return p.sign(secret), nil
+	token, err = p.sign(secret)
+	return secret, token, err
 }
 
 func (p *CSRFProtector) setCSRFCookie(c *gin.Context, secret string) {
@@ -148,10 +159,38 @@ func (p *CSRFProtector) setCSRFCookie(c *gin.Context, secret string) {
 	})
 }
 
-func (p *CSRFProtector) sign(secret string) string {
+// sign returns a per-request token of the form "<nonce>.<hmac>" where the nonce is
+// a fresh 16-byte random value encoded in base64. Because the nonce changes on every
+// call the token is never the same across requests, eliminating BREACH-style
+// compression attacks against a static CSRF token.
+func (p *CSRFProtector) sign(secret string) (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	nonceB64 := base64.RawURLEncoding.EncodeToString(nonce)
+
 	mac := hmac.New(sha256.New, p.secretKey)
-	_, _ = mac.Write([]byte(strings.TrimSpace(secret)))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	_, _ = mac.Write([]byte(strings.TrimSpace(secret) + ":" + nonceB64))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return nonceB64 + "." + sig, nil
+}
+
+// verify checks that the presented token is a valid signature over the cookie secret.
+// It parses the nonce from the presented token so the verification is stateless.
+func (p *CSRFProtector) verify(secret, presented string) bool {
+	parts := strings.SplitN(strings.TrimSpace(presented), ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	nonceB64 := parts[0]
+
+	mac := hmac.New(sha256.New, p.secretKey)
+	_, _ = mac.Write([]byte(strings.TrimSpace(secret) + ":" + nonceB64))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
 }
 
 func ClearCSRFCookie(c *gin.Context, secure bool, cookieName string) {

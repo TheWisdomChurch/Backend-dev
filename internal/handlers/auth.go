@@ -3,6 +3,8 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +23,7 @@ import (
 	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
+	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
@@ -52,8 +55,10 @@ var (
 
 type AuthHandlerOptions struct {
 	JWTSecret                    string
+	RSAPrivateKey                *rsa.PrivateKey
 	Secure                       bool
 	AccessTokenTTL               time.Duration
+	RefreshTokenTTL              time.Duration
 	RememberMeTTL                time.Duration
 	SessionIdleTimeout           time.Duration
 	RememberedSessionIdleTimeout time.Duration
@@ -63,13 +68,18 @@ type AuthHandlerOptions struct {
 	GoogleClientSecret           string
 	GoogleRedirectURL            string
 	GoogleHostedDomain           string
+	RefreshTokenRepo             repository.RefreshTokenRepository
+	Blocklist                    *authutil.TokenBlocklist
+	PasswordHashCost             int
 }
 
 type AuthHandler struct {
 	service                      service.AuthService
 	jwtSecret                    []byte
+	rsaPrivateKey                *rsa.PrivateKey
 	secure                       bool
 	accessTokenTTL               time.Duration
+	refreshTokenTTL              time.Duration
 	rememberMeTTL                time.Duration
 	sessionIdleTimeout           time.Duration
 	rememberedSessionIdleTimeout time.Duration
@@ -80,6 +90,9 @@ type AuthHandler struct {
 	googleHostedDomain           string
 	protector                    *authutil.Protector
 	httpClient                   *http.Client
+	refreshTokenRepo             repository.RefreshTokenRepository
+	blocklist                    *authutil.TokenBlocklist
+	passwordHashCost             int
 }
 
 func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthHandler {
@@ -110,11 +123,23 @@ func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthH
 		protector = p
 	}
 
+	hashCost := opts.PasswordHashCost
+	if hashCost <= 0 {
+		hashCost = 12
+	}
+
+	refreshTTL := opts.RefreshTokenTTL
+	if refreshTTL <= 0 {
+		refreshTTL = 7 * 24 * time.Hour
+	}
+
 	return &AuthHandler{
 		service:                      service,
 		jwtSecret:                    []byte(opts.JWTSecret),
+		rsaPrivateKey:                opts.RSAPrivateKey,
 		secure:                       opts.Secure,
 		accessTokenTTL:               opts.AccessTokenTTL,
+		refreshTokenTTL:              refreshTTL,
 		rememberMeTTL:                opts.RememberMeTTL,
 		sessionIdleTimeout:           opts.SessionIdleTimeout,
 		rememberedSessionIdleTimeout: opts.RememberedSessionIdleTimeout,
@@ -127,6 +152,9 @@ func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthH
 		httpClient: &http.Client{
 			Timeout: 12 * time.Second,
 		},
+		refreshTokenRepo: opts.RefreshTokenRepo,
+		blocklist:        opts.Blocklist,
+		passwordHashCost: hashCost,
 	}
 }
 
@@ -233,9 +261,16 @@ func writeAuthBlockedResponse(c *gin.Context, status int, message string, code s
 
 ============================================================================ */
 
+// generateJTI creates a cryptographically random JWT ID for token revocation.
+func generateJTI() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMethod string) (string, error) {
-	if len(h.jwtSecret) == 0 {
-		return "", fmt.Errorf("JWT_SECRET not configured")
+	if h.rsaPrivateKey == nil && len(h.jwtSecret) == 0 {
+		return "", fmt.Errorf("JWT signing key not configured")
 	}
 	if user == nil {
 		return "", fmt.Errorf("user is required")
@@ -253,7 +288,11 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 
 	if rememberMe {
 		idleTTL = h.rememberedSessionIdleTimeout
-		expiresAt = now.Add(h.rememberMeTTL)
+		// When RS256 + refresh tokens, access token TTL stays short regardless.
+		// For HS256 legacy mode, keep the old behavior of extending access token TTL.
+		if h.rsaPrivateKey == nil {
+			expiresAt = now.Add(h.rememberMeTTL)
+		}
 	}
 
 	claims := middleware.AccessClaims{
@@ -263,6 +302,7 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 		RememberMe:                rememberMe,
 		SessionIdleTimeoutSeconds: int64(idleTTL / time.Second),
 		AuthMethod:                strings.TrimSpace(authMethod),
+		JTI:                       generateJTI(),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -272,8 +312,62 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 		},
 	}
 
+	if h.rsaPrivateKey != nil {
+		token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		return token.SignedString(h.rsaPrivateKey)
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(h.jwtSecret)
+}
+
+const refreshTokenCookieName = "refresh_token"
+
+// issueRefreshToken creates a new refresh token in the token family and sets
+// the refresh_token HTTPOnly cookie. No-op when refreshTokenRepo is not configured.
+func (h *AuthHandler) issueRefreshToken(c *gin.Context, user *models.User, familyID string, rememberMe bool, deviceID string) error {
+	if h.refreshTokenRepo == nil {
+		return nil
+	}
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Errorf("generating refresh token: %w", err)
+	}
+	rawHex := hex.EncodeToString(raw)
+
+	sum := sha256.Sum256([]byte(rawHex))
+	hash := hex.EncodeToString(sum[:])
+
+	ttl := h.refreshTokenTTL
+	if rememberMe && h.rememberMeTTL > ttl {
+		ttl = h.rememberMeTTL
+	}
+
+	rt := &models.RefreshToken{
+		UserID:    user.ID,
+		FamilyID:  familyID,
+		TokenHash: hash,
+		DeviceID:  deviceID,
+		ExpiresAt: time.Now().UTC().Add(ttl),
+	}
+	if err := h.refreshTokenRepo.Create(rt); err != nil {
+		return fmt.Errorf("storing refresh token: %w", err)
+	}
+
+	sameSite := h.cookieSameSite()
+	secure := h.cookieSecure()
+	domain := configuredAuthCookieDomain()
+	maxAge := int(ttl / time.Second)
+	expires := time.Now().Add(ttl)
+	setHTTPOnlyCookie(c, refreshTokenCookieName, rawHex, domain, maxAge, expires, secure, sameSite)
+	return nil
+}
+
+// hashRefreshToken returns the SHA-256 hex of the raw token value.
+func hashRefreshToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 /* ============================================================================
@@ -498,6 +592,16 @@ func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
 	middleware.ClearCSRFCookie(c, secure, "")
 }
 
+// clearAuthCookieAll also removes the refresh_token cookie.
+func (h *AuthHandler) clearAuthCookieAll(c *gin.Context) {
+	h.clearAuthCookie(c)
+	sameSite := h.cookieSameSite()
+	secure := h.cookieSecure()
+	for _, domain := range authCookieClearDomains() {
+		expireAuthCookie(c, refreshTokenCookieName, domain, secure, sameSite)
+	}
+}
+
 func (h *AuthHandler) loginMetadata(c *gin.Context) service.LoginMetadata {
 	deviceID := ""
 	if value, err := latestCookieValue(c, deviceIDCookieName); err == nil {
@@ -581,8 +685,19 @@ func (h *AuthHandler) issueAuthenticatedSession(c *gin.Context, user *models.Use
 	if err != nil {
 		return err
 	}
-
 	h.setAuthCookie(c, token, rememberMe)
+
+	// Issue a new refresh token family for every fresh login.
+	familyID := generateJTI()
+	deviceID := ""
+	if v, err2 := latestCookieValue(c, deviceIDCookieName); err2 == nil {
+		deviceID = v
+	}
+	if err := h.issueRefreshToken(c, user, familyID, rememberMe, deviceID); err != nil {
+		// Non-fatal: access token already set, log and continue.
+		_ = err
+	}
+
 	return nil
 }
 
@@ -981,6 +1096,95 @@ func (h *AuthHandler) ClearData(c *gin.Context) {
 	})
 }
 
+// RotateRefreshToken implements proper refresh token rotation (token family pattern).
+// Called from an unprotected route — works even when the access token has expired.
+// The refresh_token HTTPOnly cookie is the credential; the access token is NOT required.
+func (h *AuthHandler) RotateRefreshToken(c *gin.Context) {
+	if h.refreshTokenRepo == nil {
+		utils.ErrorResponse(c, http.StatusNotImplemented, "Refresh token rotation not configured")
+		return
+	}
+
+	rawRT, err := latestCookieValue(c, refreshTokenCookieName)
+	if err != nil || strings.TrimSpace(rawRT) == "" {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "No refresh token provided")
+		return
+	}
+
+	hash := hashRefreshToken(rawRT)
+	rt, err := h.refreshTokenRepo.FindByHash(hash)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to look up refresh token")
+		return
+	}
+
+	// Token not found or already expired.
+	if rt == nil || time.Now().UTC().After(rt.ExpiresAt) {
+		h.clearAuthCookieAll(c)
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Refresh token expired or not found")
+		return
+	}
+
+	// Token already revoked — this is a replay attack; revoke the whole family.
+	if rt.RevokedAt != nil {
+		_ = h.refreshTokenRepo.RevokeFamily(rt.FamilyID)
+		h.clearAuthCookieAll(c)
+		utils.ErrorResponse(c, http.StatusUnauthorized, "Refresh token already used — session invalidated for security")
+		return
+	}
+
+	// Revoke the consumed token before issuing a new one.
+	if err := h.refreshTokenRepo.RevokeByID(rt.ID); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to rotate refresh token")
+		return
+	}
+
+	// Load the user.
+	userData, err := h.service.GetUserByID(rt.UserID)
+	if err != nil {
+		h.clearAuthCookieAll(c)
+		utils.ErrorResponse(c, http.StatusUnauthorized, "User not found")
+		return
+	}
+	user, ok := userData.(*models.User)
+	if !ok || user == nil || !user.IsActive {
+		h.clearAuthCookieAll(c)
+		utils.ErrorResponse(c, http.StatusForbidden, "Account is inactive")
+		return
+	}
+
+	// Issue new access token + new refresh token in the same family.
+	rememberMe := rt.ExpiresAt.Sub(time.Now().UTC()) > h.refreshTokenTTL/2
+	if err := h.issueAuthenticatedSessionWithFamily(c, user, rt.FamilyID, rememberMe, "token_rotation"); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to issue new tokens")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Token rotated successfully",
+		"data":    gin.H{"user": authUserPayload(user)},
+	})
+}
+
+// issueAuthenticatedSessionWithFamily issues new access + refresh tokens reusing
+// an existing family ID (for rotation — keeps the family chain intact).
+func (h *AuthHandler) issueAuthenticatedSessionWithFamily(c *gin.Context, user *models.User, familyID string, rememberMe bool, authMethod string) error {
+	token, err := h.generateToken(user, rememberMe, authMethod)
+	if err != nil {
+		return err
+	}
+	h.setAuthCookie(c, token, rememberMe)
+
+	deviceID := ""
+	if v, err2 := latestCookieValue(c, deviceIDCookieName); err2 == nil {
+		deviceID = v
+	}
+	return h.issueRefreshToken(c, user, familyID, rememberMe, deviceID)
+}
+
+// Keep the existing RefreshToken handler (requires valid access token — used for
+// "extend session while already logged in" without consuming a refresh token).
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -1064,31 +1268,41 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
+	ctx := c.Request.Context()
+
 	deviceID := ""
 	if value, err := latestCookieValue(c, deviceIDCookieName); err == nil {
 		deviceID = value
 	}
 
-	userID := ""
-	if tokenCookie, err := latestCookieValue(c, authTokenCookieName); err == nil && tokenCookie != "" && len(h.jwtSecret) > 0 {
-		// Try unverified parse first. Logout must still clear cookies even if
-		// the token is expired or invalid after a JWT secret rotation.
+	// Extract claims without full verification so logout always works even if
+	// the access token is expired or the signing secret was rotated.
+	userID, jti := "", ""
+	if tokenCookie, err := latestCookieValue(c, authTokenCookieName); err == nil && tokenCookie != "" {
 		if t, _, err := new(jwt.Parser).ParseUnverified(tokenCookie, jwt.MapClaims{}); err == nil {
 			if claims, ok := t.Claims.(jwt.MapClaims); ok {
 				if uid, ok := claims["user_id"].(string); ok {
 					userID = uid
 				}
-			}
-		} else {
-			// Fallback: parse with verification.
-			if t, err2 := jwt.Parse(tokenCookie, func(token *jwt.Token) (interface{}, error) {
-				return h.jwtSecret, nil
-			}); err2 == nil {
-				if claims, ok := t.Claims.(jwt.MapClaims); ok && t.Valid {
-					if uid, ok := claims["user_id"].(string); ok {
-						userID = uid
-					}
+				if j, ok := claims["jti"].(string); ok {
+					jti = j
 				}
+			}
+		}
+	}
+
+	// Block the access token JTI so it cannot be reused before natural expiry.
+	if h.blocklist != nil && jti != "" {
+		// Use the configured access TTL as upper bound for the blocklist entry.
+		_ = h.blocklist.Block(ctx, jti, h.accessTokenTTL)
+	}
+
+	// Revoke all refresh tokens for the device (or all for the user on full logout).
+	if h.refreshTokenRepo != nil {
+		if rawRT, err := latestCookieValue(c, refreshTokenCookieName); err == nil && rawRT != "" {
+			hash := hashRefreshToken(rawRT)
+			if rt, err := h.refreshTokenRepo.FindByHash(hash); err == nil && rt != nil {
+				_ = h.refreshTokenRepo.RevokeFamily(rt.FamilyID)
 			}
 		}
 	}
@@ -1097,7 +1311,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		_ = h.service.UntrustDevice(userID, deviceID)
 	}
 
-	h.clearAuthCookie(c)
+	h.clearAuthCookieAll(c)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
