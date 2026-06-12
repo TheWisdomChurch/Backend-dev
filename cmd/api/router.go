@@ -52,6 +52,12 @@ func setupRouter(
 	givingHandler *handlers.GivingHandler,
 	siteContentHandler *handlers.SiteContentHandler,
 	engagementHandler *handlers.EngagementHandler,
+	givingV2Handler *handlers.GivingV2Handler,
+	attendanceHandler *handlers.AttendanceHandler,
+	cellGroupHandler *handlers.CellGroupHandler,
+	prayerRequestHandler *handlers.PrayerRequestHandler,
+	ministryHandler *handlers.MinistryHandler,
+	sseHandler *handlers.SSEHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -183,7 +189,14 @@ func setupRouter(
 	api.GET("/store/products", storeHandler.ListProducts)
 	api.POST("/store/orders", storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
+	// PRAYER REQUESTS — public submission (aggressive rate limit applied at infra level)
+	api.POST("/prayer-requests", prayerRequestHandler.Submit)
+
 	api.GET("/giving/options", givingHandler.ListOptions)
+	api.GET("/giving/categories", givingV2Handler.ListCategories)
+	api.POST("/giving/initiate/:provider", givingV2Handler.Initiate)
+	api.GET("/giving/verify/:provider/:reference", givingV2Handler.Verify)
+	api.POST("/giving/webhook/:provider", givingV2Handler.Webhook)
 	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
 	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
@@ -275,6 +288,54 @@ func setupRouter(
 	admin.PUT("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminConfessionPopup)
 	admin.GET("/pastoral-care/requests", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListPastoralCareRequests)
 	admin.GET("/giving/intents", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListGivingIntents)
+	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.List)
+	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.MonthlySummary)
+
+	// ATTENDANCE
+	admin.GET("/attendance/service-types", attendanceHandler.ListServiceTypes)
+	admin.POST("/attendance/service-types", middleware.RequirePermission(middleware.PermissionAdminWrite), attendanceHandler.CreateServiceType)
+	admin.POST("/attendance/sessions", attendanceHandler.CreateSession)
+	admin.GET("/attendance/sessions", attendanceHandler.ListSessions)
+	admin.GET("/attendance/sessions/:id", attendanceHandler.GetSession)
+	admin.PATCH("/attendance/sessions/:id", attendanceHandler.UpdateSession)
+	admin.GET("/attendance/sessions/:id/records", attendanceHandler.ListRecords)
+	admin.POST("/attendance/checkin", attendanceHandler.CheckIn)
+	admin.GET("/attendance/members/:member_id/history", attendanceHandler.MemberHistory)
+
+	// CELL GROUPS
+	admin.POST("/cell-groups", cellGroupHandler.Create)
+	admin.GET("/cell-groups", cellGroupHandler.List)
+	admin.GET("/cell-groups/:id", cellGroupHandler.Get)
+	admin.PATCH("/cell-groups/:id", cellGroupHandler.Update)
+	admin.DELETE("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), cellGroupHandler.Delete)
+	admin.POST("/cell-groups/:id/members", cellGroupHandler.AddMember)
+	admin.GET("/cell-groups/:id/members", cellGroupHandler.ListMembers)
+	admin.DELETE("/cell-groups/:id/members/:member_id", cellGroupHandler.RemoveMember)
+	admin.POST("/cell-groups/:id/meetings", cellGroupHandler.CreateMeeting)
+	admin.GET("/cell-groups/:id/meetings", cellGroupHandler.ListMeetings)
+	admin.GET("/members/:member_id/cell-groups", cellGroupHandler.MemberGroups)
+
+	// PRAYER REQUESTS — admin management (every read is sensitive pastoral data)
+	admin.GET("/prayer-requests", prayerRequestHandler.List)
+	admin.GET("/prayer-requests/:id", prayerRequestHandler.Get)
+	admin.PATCH("/prayer-requests/:id/status", prayerRequestHandler.UpdateStatus)
+	admin.PATCH("/prayer-requests/:id/assign", prayerRequestHandler.Assign)
+	admin.POST("/prayer-requests/:id/notes", prayerRequestHandler.AddNotes)
+	admin.DELETE("/prayer-requests/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), prayerRequestHandler.Delete)
+
+	// MINISTRIES
+	admin.POST("/ministries", ministryHandler.Create)
+	admin.GET("/ministries", ministryHandler.List)
+	admin.GET("/ministries/:id", ministryHandler.Get)
+	admin.PATCH("/ministries/:id", ministryHandler.Update)
+	admin.DELETE("/ministries/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), ministryHandler.Delete)
+	admin.POST("/ministries/:id/members", ministryHandler.AddMember)
+	admin.GET("/ministries/:id/members", ministryHandler.ListMembers)
+	admin.DELETE("/ministries/:id/members/:member_id", ministryHandler.RemoveMember)
+	admin.GET("/members/:member_id/ministries", ministryHandler.MemberMinistries)
+
+	// SSE — real-time event stream (requires auth, no CSRF needed for GET)
+	admin.GET("/events/stream", sseHandler.Stream)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms

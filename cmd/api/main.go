@@ -23,8 +23,10 @@ import (
 	"wisdomHouse-backend/internal/handlers"
 	appLogger "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/metrics"
+	"wisdomHouse-backend/internal/realtime"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/service/payment"
 	"wisdomHouse-backend/internal/telemetry"
 	"wisdomHouse-backend/internal/validation"
 )
@@ -175,6 +177,11 @@ func main() {
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 	storeRepo := repository.NewStoreRepository(db)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
+	givingRepo := repository.NewGivingRepository(db)
+	attendanceRepo := repository.NewAttendanceRepository(db)
+	cellGroupRepo := repository.NewCellGroupRepository(db)
+	prayerRequestRepo := repository.NewPrayerRequestRepository(db)
+	ministryRepo := repository.NewMinistryRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -235,6 +242,9 @@ func main() {
 		geoDetector = authutil.NewGeoDetector(redisCache)
 		logger.Println("✅ Geo anomaly detector initialized")
 	}
+
+	// SSE hub — Redis pub/sub fan-out added when Redis is available.
+	sseHub := realtime.New(nil, logger)
 
 	// -------------------------------------------------------------------------
 	// Email sender
@@ -376,6 +386,22 @@ func main() {
 	sermonService := service.NewSermonService()
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
+	// Payment providers — only registered when keys are configured.
+	paymentProviders := map[string]payment.Provider{}
+	if strings.TrimSpace(cfg.Payment.PaystackSecretKey) != "" {
+		paymentProviders["paystack"] = payment.NewPaystack(cfg.Payment.PaystackSecretKey, cfg.Payment.PaystackWebhookSecret)
+		logger.Println("✅ Paystack payment provider initialized")
+	}
+	if strings.TrimSpace(cfg.Payment.StripeSecretKey) != "" {
+		paymentProviders["stripe"] = payment.NewStripe(cfg.Payment.StripeSecretKey, cfg.Payment.StripeWebhookSecret)
+		logger.Println("✅ Stripe payment provider initialized")
+	}
+	givingService := service.NewGivingService(givingRepo, paymentProviders)
+	attendanceService := service.NewAttendanceService(attendanceRepo)
+	cellGroupService := service.NewCellGroupService(cellGroupRepo)
+	prayerRequestService := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	ministryService := service.NewMinistryService(ministryRepo)
+
 	// -------------------------------------------------------------------------
 	// Handlers
 	// -------------------------------------------------------------------------
@@ -437,6 +463,12 @@ func main() {
 	sermonHandler := handlers.NewSermonHandler(sermonService)
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
+	givingV2Handler := handlers.NewGivingV2Handler(givingService)
+	attendanceHandler := handlers.NewAttendanceHandler(attendanceService)
+	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
+	prayerRequestHandler := handlers.NewPrayerRequestHandler(prayerRequestService)
+	ministryHandler := handlers.NewMinistryHandler(ministryService)
+	sseHandler := handlers.NewSSEHandler(sseHub)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -452,6 +484,7 @@ func main() {
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 
+	go sseHub.Start(cleanupCtx)
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 	go startFormReminderScheduler(cleanupCtx, logger, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 
@@ -532,6 +565,12 @@ func main() {
 		givingHandler,
 		siteContentHandler,
 		engagementHandler,
+		givingV2Handler,
+		attendanceHandler,
+		cellGroupHandler,
+		prayerRequestHandler,
+		ministryHandler,
+		sseHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {

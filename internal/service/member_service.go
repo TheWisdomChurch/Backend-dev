@@ -28,6 +28,8 @@ type MemberService interface {
 	BirthdaysByMonth(month int) ([]models.Member, error)
 	BirthdaysToday(now time.Time) ([]models.Member, error)
 	SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error)
+
+	BulkImport(rows []CSVMemberRow) (*BulkImportResult, error)
 }
 
 type memberService struct {
@@ -457,6 +459,96 @@ func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdayS
 	}
 
 	return result, nil
+}
+
+// CSVMemberRow represents a single row parsed from a CSV import file.
+// Column names are normalised to snake_case before mapping.
+type CSVMemberRow struct {
+	FirstName     string
+	LastName      string
+	Email         string
+	Phone         string
+	Birthday      string // DD/MM or YYYY-MM-DD
+	IsActive      string // "true"/"false"/"1"/"0" — defaults to true
+}
+
+// BulkImportResult is the summary returned to the caller after a CSV import.
+type BulkImportResult struct {
+	Total    int            `json:"total"`
+	Imported int            `json:"imported"`
+	Skipped  int            `json:"skipped"`
+	Errors   []string       `json:"errors,omitempty"`
+}
+
+func (s *memberService) BulkImport(rows []CSVMemberRow) (*BulkImportResult, error) {
+	result := &BulkImportResult{Total: len(rows)}
+	members := make([]models.Member, 0, len(rows))
+
+	for i, row := range rows {
+		first := strings.TrimSpace(row.FirstName)
+		last := strings.TrimSpace(row.LastName)
+		emailAddr := strings.TrimSpace(strings.ToLower(row.Email))
+
+		if first == "" || last == "" || emailAddr == "" {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("row %d: first_name, last_name and email are required", i+1))
+			continue
+		}
+
+		m := models.Member{
+			FirstName: first,
+			LastName:  last,
+			Email:     emailAddr,
+			IsActive:  true,
+		}
+
+		// Phone encryption
+		if phone := strings.TrimSpace(row.Phone); phone != "" && s.protector != nil {
+			if enc, err := s.protector.EncryptString(phone); err == nil {
+				m.PhoneEnc = &enc
+			}
+		}
+
+		// Birthday parsing: DD/MM or YYYY-MM-DD
+		if bday := strings.TrimSpace(row.Birthday); bday != "" {
+			if month, day, err := parseBirthdayRow(bday); err == nil {
+				m.BirthdayMonth = &month
+				m.BirthdayDay = &day
+			}
+		}
+
+		// Active flag
+		switch strings.ToLower(strings.TrimSpace(row.IsActive)) {
+		case "false", "0", "no", "inactive":
+			m.IsActive = false
+		}
+
+		members = append(members, m)
+	}
+
+	if len(members) == 0 {
+		return result, nil
+	}
+
+	imported, err := s.repo.BulkCreate(members)
+	if err != nil {
+		return result, fmt.Errorf("bulk import: %w", err)
+	}
+	result.Imported = imported
+	return result, nil
+}
+
+func parseBirthdayRow(raw string) (month, day int, err error) {
+	// Try DD/MM
+	if _, e := fmt.Sscanf(raw, "%d/%d", &day, &month); e == nil && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+		return month, day, nil
+	}
+	// Try YYYY-MM-DD
+	var year int
+	if _, e := fmt.Sscanf(raw, "%d-%d-%d", &year, &month, &day); e == nil && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+		return month, day, nil
+	}
+	return 0, 0, fmt.Errorf("unrecognised birthday format %q", raw)
 }
 
 func ptrString(s *string) string {
