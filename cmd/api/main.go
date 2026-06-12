@@ -177,6 +177,7 @@ func main() {
 	storeRepo := repository.NewStoreRepository(db)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
 	givingRepo := repository.NewGivingRepository(db)
+	attendanceRepo := repository.NewAttendanceRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -389,6 +390,7 @@ func main() {
 		logger.Println("✅ Stripe payment provider initialized")
 	}
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
+	attendanceService := service.NewAttendanceService(attendanceRepo)
 
 	// -------------------------------------------------------------------------
 	// Handlers
@@ -452,6 +454,7 @@ func main() {
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
 	givingV2Handler := handlers.NewGivingV2Handler(givingService)
+	attendanceHandler := handlers.NewAttendanceHandler(attendanceService)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -548,6 +551,7 @@ func main() {
 		siteContentHandler,
 		engagementHandler,
 		givingV2Handler,
+		attendanceHandler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {

@@ -53,6 +53,7 @@ func setupRouter(
 	siteContentHandler *handlers.SiteContentHandler,
 	engagementHandler *handlers.EngagementHandler,
 	givingV2Handler *handlers.GivingV2Handler,
+	attendanceHandler *handlers.AttendanceHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -282,6 +283,17 @@ func setupRouter(
 	admin.GET("/giving/intents", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListGivingIntents)
 	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.List)
 	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.MonthlySummary)
+
+	// ATTENDANCE
+	admin.GET("/attendance/service-types", attendanceHandler.ListServiceTypes)
+	admin.POST("/attendance/service-types", middleware.RequirePermission(middleware.PermissionAdminWrite), attendanceHandler.CreateServiceType)
+	admin.POST("/attendance/sessions", attendanceHandler.CreateSession)
+	admin.GET("/attendance/sessions", attendanceHandler.ListSessions)
+	admin.GET("/attendance/sessions/:id", attendanceHandler.GetSession)
+	admin.PATCH("/attendance/sessions/:id", attendanceHandler.UpdateSession)
+	admin.GET("/attendance/sessions/:id/records", attendanceHandler.ListRecords)
+	admin.POST("/attendance/checkin", attendanceHandler.CheckIn)
+	admin.GET("/attendance/members/:member_id/history", attendanceHandler.MemberHistory)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms
