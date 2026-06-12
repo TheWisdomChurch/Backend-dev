@@ -54,6 +54,7 @@ func setupRouter(
 	engagementHandler *handlers.EngagementHandler,
 	givingV2Handler *handlers.GivingV2Handler,
 	attendanceHandler *handlers.AttendanceHandler,
+	cellGroupHandler *handlers.CellGroupHandler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -294,6 +295,19 @@ func setupRouter(
 	admin.GET("/attendance/sessions/:id/records", attendanceHandler.ListRecords)
 	admin.POST("/attendance/checkin", attendanceHandler.CheckIn)
 	admin.GET("/attendance/members/:member_id/history", attendanceHandler.MemberHistory)
+
+	// CELL GROUPS
+	admin.POST("/cell-groups", cellGroupHandler.Create)
+	admin.GET("/cell-groups", cellGroupHandler.List)
+	admin.GET("/cell-groups/:id", cellGroupHandler.Get)
+	admin.PATCH("/cell-groups/:id", cellGroupHandler.Update)
+	admin.DELETE("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), cellGroupHandler.Delete)
+	admin.POST("/cell-groups/:id/members", cellGroupHandler.AddMember)
+	admin.GET("/cell-groups/:id/members", cellGroupHandler.ListMembers)
+	admin.DELETE("/cell-groups/:id/members/:member_id", cellGroupHandler.RemoveMember)
+	admin.POST("/cell-groups/:id/meetings", cellGroupHandler.CreateMeeting)
+	admin.GET("/cell-groups/:id/meetings", cellGroupHandler.ListMeetings)
+	admin.GET("/members/:member_id/cell-groups", cellGroupHandler.MemberGroups)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms
