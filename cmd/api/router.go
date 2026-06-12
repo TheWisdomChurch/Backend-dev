@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"wisdomHouse-backend/internal/apperror"
 	"wisdomHouse-backend/internal/authutil"
@@ -54,6 +55,7 @@ func setupRouter(
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 
+	router.Use(otelgin.Middleware("wisdomhouse-backend"))
 	router.Use(gin.CustomRecovery(apperror.PanicRecoveryHandler))
 	router.Use(apperror.Handler())
 	router.Use(middleware.RequestID())

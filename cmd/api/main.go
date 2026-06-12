@@ -24,6 +24,7 @@ import (
 	appLogger "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/telemetry"
 	"wisdomHouse-backend/internal/validation"
 )
 
@@ -51,6 +52,21 @@ func main() {
 	cfg.App.Environment = env
 
 	appLogger.Init(cfg.App.LogLevel, cfg.App.Environment)
+
+	// Distributed tracing — no-op when OTLP_ENDPOINT is not set.
+	telProv, err := telemetry.Init(context.Background(), cfg.Telemetry.OTLPEndpoint, "1.0.0", env)
+	if err != nil {
+		logger.Printf("⚠️ OpenTelemetry init failed: %v", err)
+	} else if telProv != nil {
+		defer func() {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if serr := telProv.Shutdown(shutCtx); serr != nil {
+				logger.Printf("⚠️ Telemetry shutdown: %v", serr)
+			}
+		}()
+		logger.Println("✅ OpenTelemetry tracing initialized")
+	}
 
 	disableOTP := isTrueEnv("DISABLE_OTP")
 	disableLoginOTP := isTrueEnv("DISABLE_LOGIN_OTP")
