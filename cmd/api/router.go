@@ -52,6 +52,7 @@ func setupRouter(
 	givingHandler *handlers.GivingHandler,
 	siteContentHandler *handlers.SiteContentHandler,
 	engagementHandler *handlers.EngagementHandler,
+	givingV2Handler *handlers.GivingV2Handler,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -184,6 +185,10 @@ func setupRouter(
 	api.POST("/store/orders", storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
 	api.GET("/giving/options", givingHandler.ListOptions)
+	api.GET("/giving/categories", givingV2Handler.ListCategories)
+	api.POST("/giving/initiate/:provider", givingV2Handler.Initiate)
+	api.GET("/giving/verify/:provider/:reference", givingV2Handler.Verify)
+	api.POST("/giving/webhook/:provider", givingV2Handler.Webhook)
 	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
 	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
@@ -275,6 +280,8 @@ func setupRouter(
 	admin.PUT("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminConfessionPopup)
 	admin.GET("/pastoral-care/requests", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListPastoralCareRequests)
 	admin.GET("/giving/intents", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListGivingIntents)
+	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.List)
+	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.MonthlySummary)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 
 	// Forms

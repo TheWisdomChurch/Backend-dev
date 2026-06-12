@@ -23,6 +23,14 @@ type Config struct {
 	Auth      AuthConfig      `json:"auth"`
 	App       AppConfig       `json:"app"`
 	Telemetry TelemetryConfig `json:"telemetry"`
+	Payment   PaymentConfig   `json:"payment"`
+}
+
+type PaymentConfig struct {
+	PaystackSecretKey     string `json:"-" env:"PAYSTACK_SECRET_KEY"`
+	PaystackWebhookSecret string `json:"-" env:"PAYSTACK_WEBHOOK_SECRET"`
+	StripeSecretKey       string `json:"-" env:"STRIPE_SECRET_KEY"`
+	StripeWebhookSecret   string `json:"-" env:"STRIPE_WEBHOOK_SECRET"`
 }
 
 type TelemetryConfig struct {
@@ -337,6 +345,12 @@ func Load() (*Config, error) {
 		Telemetry: TelemetryConfig{
 			OTLPEndpoint: getEnv("OTLP_ENDPOINT", ""),
 			MetricsPort:  getEnv("METRICS_PORT", ""),
+		},
+		Payment: PaymentConfig{
+			PaystackSecretKey:     getEnv("PAYSTACK_SECRET_KEY", ""),
+			PaystackWebhookSecret: getEnv("PAYSTACK_WEBHOOK_SECRET", ""),
+			StripeSecretKey:       getEnv("STRIPE_SECRET_KEY", ""),
+			StripeWebhookSecret:   getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		},
 	}
 

@@ -25,6 +25,7 @@ import (
 	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/service/payment"
 	"wisdomHouse-backend/internal/telemetry"
 	"wisdomHouse-backend/internal/validation"
 )
@@ -175,6 +176,7 @@ func main() {
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 	storeRepo := repository.NewStoreRepository(db)
 	refreshTokenRepo := repository.NewRefreshTokenRepository(db)
+	givingRepo := repository.NewGivingRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -376,6 +378,18 @@ func main() {
 	sermonService := service.NewSermonService()
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
 
+	// Payment providers — only registered when keys are configured.
+	paymentProviders := map[string]payment.Provider{}
+	if strings.TrimSpace(cfg.Payment.PaystackSecretKey) != "" {
+		paymentProviders["paystack"] = payment.NewPaystack(cfg.Payment.PaystackSecretKey, cfg.Payment.PaystackWebhookSecret)
+		logger.Println("✅ Paystack payment provider initialized")
+	}
+	if strings.TrimSpace(cfg.Payment.StripeSecretKey) != "" {
+		paymentProviders["stripe"] = payment.NewStripe(cfg.Payment.StripeSecretKey, cfg.Payment.StripeWebhookSecret)
+		logger.Println("✅ Stripe payment provider initialized")
+	}
+	givingService := service.NewGivingService(givingRepo, paymentProviders)
+
 	// -------------------------------------------------------------------------
 	// Handlers
 	// -------------------------------------------------------------------------
@@ -437,6 +451,7 @@ func main() {
 	sermonHandler := handlers.NewSermonHandler(sermonService)
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
+	givingV2Handler := handlers.NewGivingV2Handler(givingService)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
 		db,
@@ -532,6 +547,7 @@ func main() {
 		givingHandler,
 		siteContentHandler,
 		engagementHandler,
+		givingV2Handler,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
