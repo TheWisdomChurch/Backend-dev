@@ -22,6 +22,14 @@ type Config struct {
 	JWT       JWTConfig       `json:"jwt"`
 	Auth      AuthConfig      `json:"auth"`
 	App       AppConfig       `json:"app"`
+	Telemetry TelemetryConfig `json:"telemetry"`
+}
+
+type TelemetryConfig struct {
+	// OTLP HTTP endpoint, e.g. "http://localhost:4318". Leave empty to disable.
+	OTLPEndpoint string `json:"otlp_endpoint" env:"OTLP_ENDPOINT"`
+	// Separate port to expose /metrics. Defaults to "" (same port). Use "9090" for dedicated.
+	MetricsPort string `json:"metrics_port" env:"METRICS_PORT"`
 }
 
 /* ========================================================================== */
@@ -325,6 +333,10 @@ func Load() (*Config, error) {
 			AdminPortalURL:            getEnv("APP_ADMIN_PORTAL_URL", ""),
 			FormCleanupInterval:       getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
 			EmailTemplateAssetBaseURL: strings.TrimRight(getEnv("APP_EMAIL_TEMPLATE_ASSET_BASE_URL", ""), "/"),
+		},
+		Telemetry: TelemetryConfig{
+			OTLPEndpoint: getEnv("OTLP_ENDPOINT", ""),
+			MetricsPort:  getEnv("METRICS_PORT", ""),
 		},
 	}
 
