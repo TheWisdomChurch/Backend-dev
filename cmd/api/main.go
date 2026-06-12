@@ -1166,6 +1166,13 @@ func main() {
 		logger.Println("✅ JWT token blocklist (JTI) initialized")
 	}
 
+	// Geo anomaly detector — requires Redis for caching. No-op when Redis is unavailable.
+	var geoDetector *authutil.GeoDetector
+	if redisCache != nil {
+		geoDetector = authutil.NewGeoDetector(redisCache)
+		logger.Println("✅ Geo anomaly detector initialized")
+	}
+
 	// -------------------------------------------------------------------------
 	// Email sender (Brevo / SES)
 	// -------------------------------------------------------------------------
@@ -1256,6 +1263,7 @@ func main() {
 			PasswordHashCost: cfg.Auth.PasswordHashCost,
 			PasswordPolicy:   authutil.PolicyFromConfig(cfg.Auth.PasswordMinLength),
 			HIBPEnabled:      cfg.Auth.HIBPEnabled,
+			GeoDetector:      geoDetector,
 		},
 	)
 
