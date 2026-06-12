@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -102,6 +103,7 @@ func NewAuthService(db *gorm.DB, userRepo repository.UserRepository, otp OTPServ
 		passwordPolicy:   opts.PasswordPolicy,
 		hibpClient:       authutil.NewHIBPClient(),
 		hibpEnabled:      opts.HIBPEnabled,
+		geoDetector:      opts.GeoDetector,
 	}
 }
 
@@ -395,7 +397,32 @@ func (s *authServiceImpl) markLoginComplete(user *models.User, meta LoginMetadat
 		s.upsertTrustedDevice(user, meta, true)
 	}
 
+	// Geo anomaly detection — non-blocking, fails open on any error.
+	go s.checkGeoAnomaly(user, meta)
+
 	return nil
+}
+
+func (s *authServiceImpl) checkGeoAnomaly(user *models.User, meta LoginMetadata) {
+	if s.geoDetector == nil || s.security == nil || meta.IP == "" {
+		return
+	}
+
+	ctx := context.Background()
+	loc := s.geoDetector.LookupIP(ctx, meta.IP)
+	if loc == nil {
+		return
+	}
+
+	if s.geoDetector.IsNewCountry(ctx, user.ID, loc.CountryCode) {
+		s.security.RecordEvent("geo_anomaly_login", user, meta, map[string]interface{}{
+			"country":      loc.Country,
+			"country_code": loc.CountryCode,
+			"city":         loc.City,
+		})
+		s.security.NotifySuspiciousLogin(user, meta,
+			fmt.Sprintf("login from new country: %s (%s)", loc.Country, loc.CountryCode))
+	}
 }
 
 func (s *authServiceImpl) isTrustedDevice(user *models.User, meta LoginMetadata) bool {
