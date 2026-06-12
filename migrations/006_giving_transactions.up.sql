@@ -42,16 +42,16 @@ CREATE TABLE IF NOT EXISTS giving_transactions (
 );
 
 -- Indexes for common access patterns.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_giving_category_date
+CREATE INDEX IF NOT EXISTS idx_giving_category_date
     ON giving_transactions(category_id, given_at DESC) WHERE deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_giving_member
+CREATE INDEX IF NOT EXISTS idx_giving_member
     ON giving_transactions(member_id, given_at DESC)
     WHERE member_id IS NOT NULL AND deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_giving_status
+CREATE INDEX IF NOT EXISTS idx_giving_status
     ON giving_transactions(status, given_at DESC) WHERE deleted_at IS NULL;
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_giving_campus
+CREATE INDEX IF NOT EXISTS idx_giving_campus
     ON giving_transactions(campus_id, given_at DESC)
     WHERE campus_id IS NOT NULL AND deleted_at IS NULL;
