@@ -16,6 +16,7 @@ import (
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/handlers"
+	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -56,9 +57,11 @@ func setupRouter(
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 
 	router.Use(otelgin.Middleware("wisdomhouse-backend"))
+	router.Use(metrics.GinMiddleware())
 	router.Use(gin.CustomRecovery(apperror.PanicRecoveryHandler))
 	router.Use(apperror.Handler())
 	router.Use(middleware.RequestID())
+	router.Use(middleware.CampusContext())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.SecurityHeaders(secure))
 	router.Use(middleware.RequestBodyLimit(cfg.Server.RequestBodyMax))

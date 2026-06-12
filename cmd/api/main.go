@@ -22,6 +22,7 @@ import (
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/handlers"
 	appLogger "wisdomHouse-backend/internal/logger"
+	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/telemetry"
@@ -118,6 +119,24 @@ func main() {
 
 	if err := verifyDatabaseConnection(db); err != nil {
 		logger.Fatalf("❌ Database connection failed: %v", err)
+	}
+
+	// Metrics server — separate port so /metrics is never publicly reachable.
+	if metricsPort := strings.TrimSpace(cfg.Telemetry.MetricsPort); metricsPort != "" {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle("/metrics", metrics.Handler())
+		metricsServer := &http.Server{
+			Addr:         ":" + metricsPort,
+			Handler:      metricsMux,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 10 * time.Second,
+		}
+		go func() {
+			logger.Printf("✅ Metrics endpoint listening on :%s/metrics", metricsPort)
+			if serr := metricsServer.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
+				logger.Printf("⚠️ Metrics server error: %v", serr)
+			}
+		}()
 	}
 
 	if err := database.RunMigrations(db.DB, "migrations"); err != nil {
@@ -435,6 +454,22 @@ func main() {
 
 	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
 	go startFormReminderScheduler(cleanupCtx, logger, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
+
+	// DB pool stats poller — feeds Prometheus gauges every 15s.
+	if sqlDB, serr := db.DB.DB(); serr == nil {
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-cleanupCtx.Done():
+					return
+				case <-ticker.C:
+					metrics.PollDBStats(sqlDB)
+				}
+			}
+		}()
+	}
 
 	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
 	if schedulerEnabled {
