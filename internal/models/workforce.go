@@ -26,6 +26,13 @@ type WorkforceMember struct {
 	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
 
+	Occupation       *string `gorm:"size:150" json:"occupation,omitempty"`
+	MaritalStatus    *string `gorm:"size:10" json:"maritalStatus,omitempty"` // "married" | "single"
+	SpouseName       *string `gorm:"size:150" json:"spouseName,omitempty"`
+	AnniversaryMonth *int    `gorm:"type:smallint" json:"anniversaryMonth,omitempty"`
+	AnniversaryDay   *int    `gorm:"type:smallint" json:"anniversaryDay,omitempty"`
+	About            *string `gorm:"type:text" json:"about,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -47,6 +54,14 @@ type CreateWorkforceRequest struct {
 	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
 	Birthday      *string `json:"birthday,omitempty"` // DD/MM
+
+	Occupation       string  `json:"occupation"`
+	Married          string  `json:"married" binding:"omitempty,oneof=yes no"`
+	Spouse           string  `json:"spouse"`
+	AnniversaryMonth *int    `json:"anniversaryMonth,omitempty"`
+	AnniversaryDay   *int    `json:"anniversaryDay,omitempty"`
+	Anniversary      *string `json:"anniversary,omitempty"` // DD/MM
+	About            string  `json:"about"`
 }
 
 type UpdateWorkforceRequest struct {
@@ -61,6 +76,14 @@ type UpdateWorkforceRequest struct {
 	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
 	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
 	Birthday      *string `json:"birthday,omitempty"` // DD/MM
+
+	Occupation       *string `json:"occupation,omitempty"`
+	Married          *string `json:"married,omitempty" binding:"omitempty,oneof=yes no"`
+	Spouse           *string `json:"spouse,omitempty"`
+	AnniversaryMonth *int    `json:"anniversaryMonth,omitempty"`
+	AnniversaryDay   *int    `json:"anniversaryDay,omitempty"`
+	Anniversary      *string `json:"anniversary,omitempty"` // DD/MM
+	About            *string `json:"about,omitempty"`
 }
 
 type WorkforceStatsResponse struct {

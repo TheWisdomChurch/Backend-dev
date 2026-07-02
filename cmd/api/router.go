@@ -215,6 +215,17 @@ func setupRouter(
 	// Workforce public apply
 	api.POST("/workforce/apply", workforceHandler.Apply)
 	api.POST("/workforce/serving/register", workforceHandler.ApplyServing)
+	// Member self-service lookup — tightly rate limited: returns name/phone by
+	// email, so without this it would be an email-enumeration/PII-scraping vector.
+	workforceLookupRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: cfg.RateLimit.Auth.RequestsPerMinute,
+		Burst:             cfg.RateLimit.Auth.Burst,
+		Window:            cfg.RateLimit.Auth.Window,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:workforce-lookup",
+		Message:           "Too many lookup requests. Please wait a moment and try again.",
+	})
+	api.GET("/workforce/member/lookup", middleware.NoStore(), workforceLookupRateLimiter, workforceHandler.LookupByEmail)
 
 	// Leadership public
 	api.GET("/leadership", leadershipHandler.ListPublic)

@@ -18,6 +18,7 @@ type WorkforceService interface {
 	List(page, limit int, department, status string) ([]models.WorkforceMember, int64, error)
 	Create(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	CreateApplication(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
+	LookupByEmail(email string) (*models.WorkforceMember, error)
 	RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
@@ -104,17 +105,36 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 		return nil, err
 	}
 
+	anniversaryMonth, anniversaryDay, err := parseAnniversary(req.AnniversaryMonth, req.AnniversaryDay, req.Anniversary)
+	if err != nil {
+		return nil, err
+	}
+
+	var maritalStatus *string
+	switch strings.ToLower(strings.TrimSpace(req.Married)) {
+	case "yes":
+		maritalStatus = strPtr("married")
+	case "no":
+		maritalStatus = strPtr("single")
+	}
+
 	member := &models.WorkforceMember{
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
-		Email:         optionalStringPtr(req.Email),
-		Phone:         optionalStringPtr(req.Phone),
-		Department:    strings.TrimSpace(req.Department),
-		SourceChannel: strings.TrimSpace(req.SourceChannel),
-		Status:        status,
-		Notes:         sanitize.TextPtr(req.Notes),
-		BirthdayMonth: month,
-		BirthdayDay:   day,
+		FirstName:        strings.TrimSpace(req.FirstName),
+		LastName:         strings.TrimSpace(req.LastName),
+		Email:            optionalStringPtr(req.Email),
+		Phone:            optionalStringPtr(req.Phone),
+		Department:       strings.TrimSpace(req.Department),
+		SourceChannel:    strings.TrimSpace(req.SourceChannel),
+		Status:           status,
+		Notes:            sanitize.TextPtr(req.Notes),
+		BirthdayMonth:    month,
+		BirthdayDay:      day,
+		Occupation:       optionalStringPtr(req.Occupation),
+		MaritalStatus:    maritalStatus,
+		SpouseName:       optionalStringPtr(req.Spouse),
+		AnniversaryMonth: anniversaryMonth,
+		AnniversaryDay:   anniversaryDay,
+		About:            sanitize.TextPtr(optionalStringPtr(req.About)),
 	}
 	if member.SourceChannel == "" {
 		member.SourceChannel = "frontend:web:workforce"
@@ -124,6 +144,14 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 		return nil, err
 	}
 	return member, nil
+}
+
+func (s *workforceService) LookupByEmail(email string) (*models.WorkforceMember, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil, errors.New("email is required")
+	}
+	return s.repo.FindByEmail(email)
 }
 
 func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error) {
@@ -156,6 +184,31 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 		}
 		updates["birthday_month"] = month
 		updates["birthday_day"] = day
+	}
+	if req.Occupation != nil {
+		updates["occupation"] = strings.TrimSpace(*req.Occupation)
+	}
+	if req.Married != nil {
+		switch strings.ToLower(strings.TrimSpace(*req.Married)) {
+		case "yes":
+			updates["marital_status"] = "married"
+		case "no":
+			updates["marital_status"] = "single"
+		}
+	}
+	if req.Spouse != nil {
+		updates["spouse_name"] = strings.TrimSpace(*req.Spouse)
+	}
+	if req.About != nil {
+		updates["about"] = sanitize.Text(*req.About)
+	}
+	if req.AnniversaryMonth != nil || req.AnniversaryDay != nil || req.Anniversary != nil {
+		month, day, err := parseAnniversary(req.AnniversaryMonth, req.AnniversaryDay, req.Anniversary)
+		if err != nil {
+			return nil, err
+		}
+		updates["anniversary_month"] = month
+		updates["anniversary_day"] = day
 	}
 
 	if len(updates) == 0 {

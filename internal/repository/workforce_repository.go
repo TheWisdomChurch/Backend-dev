@@ -8,6 +8,7 @@ import (
 type WorkforceRepository interface {
 	List(offset, limit int, department, status string) ([]models.WorkforceMember, int64, error)
 	GetByID(id string) (*models.WorkforceMember, error)
+	FindByEmail(email string) (*models.WorkforceMember, error)
 	Create(member *models.WorkforceMember) error
 	Update(id string, updates map[string]interface{}) (*models.WorkforceMember, error)
 	Delete(id string) error
@@ -57,6 +58,16 @@ func (r *workforceRepository) Create(member *models.WorkforceMember) error {
 func (r *workforceRepository) GetByID(id string) (*models.WorkforceMember, error) {
 	var member models.WorkforceMember
 	if err := r.db.DB.First(&member, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &member, nil
+}
+
+func (r *workforceRepository) FindByEmail(email string) (*models.WorkforceMember, error) {
+	var member models.WorkforceMember
+	if err := r.db.DB.Where("LOWER(email) = LOWER(?)", email).
+		Order("updated_at DESC").
+		First(&member).Error; err != nil {
 		return nil, err
 	}
 	return &member, nil

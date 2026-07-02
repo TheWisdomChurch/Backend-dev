@@ -12,14 +12,15 @@ import (
 )
 
 type CreateStoreOrderRequest struct {
-	OrderID       string                       `json:"orderId"`
-	Subtotal      float64                      `json:"subtotal"`
-	DeliveryFee   float64                      `json:"deliveryFee"`
-	Total         float64                      `json:"total"`
-	PaymentMethod string                       `json:"paymentMethod"`
-	Items         []CreateStoreOrderItem       `json:"items"`
-	Customer      CreateStoreOrderCustomer     `json:"customer"`
-	BankDetails   *CreateStoreOrderBankDetails `json:"bankDetails,omitempty"`
+	OrderID        string                       `json:"orderId"`
+	Subtotal       float64                      `json:"subtotal"`
+	DeliveryFee    float64                      `json:"deliveryFee"`
+	Total          float64                      `json:"total"`
+	PaymentMethod  string                       `json:"paymentMethod"`
+	Items          []CreateStoreOrderItem       `json:"items"`
+	Customer       CreateStoreOrderCustomer     `json:"customer"`
+	BankDetails    *CreateStoreOrderBankDetails `json:"bankDetails,omitempty"`
+	PaymentSlipURL string                       `json:"paymentSlipUrl,omitempty"`
 }
 
 type CreateStoreOrderItem struct {
@@ -171,6 +172,7 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 		order.CustomerAccountName = strPtrOrNil(req.BankDetails.CustomerAccountName)
 		order.CustomerBankName = strPtrOrNil(req.BankDetails.CustomerBankName)
 	}
+	order.PaymentSlipURL = strPtrOrNil(req.PaymentSlipURL)
 
 	order.Items = make([]models.StoreOrderItem, 0, len(req.Items))
 	for _, item := range req.Items {

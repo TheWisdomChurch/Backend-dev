@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/middleware"
@@ -176,6 +177,43 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 	h.sendWorkforceConfirmation(*member, "workforce_serving_confirmation", "Serving")
 
 	utils.SuccessResponse(c, http.StatusCreated, "Workforce profile submitted", member)
+}
+
+// LookupByEmail is a public, rate-limited endpoint used by the "existing member"
+// self-service form to pre-fill known details. It intentionally returns only
+// non-sensitive profile fields (name/phone/department) — never marital status,
+// notes, or other pastoral-care-adjacent data — to limit exposure if the lookup
+// is abused for email enumeration.
+func (h *WorkforceHandler) LookupByEmail(c *gin.Context) {
+	email := strings.TrimSpace(c.Query("email"))
+	if email == "" || !strings.Contains(email, "@") || len(email) > 254 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "A valid email is required")
+		return
+	}
+
+	member, err := h.svc.LookupByEmail(email)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "No profile found for this email")
+			return
+		}
+		log.Printf("workforce lookup failed: %v", err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to look up profile")
+		return
+	}
+
+	phone := ""
+	if member.Phone != nil {
+		phone = strings.TrimSpace(*member.Phone)
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Profile found", gin.H{
+		"firstName":  member.FirstName,
+		"lastName":   member.LastName,
+		"fullName":   strings.TrimSpace(member.FirstName + " " + member.LastName),
+		"phone":      phone,
+		"department": member.Department,
+	})
 }
 
 func (h *WorkforceHandler) Update(c *gin.Context) {
