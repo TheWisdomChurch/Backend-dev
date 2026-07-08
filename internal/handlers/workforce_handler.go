@@ -197,7 +197,7 @@ func (h *WorkforceHandler) LookupByEmail(c *gin.Context) {
 			utils.ErrorResponse(c, http.StatusNotFound, "No profile found for this email")
 			return
 		}
-		log.Printf("workforce lookup failed: %v", err)
+		applog.L().Warn("workforce lookup failed", "email", email, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to look up profile")
 		return
 	}
