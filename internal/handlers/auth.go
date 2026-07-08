@@ -17,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"wisdomHouse-backend/internal/authutil"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -79,7 +80,7 @@ type AuthHandler struct {
 
 func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthHandler {
 	if strings.TrimSpace(opts.JWTSecret) == "" {
-		fmt.Println("WARNING: JWT_SECRET not set")
+		applog.L().Warn("JWT_SECRET not set")
 	}
 
 	if opts.AccessTokenTTL <= 0 {
@@ -1153,7 +1154,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		}
 
 		// Any other error is internal (email provider / DB / etc.) — log without exposing email
-		fmt.Printf("password reset start failed error=%v\n", err)
+		applog.L().Warn("password reset start failed", "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start password reset process")
 		return
 	}
@@ -1312,4 +1313,3 @@ func (h *AuthHandler) GetCSRFToken(c *gin.Context) {
 		"header": headerStr,
 	})
 }
-
