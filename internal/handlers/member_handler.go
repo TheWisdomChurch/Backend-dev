@@ -36,7 +36,7 @@ func (h *MemberHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, activePtr)
 	if err != nil {
-		log.Printf("member admin list failed page=%d limit=%d active=%v: %v", page, limit, activePtr, err)
+		applog.L().Warn("member admin list failed", "page", page, "limit", limit, "active", activePtr, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load members")
 		return
 	}
@@ -274,7 +274,7 @@ func (h *MemberHandler) ImportCSV(c *gin.Context) {
 
 	result, err := h.svc.BulkImport(rows)
 	if err != nil {
-		log.Printf("member CSV import failed: %v", err)
+		applog.L().Warn("member CSV import failed", "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Import failed")
 		return
 	}
