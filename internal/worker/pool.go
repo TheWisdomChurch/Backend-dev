@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	applog "wisdomHouse-backend/internal/logger"
 )
 
 // Task represents a job to be executed
@@ -31,7 +32,6 @@ type WorkerPool struct {
 	taskQueue  chan Task
 	wg         sync.WaitGroup
 	maxWorkers int
-	logger     *log.Logger
 	started    atomic.Bool
 	stopped    atomic.Bool
 	stopOnce   sync.Once
@@ -46,7 +46,6 @@ func NewWorkerPool(maxWorkers int) *WorkerPool {
 		workers:    make([]*Worker, 0, maxWorkers),
 		taskQueue:  make(chan Task, 100),
 		maxWorkers: maxWorkers,
-		logger:     log.New(log.Writer(), "[WorkerPool] ", log.LstdFlags),
 	}
 }
 
@@ -56,7 +55,7 @@ func (wp *WorkerPool) Start() {
 		return
 	}
 	wp.started.Store(true)
-	wp.logger.Printf("Starting worker pool with %d workers", wp.maxWorkers)
+	applog.L().Info("starting worker pool", "workers", wp.maxWorkers)
 
 	for i := 0; i < wp.maxWorkers; i++ {
 		worker := &Worker{
@@ -117,11 +116,11 @@ func (wp *WorkerPool) SubmitWithTimeout(ctx context.Context, task Task, timeout 
 // Shutdown gracefully stops the worker pool
 func (wp *WorkerPool) Shutdown() {
 	wp.stopOnce.Do(func() {
-		wp.logger.Println("Shutting down worker pool...")
+		applog.L().Info("shutting down worker pool")
 		wp.stopped.Store(true)
 		close(wp.taskQueue)
 		wp.wg.Wait()
-		wp.logger.Println("Worker pool shutdown complete")
+		applog.L().Info("worker pool shutdown complete")
 	})
 }
 
@@ -130,10 +129,10 @@ func (w *Worker) start() {
 	defer w.wg.Done()
 	w.isRunning.Store(true)
 
-	log.Printf("Worker %d started", w.id)
+	applog.L().Info("worker started", "worker_id", w.id)
 	defer func() {
 		w.isRunning.Store(false)
-		log.Printf("Worker %d stopped", w.id)
+		applog.L().Info("worker stopped", "worker_id", w.id)
 	}()
 
 	for task := range w.taskQueue {
@@ -146,7 +145,7 @@ func (w *Worker) start() {
 
 func (w *Worker) executeTask(task Task) {
 	start := time.Now()
-	log.Printf("Worker %d processing task: %s", w.id, task.Name())
+	applog.L().Info("worker processing task", "worker_id", w.id, "task", task.Name())
 
 	var err error
 	maxRetries := task.RetryCount()
@@ -156,20 +155,18 @@ func (w *Worker) executeTask(task Task) {
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			log.Printf("Worker %d retrying task %s (attempt %d/%d)",
-				w.id, task.Name(), attempt, maxRetries)
+			applog.L().Info("worker retrying task", "worker_id", w.id, "task", task.Name(), "attempt", attempt, "max_retries", maxRetries)
 			time.Sleep(time.Duration(1<<min(attempt, 5)) * 100 * time.Millisecond)
 		}
 
 		err = task.Execute()
 		if err == nil {
-			log.Printf("Worker %d completed task: %s in %v",
-				w.id, task.Name(), time.Since(start))
+			applog.L().Info("worker completed task", "worker_id", w.id, "task", task.Name(), "duration", time.Since(start))
 			return
 		}
 	}
 
-	log.Printf("Worker %d task failed: %s, error: %v", w.id, task.Name(), err)
+	applog.L().Warn("worker task failed", "worker_id", w.id, "task", task.Name(), "error", err)
 }
 
 func min(a, b int) int {

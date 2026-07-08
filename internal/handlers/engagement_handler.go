@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	htmltemplate "html/template"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/email"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/sanitize"
@@ -341,7 +341,7 @@ func (h *EngagementHandler) sendPastoralConfirmation(row models.PastoralCareRequ
 	}
 
 	if err := h.sender.SendHTML(addr, subject, body); err != nil {
-		log.Printf("⚠️ failed to send pastoral care confirmation to %s: %v", addr, err)
+		applog.L().Warn("failed to send pastoral care confirmation", "to", addr, "error", err)
 	}
 }
 
@@ -379,7 +379,7 @@ func (h *EngagementHandler) sendGivingConfirmation(row models.GivingIntent) {
 	}
 
 	if err := h.sender.SendHTML(addr, subject, body); err != nil {
-		log.Printf("⚠️ failed to send giving confirmation to %s: %v", addr, err)
+		applog.L().Warn("failed to send giving confirmation", "to", addr, "error", err)
 	}
 }
 
@@ -394,13 +394,13 @@ func (h *EngagementHandler) renderActiveTemplateByKey(templateKey string, data a
 
 	compiled, err := htmltemplate.New("engagement").Option("missingkey=zero").Parse(tpl.HTMLBody)
 	if err != nil {
-		log.Printf("⚠️ failed to parse email template %s: %v", templateKey, err)
+		applog.L().Warn("failed to parse email template", "template_key", templateKey, "error", err)
 		return "", ""
 	}
 
 	var buf bytes.Buffer
 	if err := compiled.Execute(&buf, data); err != nil {
-		log.Printf("⚠️ failed to render email template %s: %v", templateKey, err)
+		applog.L().Warn("failed to render email template", "template_key", templateKey, "error", err)
 		return "", ""
 	}
 

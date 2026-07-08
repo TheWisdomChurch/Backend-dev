@@ -2,12 +2,12 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
 
 	"wisdomHouse-backend/internal/config"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 
 	"gorm.io/driver/postgres"
@@ -25,7 +25,7 @@ type Database struct {
 func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	dsn := cfg.ConnectionString()
 
-	log.Printf("🔌 Connecting to database: %s", cfg.DSN())
+	applog.L().Info("connecting to database", "dsn", cfg.DSN())
 
 	gormLogger := logger.Default
 	if isProduction(appEnv) {
@@ -61,7 +61,7 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-	log.Println("✅ Database connection established successfully")
+	applog.L().Info("database connection established")
 
 	if err := ensureExtensions(db, appEnv); err != nil {
 		return nil, fmt.Errorf("failed to ensure database extensions: %w", err)
@@ -76,7 +76,7 @@ func NewDatabase(cfg *config.DatabaseConfig, appEnv string) (*Database, error) {
 			return nil, fmt.Errorf("failed to run automigrate: %w", err)
 		}
 	} else {
-		log.Println("ℹ️ Production mode: AutoMigrate is disabled. Run a controlled migration job with RUN_AUTOMIGRATE=true.")
+		applog.L().Info("production mode: AutoMigrate disabled; run a controlled migration job with RUN_AUTOMIGRATE=true")
 		if err := ensureAdminDomainSchema(db, appEnv); err != nil {
 			return nil, fmt.Errorf("failed to ensure admin domain schema: %w", err)
 		}
@@ -108,12 +108,12 @@ func shouldEnsureAdminSchemaOnStartup(appEnv string) bool {
 }
 
 func ensureExtensions(db *gorm.DB, appEnv string) error {
-	log.Println("🧩 Ensuring required Postgres extensions...")
+	applog.L().Info("ensuring required Postgres extensions")
 
 	tryExec := func(sql string, name string) error {
 		if err := db.Exec(sql).Error; err != nil {
 			if isProduction(appEnv) {
-				log.Printf("⚠️ Could not ensure extension %s. Enable it in Supabase if required: %v", name, err)
+				applog.L().Warn("could not ensure extension; enable it in Supabase if required", "extension", name, "error", err)
 				return nil
 			}
 			return fmt.Errorf("ensure extension %s: %w", name, err)
@@ -128,14 +128,14 @@ func ensureExtensions(db *gorm.DB, appEnv string) error {
 		return err
 	}
 
-	log.Println("✅ Extensions check done")
+	applog.L().Info("extensions check done")
 	return nil
 }
 
 // ensureDatabaseCompatibility only runs safe, idempotent SQL.
 // It must not fail when tables or constraints are missing.
 func ensureDatabaseCompatibility(db *gorm.DB) error {
-	log.Println("🧩 Ensuring database compatibility fixes...")
+	applog.L().Info("ensuring database compatibility fixes")
 
 	statements := []string{
 		`ALTER TABLE IF EXISTS "members" DROP CONSTRAINT IF EXISTS "uni_members_email";`,
@@ -149,34 +149,34 @@ func ensureDatabaseCompatibility(db *gorm.DB) error {
 		}
 	}
 
-	log.Println("✅ Database compatibility fixes done")
+	applog.L().Info("database compatibility fixes done")
 	return nil
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	log.Println("🔄 Running database AutoMigrate...")
+	applog.L().Info("running database AutoMigrate")
 
 	if err := runAutoMigrate(db, allMigrationModels()...); err != nil {
 		return err
 	}
 
-	log.Println("✅ AutoMigrate completed successfully")
+	applog.L().Info("AutoMigrate completed successfully")
 	return nil
 }
 
 func ensureAdminDomainSchema(db *gorm.DB, appEnv string) error {
 	if !shouldEnsureAdminSchemaOnStartup(appEnv) {
-		log.Println("ℹ️ Production mode: admin startup schema AutoMigrate is disabled.")
+		applog.L().Info("production mode: admin startup schema AutoMigrate is disabled")
 		return nil
 	}
 
-	log.Println("🧱 Ensuring critical admin domain tables...")
+	applog.L().Info("ensuring critical admin domain tables")
 
 	if err := runAutoMigrate(db, adminDomainMigrationModels()...); err != nil {
 		return err
 	}
 
-	log.Println("✅ Critical admin domain tables check completed")
+	applog.L().Info("critical admin domain tables check completed")
 	return nil
 }
 
@@ -184,7 +184,7 @@ func runAutoMigrate(db *gorm.DB, modelsToMigrate ...any) error {
 	for _, model := range modelsToMigrate {
 		if err := db.AutoMigrate(model); err != nil {
 			if isIgnorableMissingConstraintError(err) {
-				log.Printf("⚠️ Ignoring stale/missing constraint cleanup error while migrating %T: %v", model, err)
+				applog.L().Warn("ignoring stale/missing constraint cleanup error while migrating", "model", fmt.Sprintf("%T", model), "error", err)
 				continue
 			}
 

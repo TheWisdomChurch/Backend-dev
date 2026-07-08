@@ -14,12 +14,12 @@ import (
 	"wisdomHouse-backend/pkg/utils"
 )
 
-type GivingV2Handler struct {
+type GivingPaymentsHandler struct {
 	svc service.GivingService
 }
 
-func NewGivingV2Handler(svc service.GivingService) *GivingV2Handler {
-	return &GivingV2Handler{svc: svc}
+func NewGivingPaymentsHandler(svc service.GivingService) *GivingPaymentsHandler {
+	return &GivingPaymentsHandler{svc: svc}
 }
 
 // ListCategories godoc
@@ -28,7 +28,7 @@ func NewGivingV2Handler(svc service.GivingService) *GivingV2Handler {
 // @Produce json
 // @Success 200 {object} utils.APIResponse
 // @Router /giving/categories [get]
-func (h *GivingV2Handler) ListCategories(c *gin.Context) {
+func (h *GivingPaymentsHandler) ListCategories(c *gin.Context) {
 	cats, err := h.svc.ListCategories(c.Request.Context())
 	if err != nil {
 		utils.Err(c, err)
@@ -46,7 +46,7 @@ func (h *GivingV2Handler) ListCategories(c *gin.Context) {
 // @Param body body service.InitiateGivingRequest true "Giving request"
 // @Success 200 {object} utils.APIResponse
 // @Router /giving/initiate/{provider} [post]
-func (h *GivingV2Handler) Initiate(c *gin.Context) {
+func (h *GivingPaymentsHandler) Initiate(c *gin.Context) {
 	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
 	var req service.InitiateGivingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -69,7 +69,7 @@ func (h *GivingV2Handler) Initiate(c *gin.Context) {
 // @Param reference  path string true "Payment reference"
 // @Success 200 {object} utils.APIResponse
 // @Router /giving/verify/{provider}/{reference} [get]
-func (h *GivingV2Handler) Verify(c *gin.Context) {
+func (h *GivingPaymentsHandler) Verify(c *gin.Context) {
 	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
 	reference := strings.TrimSpace(c.Param("reference"))
 	tx, err := h.svc.VerifyAndRecord(c.Request.Context(), provider, reference)
@@ -88,7 +88,7 @@ func (h *GivingV2Handler) Verify(c *gin.Context) {
 // @Param provider path string true "Payment provider"
 // @Success 200
 // @Router /giving/webhook/{provider} [post]
-func (h *GivingV2Handler) Webhook(c *gin.Context) {
+func (h *GivingPaymentsHandler) Webhook(c *gin.Context) {
 	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
 
 	// Read raw body BEFORE any binding — required for webhook signature verification.
@@ -124,7 +124,7 @@ func (h *GivingV2Handler) Webhook(c *gin.Context) {
 // @Param limit       query int    false "Page size (default 20, max 100)"
 // @Success 200 {object} utils.APIResponse
 // @Router /admin/giving [get]
-func (h *GivingV2Handler) List(c *gin.Context) {
+func (h *GivingPaymentsHandler) List(c *gin.Context) {
 	filter := repository.GivingFilter{}
 	if v := c.Query("category_id"); v != "" {
 		filter.CategoryID = &v
@@ -175,7 +175,7 @@ func (h *GivingV2Handler) List(c *gin.Context) {
 // @Param campus_id query string false "Campus filter"
 // @Success 200 {object} utils.APIResponse
 // @Router /admin/giving/summary [get]
-func (h *GivingV2Handler) MonthlySummary(c *gin.Context) {
+func (h *GivingPaymentsHandler) MonthlySummary(c *gin.Context) {
 	year, _ := strconv.Atoi(c.Query("year"))
 	month, _ := strconv.Atoi(c.Query("month"))
 	var campusID *string

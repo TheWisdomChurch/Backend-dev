@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	applog "wisdomHouse-backend/internal/logger"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/service"
@@ -50,7 +51,7 @@ func (l *redisLock) Acquire(ctx context.Context, key string, ttl time.Duration) 
 	return l.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
-func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormService, interval time.Duration) {
+func startFormCleanup(ctx context.Context, svc service.FormService, interval time.Duration) {
 	if svc == nil {
 		return
 	}
@@ -68,13 +69,11 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 		case <-ticker.C:
 			count, err := svc.CleanupExpiredForms(time.Now().UTC())
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Form cleanup failed: %v", err)
-				}
+				applog.L().Warn("form cleanup failed", "error", err)
 				continue
 			}
-			if count > 0 && logger != nil {
-				logger.Printf("🧹 Cleaned up %d expired forms", count)
+			if count > 0 {
+				applog.L().Info("cleaned up expired forms", "count", count)
 			}
 		}
 	}
@@ -82,7 +81,6 @@ func startFormCleanup(ctx context.Context, logger *log.Logger, svc service.FormS
 
 func startFormReminderScheduler(
 	ctx context.Context,
-	logger *log.Logger,
 	lock *redisLock,
 	svc service.FormService,
 	interval time.Duration,
@@ -104,9 +102,7 @@ func startFormReminderScheduler(
 			key := "form_event_reminder:" + now.Format("2006010215")
 			ok, err := lock.Acquire(ctx, key, 70*time.Minute)
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Form reminder lock failed: %v", err)
-				}
+				applog.L().Warn("form reminder lock failed", "error", err)
 				return
 			}
 			if !ok {
@@ -116,13 +112,11 @@ func startFormReminderScheduler(
 
 		sent, failed, err := svc.SendEventReminderEmails(now, lookAhead)
 		if err != nil {
-			if logger != nil {
-				logger.Printf("⚠️ Form reminder scheduler failed: %v", err)
-			}
+			applog.L().Warn("form reminder scheduler failed", "error", err)
 			return
 		}
-		if logger != nil && (sent > 0 || failed > 0) {
-			logger.Printf("📩 Form reminders: sent=%d failed=%d", sent, failed)
+		if sent > 0 || failed > 0 {
+			applog.L().Info("form reminders sent", "sent", sent, "failed", failed)
 		}
 	}
 
@@ -170,7 +164,6 @@ func nextRunAt(now time.Time, hour, minute int) time.Time {
 
 func startBirthdayScheduler(
 	ctx context.Context,
-	logger *log.Logger,
 	lock *redisLock,
 	workforceSvc service.WorkforceService,
 	memberSvc service.MemberService,
@@ -187,9 +180,7 @@ func startBirthdayScheduler(
 	}
 	hour, minute, err := parseHourMinute(sendAt)
 	if err != nil {
-		if logger != nil {
-			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TIME=%q, using 09:00", sendAt)
-		}
+		applog.L().Warn("invalid BIRTHDAY_SCHEDULER_TIME, using 09:00", "value", sendAt)
 		hour, minute = 9, 0
 	}
 
@@ -197,8 +188,8 @@ func startBirthdayScheduler(
 	if strings.TrimSpace(tz) != "" {
 		if l, err := time.LoadLocation(tz); err == nil {
 			loc = l
-		} else if logger != nil {
-			logger.Printf("⚠️ Invalid BIRTHDAY_SCHEDULER_TZ=%q, using UTC", tz)
+		} else {
+			applog.L().Warn("invalid BIRTHDAY_SCHEDULER_TZ, using UTC", "value", tz)
 		}
 	}
 
@@ -218,15 +209,11 @@ func startBirthdayScheduler(
 		if lock != nil {
 			ok, err := lock.Acquire(ctx, "birthday_send:"+dateKey, 36*time.Hour)
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Birthday scheduler lock failed: %v", err)
-				}
+				applog.L().Warn("birthday scheduler lock failed", "error", err)
 				continue
 			}
 			if !ok {
-				if logger != nil {
-					logger.Printf("ℹ️ Birthday scheduler already ran for %s", dateKey)
-				}
+				applog.L().Info("birthday scheduler already ran", "date", dateKey)
 				continue
 			}
 		}
@@ -234,42 +221,34 @@ func startBirthdayScheduler(
 		if workforceSvc != nil {
 			result, err := workforceSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Workforce birthday send failed: %v", err)
-				}
-			} else if logger != nil {
-				logger.Printf("🎂 Workforce birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+				applog.L().Warn("workforce birthday send failed", "error", err)
+			} else {
+				applog.L().Info("workforce birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
 			}
 		}
 
 		if memberSvc != nil {
 			result, err := memberSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Member birthday send failed: %v", err)
-				}
-			} else if logger != nil {
-				logger.Printf("🎉 Member birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+				applog.L().Warn("member birthday send failed", "error", err)
+			} else {
+				applog.L().Info("member birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
 			}
 		}
 
 		if leadershipSvc != nil {
 			result, err := leadershipSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Leadership birthday send failed: %v", err)
-				}
-			} else if logger != nil {
-				logger.Printf("🎂 Leadership birthdays: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+				applog.L().Warn("leadership birthday send failed", "error", err)
+			} else {
+				applog.L().Info("leadership birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
 			}
 
 			result, err = leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
 			if err != nil {
-				if logger != nil {
-					logger.Printf("⚠️ Leadership anniversary send failed: %v", err)
-				}
-			} else if logger != nil {
-				logger.Printf("💍 Leadership anniversaries: targeted=%d sent=%d skipped=%d", result.Targeted, result.Sent, result.Skipped)
+				applog.L().Warn("leadership anniversary send failed", "error", err)
+			} else {
+				applog.L().Info("leadership anniversaries sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
 			}
 		}
 	}

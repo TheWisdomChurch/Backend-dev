@@ -11,9 +11,10 @@ package realtime
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"sync"
 	"time"
+
+	applog "wisdomHouse-backend/internal/logger"
 )
 
 const (
@@ -58,17 +59,15 @@ type Hub struct {
 	mu      sync.RWMutex
 	clients map[string][]Subscriber // userID → subscribers
 
-	redis  RedisPublisher
-	logger *log.Logger
+	redis RedisPublisher
 }
 
 // New creates a new Hub. redis may be nil — in that case pub/sub cross-instance
 // fan-out is disabled and events are only broadcast to local clients.
-func New(redis RedisPublisher, logger *log.Logger) *Hub {
+func New(redis RedisPublisher) *Hub {
 	h := &Hub{
 		clients: make(map[string][]Subscriber),
 		redis:   redis,
-		logger:  logger,
 	}
 	return h
 }
@@ -129,17 +128,15 @@ func (h *Hub) Unsubscribe(userID string, sub Subscriber) {
 func (h *Hub) Publish(ctx context.Context, event Event) {
 	data, err := json.Marshal(event)
 	if err != nil {
-		if h.logger != nil {
-			h.logger.Printf("realtime: marshal event: %v", err)
-		}
+		applog.L().Warn("realtime: marshal event failed", "error", err)
 		return
 	}
 	frame := sseFrame(data)
 	h.broadcastRaw(frame)
 
 	if h.redis != nil {
-		if err := h.redis.Publish(ctx, redisPubSubChannel, frame); err != nil && h.logger != nil {
-			h.logger.Printf("realtime: redis publish: %v", err)
+		if err := h.redis.Publish(ctx, redisPubSubChannel, frame); err != nil {
+			applog.L().Warn("realtime: redis publish failed", "error", err)
 		}
 	}
 }

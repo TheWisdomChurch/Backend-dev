@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/pkg/utils"
@@ -117,7 +117,7 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 
 	publicURL, err := h.storage.Upload(ctx, objectKey, contentType, reader)
 	if err != nil {
-		log.Printf("asset upload failed module=%q kind=%q folder=%q key=%q contentType=%q size=%d: %v", module, kind, folder, objectKey, contentType, fh.Size, err)
+		applog.L().Warn("asset upload failed", "module", module, "kind", kind, "folder", folder, "key", objectKey, "content_type", contentType, "size", fh.Size, "error", err)
 		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
 		return
 	}
@@ -142,7 +142,7 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 
 		asset, err = h.assets.RecordUploadedAsset(recordReq, nil)
 		if err != nil {
-			log.Printf("asset metadata record failed key=%q url=%q: %v", objectKey, publicURL, err)
+			applog.L().Warn("asset metadata record failed", "key", objectKey, "url", publicURL, "error", err)
 			utils.ErrorResponse(c, http.StatusInternalServerError, "file uploaded but metadata save failed")
 			return
 		}
