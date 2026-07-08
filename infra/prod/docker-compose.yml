@@ -1,0 +1,25 @@
+services:
+  # There is no migrate service, deliberately. Migrations run in-process on
+  # API boot (internal/database/migrations.go, called from cmd/api/main.go),
+  # unconditionally, before the HTTP server starts accepting traffic. A
+  # standalone migrate container that checks for a "schema file" is not part
+  # of this app's design — see docs/MIGRATIONS.md in the app repo.
+  api:
+    image: ghcr.io/thewisdomchurch/wisdom-api:main
+    container_name: wisdom_api
+    restart: always
+    env_file:
+      - .env.production
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
