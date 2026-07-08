@@ -14,7 +14,6 @@ import (
 )
 
 type adminServiceImpl struct {
-	adminRepo       repository.AdminRepository
 	testimonialRepo repository.TestimonialRepository
 	userRepo        repository.UserRepository
 	approvalSvc     ApprovalService
@@ -24,7 +23,6 @@ type adminServiceImpl struct {
 }
 
 func NewAdminService(
-	adminRepo repository.AdminRepository,
 	testimonialRepo repository.TestimonialRepository,
 	userRepo repository.UserRepository,
 	approvalSvc ApprovalService,
@@ -33,7 +31,6 @@ func NewAdminService(
 	branding email.Branding,
 ) AdminService {
 	return &adminServiceImpl{
-		adminRepo:       adminRepo,
 		testimonialRepo: testimonialRepo,
 		userRepo:        userRepo,
 		approvalSvc:     approvalSvc,
