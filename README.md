@@ -22,6 +22,7 @@ Go 1.25 · Gin · GORM/PostgreSQL 15 · Redis 7 · Docker
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — local setup, workflow, debugging
 - [docs/SECURITY.md](docs/SECURITY.md) — security controls checklist
 - [docs/MIGRATIONS.md](docs/MIGRATIONS.md) — how database migrations work
+- [infra/prod/README.md](infra/prod/README.md) — production deploy config
 - [CONTRIBUTING.md](CONTRIBUTING.md) — branching, commits, PR expectations
 
 ## Common commands
