@@ -52,7 +52,7 @@ func setupRouter(
 	givingHandler *handlers.GivingHandler,
 	siteContentHandler *handlers.SiteContentHandler,
 	engagementHandler *handlers.EngagementHandler,
-	givingV2Handler *handlers.GivingV2Handler,
+	givingPaymentsHandler *handlers.GivingPaymentsHandler,
 	attendanceHandler *handlers.AttendanceHandler,
 	cellGroupHandler *handlers.CellGroupHandler,
 	prayerRequestHandler *handlers.PrayerRequestHandler,
@@ -193,10 +193,10 @@ func setupRouter(
 	api.POST("/prayer-requests", prayerRequestHandler.Submit)
 
 	api.GET("/giving/options", givingHandler.ListOptions)
-	api.GET("/giving/categories", givingV2Handler.ListCategories)
-	api.POST("/giving/initiate/:provider", givingV2Handler.Initiate)
-	api.GET("/giving/verify/:provider/:reference", givingV2Handler.Verify)
-	api.POST("/giving/webhook/:provider", givingV2Handler.Webhook)
+	api.GET("/giving/categories", givingPaymentsHandler.ListCategories)
+	api.POST("/giving/initiate/:provider", givingPaymentsHandler.Initiate)
+	api.GET("/giving/verify/:provider/:reference", givingPaymentsHandler.Verify)
+	api.POST("/giving/webhook/:provider", givingPaymentsHandler.Webhook)
 	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
 	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
@@ -288,8 +288,8 @@ func setupRouter(
 	admin.PUT("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminConfessionPopup)
 	admin.GET("/pastoral-care/requests", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListPastoralCareRequests)
 	admin.GET("/giving/intents", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListGivingIntents)
-	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.List)
-	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingV2Handler.MonthlySummary)
+	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingPaymentsHandler.List)
+	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingPaymentsHandler.MonthlySummary)
 
 	// ATTENDANCE
 	admin.GET("/attendance/service-types", attendanceHandler.ListServiceTypes)
