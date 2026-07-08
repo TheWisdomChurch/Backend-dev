@@ -1,9 +1,9 @@
 package service
 
 import (
-	"log"
 	"strings"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 )
 
@@ -68,7 +68,7 @@ func (s *formService) syncCampaignReminder(
 	existing.EventEndsAt = &endCopy
 
 	if err := s.reminderRepo.Update(existing); err != nil {
-		log.Printf("⚠️ failed to sync form campaign reminder (formID=%s, submissionID=%s): %v", form.ID, submission.ID, err)
+		applog.L().Warn("failed to sync form campaign reminder", "form_id", form.ID, "submission_id", submission.ID, "error", err)
 	}
 }
 

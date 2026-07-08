@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"html/template"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -222,7 +222,7 @@ func (h *FormHandler) ListAdminSubmissions(c *gin.Context) {
 
 	items, total, err := h.svc.ListSubmissions(formID, page, limit, start, end)
 	if err != nil {
-		log.Printf("form submissions list failed formID=%q page=%d limit=%d: %v", formID, page, limit, err)
+		applog.L().Warn("form submissions list failed", "form_id", formID, "page", page, "limit", limit, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load submissions")
 		return
 	}
@@ -244,7 +244,7 @@ func (h *FormHandler) DeleteFormSubmission(c *gin.Context) {
 	}
 
 	if err := h.svc.DeleteSubmission(id); err != nil {
-		log.Printf("form submission delete failed id=%q: %v", id, err)
+		applog.L().Warn("form submission delete failed", "id", id, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete submission")
 		return
 	}
@@ -265,7 +265,7 @@ func (h *FormHandler) GetFormSubmissionStats(c *gin.Context) {
 
 	stats, err := h.svc.StatsByForm(formID, start, end)
 	if err != nil {
-		log.Printf("form submission stats failed formID=%q: %v", formID, err)
+		applog.L().Warn("form submission stats failed", "form_id", formID, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load submission stats")
 		return
 	}
@@ -282,7 +282,7 @@ func (h *FormHandler) GetFormStats(c *gin.Context) {
 
 	stats, err := h.svc.Stats(start, end)
 	if err != nil {
-		log.Printf("form stats failed: %v", err)
+		applog.L().Warn("form stats failed", "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load form stats")
 		return
 	}

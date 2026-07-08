@@ -23,25 +23,6 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # ✅ One-off migration runner (supports up/down/version/goto/etc.)
-  migrate:
-    image: migrate/migrate:v4.16.2
-    container_name: wisdom_church_migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./migrations:/migrations:ro
-    networks:
-      - wisdom_network
-    entrypoint: ["migrate"]
-    command: ["-path", "/migrations", "-database", "postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable", "up"]
-    environment:
-      # Convenience vars so you don't repeat yourself
-      MIGRATIONS_PATH: /migrations
-      DATABASE_URL: postgres://${DATABASE_USERNAME}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_DBNAME}?sslmode=disable
-    # Runs migrations on startup; container exits after completion
-
   redis:
     image: redis:7-alpine
     container_name: wisdom_church_redis
@@ -59,6 +40,8 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # Migrations run in-process on API boot (internal/database/migrations.go) — no
+  # separate migrate container. See docs/MIGRATIONS.md.
   api:
     build:
       context: .
@@ -75,8 +58,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
