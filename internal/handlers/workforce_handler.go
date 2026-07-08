@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	htmltemplate "html/template"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/email"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -76,7 +76,7 @@ func (h *WorkforceHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, department, status)
 	if err != nil {
-		log.Printf("workforce admin list failed page=%d limit=%d department=%q status=%q: %v", page, limit, department, status, err)
+		applog.L().Warn("workforce admin list failed", "page", page, "limit", limit, "department", department, "status", status, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load workforce")
 		return
 	}
@@ -340,7 +340,7 @@ func (h *WorkforceHandler) sendWorkforceConfirmation(member models.WorkforceMemb
 	}
 
 	if err := h.sender.SendHTML(addr, subject, body); err != nil {
-		log.Printf("⚠️ failed to send workforce confirmation to %s: %v", addr, err)
+		applog.L().Warn("failed to send workforce confirmation", "to", addr, "error", err)
 	}
 }
 
@@ -355,13 +355,13 @@ func (h *WorkforceHandler) renderActiveTemplateByKey(templateKey string, data an
 
 	compiled, err := htmltemplate.New("workforce").Option("missingkey=zero").Parse(tpl.HTMLBody)
 	if err != nil {
-		log.Printf("⚠️ failed to parse email template %s: %v", templateKey, err)
+		applog.L().Warn("failed to parse email template", "template_key", templateKey, "error", err)
 		return "", ""
 	}
 
 	var buf bytes.Buffer
 	if err := compiled.Execute(&buf, data); err != nil {
-		log.Printf("⚠️ failed to render email template %s: %v", templateKey, err)
+		applog.L().Warn("failed to render email template", "template_key", templateKey, "error", err)
 		return "", ""
 	}
 
