@@ -61,9 +61,13 @@ in Redis, to give leadership a normalized readiness score and recommendations.
 ## Conventions
 
 - Version every endpoint under `/api/v1` (or the current version).
-- One handler/service/repository file per domain; when a domain's service file grows large enough to mix
-  unrelated concerns (CRUD, submissions, scheduling, exports, etc.), split it into a sub-package rather
-  than letting it grow indefinitely — see `internal/service/payment/` for the existing precedent.
+- One handler/service/repository file per domain; when a file grows large enough to mix unrelated concerns,
+  split it into multiple files **within the same package**, grouped by concern (e.g. `form_service.go` →
+  `form_service_public.go`, `form_service_campaign.go`, etc.; `auth.go` → `auth_oauth.go`, `auth_mfa.go`).
+  This is the default — it needs no export changes and no caller updates, so it's low-risk to do incrementally.
+  Only reach for a true sub-package (see `internal/service/payment/`) when the split pieces genuinely need
+  their own encapsulation boundary (e.g. multiple interchangeable provider implementations behind a shared
+  interface) — not just as a way to shrink a file.
 - Repositories stay persistence-only; no business rules leak into them.
 - Use consistent response envelopes and status codes via `pkg/utils` and `apperror`.
 - Background workers must be idempotent and safe to retry.

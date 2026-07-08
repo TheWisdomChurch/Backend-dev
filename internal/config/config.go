@@ -398,6 +398,9 @@ func validateConfig(cfg *Config) error {
 	if strings.TrimSpace(cfg.JWT.Secret) == "" {
 		return fmt.Errorf("JWT_SECRET is required")
 	}
+	if len(strings.TrimSpace(cfg.JWT.Secret)) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	}
 	if cfg.Auth.SessionIdleTimeout <= 0 {
 		return fmt.Errorf("AUTH_SESSION_IDLE_TIMEOUT must be greater than 0")
 	}

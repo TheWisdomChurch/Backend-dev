@@ -32,12 +32,6 @@ import (
 	"wisdomHouse-backend/internal/validation"
 )
 
-// @title Wisdom House Backend API
-// @version 1.0.0
-// @description Backend API for Wisdom House Church
-// @host localhost:8080
-// @BasePath /api/v1
-
 func main() {
 	// Bootstrap-only logging before the structured logger exists (config
 	// determines its level/format, so it can't be initialized any earlier).
@@ -167,7 +161,6 @@ func main() {
 	// -------------------------------------------------------------------------
 	testimonialRepo := repository.NewTestimonialRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	adminRepo := repository.NewAdminRepository(db)
 	eventRepo := repository.NewEventRepository(db)
 	reelRepo := repository.NewReelRepository(db)
 	formRepo := repository.NewFormRepository(db)
@@ -354,7 +347,6 @@ func main() {
 	)
 
 	adminService := service.NewAdminService(
-		adminRepo,
 		testimonialRepo,
 		userRepo,
 		approvalService,

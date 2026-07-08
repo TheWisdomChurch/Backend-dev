@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"wisdomHouse-backend/internal/apperror"
@@ -82,8 +80,7 @@ func setupRouter(
 		SkipPathPrefixes:  []string{"/api/v1/auth/login", "/api/v1/auth/otp/", "/api/v1/auth/me", "/api/v1/auth/mfa"},
 	}))
 
-	// Swagger + health
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Health
 	router.GET("/healthz", healthHandler.Liveness)
 	router.GET("/readyz", healthHandler.Readiness)
 	router.GET("/forms/:slug", formHandler.ViewPublicFormPage)

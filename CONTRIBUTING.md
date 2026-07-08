@@ -23,9 +23,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layering rules. In
 - Business logic lives in `internal/service`; persistence-only code lives in `internal/repository`.
 - New domains follow the existing `xxx_handler.go` / `xxx_service.go` / `xxx_repository.go` naming
   pattern.
-- If a service file starts mixing unrelated concerns (CRUD, submissions, scheduling, exports, etc.),
-  split it into a sub-package rather than letting it grow — see `internal/service/payment/` for the
-  existing precedent.
+- If a file starts mixing unrelated concerns, split it into multiple files in the same package first (see
+  `form_service_*.go`, `auth_oauth.go`/`auth_mfa.go`) — that needs no export or caller changes. Reach for
+  a real sub-package (`internal/service/payment/`) only when the pieces need their own encapsulation
+  boundary, not just to shrink a file.
 - Validate all external input via `internal/validation`; sanitize free-text fields via
   `internal/sanitize` before persistence.
 - Raise errors as typed `apperror.AppError` values, not raw `errors.New` — the global error middleware
