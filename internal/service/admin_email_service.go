@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"gorm.io/datatypes"
 
 	"wisdomHouse-backend/internal/email"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -454,7 +454,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 
 	delivery, saveErr := s.saveAdminEmailDelivery(templateSelection, resp, actor)
 	if saveErr != nil {
-		log.Printf("⚠️ failed to persist admin email delivery: %v", saveErr)
+		applog.L().Warn("failed to persist admin email delivery", "error", saveErr)
 		return resp, nil
 	}
 	if delivery != nil {

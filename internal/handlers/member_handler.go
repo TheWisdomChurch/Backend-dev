@@ -2,13 +2,13 @@ package handlers
 
 import (
 	"encoding/csv"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"

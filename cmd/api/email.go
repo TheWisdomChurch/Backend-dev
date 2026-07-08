@@ -3,11 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"wisdomHouse-backend/internal/config"
 	"wisdomHouse-backend/internal/email"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/service"
 )
 
@@ -16,12 +16,10 @@ type chainedEmailSender struct {
 	fallback     service.EmailSender
 	primaryName  string
 	fallbackName string
-	logger       *log.Logger
 }
 
 type observedEmailSender struct {
-	inner  service.EmailSender
-	logger *log.Logger
+	inner service.EmailSender
 }
 
 func (s observedEmailSender) SendHTML(to, subject, body string) error {
@@ -29,8 +27,8 @@ func (s observedEmailSender) SendHTML(to, subject, body string) error {
 		return nil
 	}
 	err := s.inner.SendHTML(to, subject, body)
-	if err != nil && s.logger != nil {
-		s.logger.Printf("❌ Email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	if err != nil {
+		applog.L().Error("email delivery failed", "to", maskEmail(to), "subject", subject, "error", err)
 	}
 	return err
 }
@@ -43,14 +41,14 @@ func (s observedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string
 		SendHTMLText(to, subject, htmlBody, textBody string) error
 	}); ok {
 		err := multipart.SendHTMLText(to, subject, htmlBody, textBody)
-		if err != nil && s.logger != nil {
-			s.logger.Printf("❌ Multipart email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+		if err != nil {
+			applog.L().Error("multipart email delivery failed", "to", maskEmail(to), "subject", subject, "error", err)
 		}
 		return err
 	}
 	err := s.inner.SendHTML(to, subject, htmlBody)
-	if err != nil && s.logger != nil {
-		s.logger.Printf("❌ HTML email delivery failed to=%s subject=%q error=%v", maskEmail(to), subject, err)
+	if err != nil {
+		applog.L().Error("HTML email delivery failed", "to", maskEmail(to), "subject", subject, "error", err)
 	}
 	return err
 }
@@ -81,9 +79,7 @@ func (s chainedEmailSender) SendHTML(to, subject, body string) error {
 	}
 	if err := s.primary.SendHTML(to, subject, body); err != nil {
 		if s.fallback != nil {
-			if s.logger != nil {
-				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
-			}
+			applog.L().Warn("email send failed, falling back", "primary", s.primaryName, "fallback", s.fallbackName, "error", err)
 			if err2 := s.fallback.SendHTML(to, subject, body); err2 == nil {
 				return nil
 			} else {
@@ -116,9 +112,7 @@ func (s chainedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string)
 	}
 	if err := sendMultipart(s.primary); err != nil {
 		if s.fallback != nil {
-			if s.logger != nil {
-				s.logger.Printf("⚠️ Email send via %s failed: %v. Falling back to %s", s.primaryName, err, s.fallbackName)
-			}
+			applog.L().Warn("email send failed, falling back", "primary", s.primaryName, "fallback", s.fallbackName, "error", err)
 			if err2 := sendMultipart(s.fallback); err2 == nil {
 				return nil
 			} else {
@@ -130,7 +124,7 @@ func (s chainedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string)
 	return nil
 }
 
-func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender {
+func initEmailSender(cfg *config.Config) service.EmailSender {
 	if cfg == nil {
 		return noopEmailSender{}
 	}
@@ -151,31 +145,31 @@ func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender
 			cfg.SMTP.TLS,
 		)
 		if err != nil {
-			logger.Printf("⚠️ SMTP sender not initialized: %v", err)
+			applog.L().Warn("SMTP sender not initialized", "error", err)
 		} else {
 			primary = s
 			primaryName = "SMTP"
-			logger.Println("✅ Email sender initialized (SMTP relay)")
+			applog.L().Info("email sender initialized (SMTP relay)")
 		}
 	}
 
 	if hasAnyEnv("BREVO_API_KEY", "BREVO_FROM_EMAIL", "BREVO_FROM_NAME", "BREVO_BASE_URL") {
 		s, err := email.NewBrevoSender(cfg.Redis.URL, "", "", "", "")
 		if err != nil {
-			logger.Printf("⚠️ Brevo email sender not initialized: %v", err)
+			applog.L().Warn("Brevo email sender not initialized", "error", err)
 		} else if primary == nil {
 			primary = s
 			primaryName = "Brevo"
-			logger.Println("✅ Email sender initialized (Brevo API)")
+			applog.L().Info("email sender initialized (Brevo API)")
 		} else if fallback == nil {
 			fallback = s
 			fallbackName = "Brevo"
-			logger.Println("✅ Email fallback configured (Brevo API)")
+			applog.L().Info("email fallback configured (Brevo API)")
 		}
 	}
 
 	if primary == nil {
-		logger.Println("⚠️ Email sender not configured (no SMTP/Brevo/SES). Outbound email disabled.")
+		applog.L().Warn("email sender not configured (no SMTP/Brevo/SES); outbound email disabled")
 		return noopEmailSender{}
 	}
 	if fallback == nil {
@@ -186,7 +180,6 @@ func initEmailSender(cfg *config.Config, logger *log.Logger) service.EmailSender
 		fallback:     fallback,
 		primaryName:  primaryName,
 		fallbackName: fallbackName,
-		logger:       logger,
 	}
 }
 
