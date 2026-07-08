@@ -2,13 +2,13 @@ package handlers
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -51,7 +51,7 @@ func (h *LeadershipHandler) ListPublic(c *gin.Context) {
 	role := c.Query("role")
 	items, err := h.svc.ListApproved(role)
 	if err != nil {
-		log.Printf("leadership public list failed role=%q: %v", role, err)
+		applog.L().Warn("leadership public list failed", "role", role, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load leadership")
 		return
 	}
@@ -151,7 +151,7 @@ func (h *LeadershipHandler) List(c *gin.Context) {
 
 	items, total, err := h.svc.List(page, limit, role, status)
 	if err != nil {
-		log.Printf("leadership admin list failed page=%d limit=%d role=%q status=%q: %v", page, limit, role, status, err)
+		applog.L().Warn("leadership admin list failed", "page", page, "limit", limit, "role", role, "status", status, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load leadership")
 		return
 	}

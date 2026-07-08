@@ -6,13 +6,9 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +17,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"wisdomHouse-backend/internal/authutil"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -29,28 +26,13 @@ import (
 	"wisdomHouse-backend/pkg/utils"
 )
 
+// Cookie names — mechanics live in internal/authutil (see AuthHandler.cookies).
 const (
-	authTokenCookieName    = "auth_token"
-	lastActivityCookieName = "last_activity"
-	deviceIDCookieName     = "device_id"
-	oauthStateCookieName   = "oauth_google_state"
-)
-
-var (
-	authCookieClearPathCandidates = []string{
-		"/",
-		"/api",
-		"/api/v1",
-		"/api/v1/auth",
-	}
-
-	authCookieKnownDomainCandidates = []string{
-		"",
-		".wisdomchurchhq.org",
-		"wisdomchurchhq.org",
-		"api.wisdomchurchhq.org",
-		"admin.wisdomchurchhq.org",
-	}
+	authTokenCookieName    = authutil.AuthTokenCookieName
+	lastActivityCookieName = authutil.LastActivityCookieName
+	deviceIDCookieName     = authutil.DeviceIDCookieName
+	oauthStateCookieName   = authutil.OAuthStateCookieName
+	refreshTokenCookieName = authutil.RefreshTokenCookieName
 )
 
 type AuthHandlerOptions struct {
@@ -93,11 +75,12 @@ type AuthHandler struct {
 	refreshTokenRepo             repository.RefreshTokenRepository
 	blocklist                    *authutil.TokenBlocklist
 	passwordHashCost             int
+	cookies                      *authutil.CookieJar
 }
 
 func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthHandler {
 	if strings.TrimSpace(opts.JWTSecret) == "" {
-		fmt.Println("WARNING: JWT_SECRET not set")
+		applog.L().Warn("JWT_SECRET not set")
 	}
 
 	if opts.AccessTokenTTL <= 0 {
@@ -155,6 +138,12 @@ func NewAuthHandler(service service.AuthService, opts AuthHandlerOptions) *AuthH
 		refreshTokenRepo: opts.RefreshTokenRepo,
 		blocklist:        opts.Blocklist,
 		passwordHashCost: hashCost,
+		cookies: authutil.NewCookieJar(
+			opts.Secure,
+			opts.SessionIdleTimeout,
+			opts.RememberedSessionIdleTimeout,
+			opts.RememberMeTTL,
+		),
 	}
 }
 
@@ -321,8 +310,6 @@ func (h *AuthHandler) generateToken(user *models.User, rememberMe bool, authMeth
 	return token.SignedString(h.jwtSecret)
 }
 
-const refreshTokenCookieName = "refresh_token"
-
 // issueRefreshToken creates a new refresh token in the token family and sets
 // the refresh_token HTTPOnly cookie. No-op when refreshTokenRepo is not configured.
 func (h *AuthHandler) issueRefreshToken(c *gin.Context, user *models.User, familyID string, rememberMe bool, deviceID string) error {
@@ -355,12 +342,7 @@ func (h *AuthHandler) issueRefreshToken(c *gin.Context, user *models.User, famil
 		return fmt.Errorf("storing refresh token: %w", err)
 	}
 
-	sameSite := h.cookieSameSite()
-	secure := h.cookieSecure()
-	domain := configuredAuthCookieDomain()
-	maxAge := int(ttl / time.Second)
-	expires := time.Now().Add(ttl)
-	setHTTPOnlyCookie(c, refreshTokenCookieName, rawHex, domain, maxAge, expires, secure, sameSite)
+	h.cookies.SetRefreshToken(c.Writer, rawHex, ttl)
 	return nil
 }
 
@@ -372,66 +354,17 @@ func hashRefreshToken(raw string) string {
 
 /* ============================================================================
 
-   Cookies
+   Cookies — mechanics live in internal/authutil.CookieJar (h.cookies); these
+   are thin wrappers so the rest of this file doesn't need to change shape.
 
 ============================================================================ */
 
 func (h *AuthHandler) cookieSameSite() http.SameSite {
-	// Production auth uses Secure cookies across wisdomchurchhq.org subdomains.
-	if h.secure {
-		return http.SameSiteNoneMode
-	}
-
-	// Local/dev HTTP cannot use SameSite=None because browsers require Secure.
-	return http.SameSiteLaxMode
+	return h.cookies.SameSite()
 }
 
 func (h *AuthHandler) cookieSecure() bool {
-	// SameSite=None requires Secure=true.
-	return h.secure
-}
-
-func normalizeConfiguredCookieDomain(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return ""
-	}
-
-	value = strings.TrimPrefix(value, "https://")
-	value = strings.TrimPrefix(value, "http://")
-	value = strings.Trim(value, " /")
-
-	if slash := strings.Index(value, "/"); slash >= 0 {
-		value = value[:slash]
-	}
-
-	value = strings.TrimSpace(strings.ToLower(value))
-
-	// Do not set Domain for localhost, IP:port, or host:port.
-	// Browsers reject those and local development will break.
-	if value == "" || value == "localhost" || strings.Contains(value, ":") {
-		return ""
-	}
-
-	if !strings.HasPrefix(value, ".") {
-		value = "." + value
-	}
-
-	return value
-}
-
-func configuredAuthCookieDomain() string {
-	for _, key := range []string{
-		"AUTH_COOKIE_DOMAIN",
-		"SESSION_COOKIE_DOMAIN",
-		"COOKIE_DOMAIN",
-	} {
-		if value := normalizeConfiguredCookieDomain(os.Getenv(key)); value != "" {
-			return value
-		}
-	}
-
-	return ""
+	return h.cookies.Secure
 }
 
 func configuredCSRFCookieName() string {
@@ -443,163 +376,36 @@ func configuredCSRFCookieName() string {
 	return name
 }
 
-func authCookieClearDomains() []string {
-	candidates := make([]string, 0, len(authCookieKnownDomainCandidates)+4)
-
-	candidates = append(candidates, authCookieKnownDomainCandidates...)
-	candidates = append(candidates,
-		configuredAuthCookieDomain(),
-		normalizeConfiguredCookieDomain(os.Getenv("AUTH_COOKIE_DOMAIN")),
-		normalizeConfiguredCookieDomain(os.Getenv("SESSION_COOKIE_DOMAIN")),
-		normalizeConfiguredCookieDomain(os.Getenv("COOKIE_DOMAIN")),
-	)
-
-	seen := make(map[string]bool, len(candidates))
-	domains := make([]string, 0, len(candidates))
-
-	for _, domain := range candidates {
-		domain = strings.TrimSpace(domain)
-		if seen[domain] {
-			continue
-		}
-
-		seen[domain] = true
-		domains = append(domains, domain)
-	}
-
-	return domains
-}
-
-func expireCookie(c *gin.Context, name string, domain string, cookiePath string, secure bool, sameSite http.SameSite) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     name,
-		Value:    "",
-		Path:     cookiePath,
-		Domain:   domain,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0).UTC(),
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
-}
-
-func expireAuthCookie(c *gin.Context, name string, domain string, secure bool, sameSite http.SameSite) {
-	for _, cookiePath := range authCookieClearPathCandidates {
-		expireCookie(c, name, domain, cookiePath, secure, sameSite)
-	}
-}
-
-func setHTTPOnlyCookie(c *gin.Context, name string, value string, domain string, maxAge int, expires time.Time, secure bool, sameSite http.SameSite) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     name,
-		Value:    value,
-		Path:     "/",
-		Domain:   domain,
-		MaxAge:   maxAge,
-		Expires:  expires,
-		Secure:   secure,
-		HttpOnly: true,
-		SameSite: sameSite,
-	})
-}
-
 // latestCookieValue returns the last non-empty cookie value for a name.
 //
 // This protects the auth handler during cookie-domain migrations. Browsers may
 // send duplicate cookies when older host/path variants still exist.
 func latestCookieValue(c *gin.Context, name string) (string, error) {
-	if c == nil || c.Request == nil {
+	if c == nil {
 		return "", http.ErrNoCookie
 	}
-
-	values := make([]string, 0)
-
-	for _, cookie := range c.Request.Cookies() {
-		if cookie == nil || cookie.Name != name {
-			continue
-		}
-
-		value := strings.TrimSpace(cookie.Value)
-		if value == "" {
-			continue
-		}
-
-		values = append(values, value)
-	}
-
-	if len(values) == 0 {
-		return "", http.ErrNoCookie
-	}
-
-	return values[len(values)-1], nil
+	return authutil.LatestCookieValue(c.Request, name)
 }
 
 func (h *AuthHandler) clearSessionCookieVariants(c *gin.Context) {
-	sameSite := h.cookieSameSite()
-	secure := h.cookieSecure()
-
-	for _, domain := range authCookieClearDomains() {
-		expireAuthCookie(c, authTokenCookieName, domain, secure, sameSite)
-		expireAuthCookie(c, lastActivityCookieName, domain, secure, sameSite)
-	}
+	h.cookies.ClearSessionVariants(c.Writer)
 }
 
 func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe bool) {
-	// Remove stale host/domain/path variants before writing the canonical cookies.
-	// This prevents browsers from sending duplicate auth_token and last_activity cookies.
-	h.clearSessionCookieVariants(c)
-
-	now := time.Now().UTC()
-	maxAge := 0
-	expires := time.Time{}
-
-	idleTTL := h.sessionIdleTimeout
-	activityMaxAge := 0
-	activityExpires := time.Time{}
-
-	if rememberMe {
-		maxAge = int(h.rememberMeTTL / time.Second)
-		expires = now.Add(h.rememberMeTTL)
-
-		idleTTL = h.rememberedSessionIdleTimeout
-		activityMaxAge = int(idleTTL / time.Second)
-		activityExpires = now.Add(idleTTL)
-	}
-
-	sameSite := h.cookieSameSite()
-	secure := h.cookieSecure()
-	domain := configuredAuthCookieDomain()
-
-	// In production, AUTH_COOKIE_DOMAIN should be ".wisdomchurchhq.org"
-	// if the session must be shared across admin/api subdomains.
-	setHTTPOnlyCookie(c, authTokenCookieName, token, domain, maxAge, expires, secure, sameSite)
-	setHTTPOnlyCookie(c, lastActivityCookieName, now.Format(time.RFC3339), domain, activityMaxAge, activityExpires, secure, sameSite)
+	h.cookies.SetAuth(c.Writer, token, rememberMe)
 }
 
 func (h *AuthHandler) clearAuthCookie(c *gin.Context) {
-	sameSite := h.cookieSameSite()
-	secure := h.cookieSecure()
-
-	for _, domain := range authCookieClearDomains() {
-		expireAuthCookie(c, authTokenCookieName, domain, secure, sameSite)
-		expireAuthCookie(c, lastActivityCookieName, domain, secure, sameSite)
-		expireAuthCookie(c, configuredCSRFCookieName(), domain, secure, sameSite)
-		expireAuthCookie(c, oauthStateCookieName, domain, secure, http.SameSiteLaxMode)
-	}
+	h.cookies.ClearAuth(c.Writer, configuredCSRFCookieName())
 
 	// Compatibility with your existing CSRF middleware helper.
-	middleware.ClearCSRFCookie(c, secure, "")
+	middleware.ClearCSRFCookie(c, h.cookies.Secure, "")
 }
 
 // clearAuthCookieAll also removes the refresh_token cookie.
 func (h *AuthHandler) clearAuthCookieAll(c *gin.Context) {
 	h.clearAuthCookie(c)
-	sameSite := h.cookieSameSite()
-	secure := h.cookieSecure()
-	for _, domain := range authCookieClearDomains() {
-		expireAuthCookie(c, refreshTokenCookieName, domain, secure, sameSite)
-	}
+	h.cookies.ExpireRefreshToken(c.Writer)
 }
 
 func (h *AuthHandler) loginMetadata(c *gin.Context) service.LoginMetadata {
@@ -1348,7 +1154,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		}
 
 		// Any other error is internal (email provider / DB / etc.) — log without exposing email
-		fmt.Printf("password reset start failed error=%v\n", err)
+		applog.L().Warn("password reset start failed", "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start password reset process")
 		return
 	}
@@ -1487,116 +1293,6 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 	})
 }
 
-/* ============================================================================
-
-   MFA Settings
-
-============================================================================ */
-
-func (h *AuthHandler) GetMFASecurityProfile(c *gin.Context) {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	profile, err := h.service.GetSecurityProfile(userID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Security profile loaded", profile)
-}
-
-func (h *AuthHandler) BeginTOTPSetup(c *gin.Context) {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	payload, err := h.service.BeginTOTPSetup(userID)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Authenticator setup initialized", payload)
-}
-
-func (h *AuthHandler) EnableTOTP(c *gin.Context) {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	var req struct {
-		Code string `json:"code" binding:"required,len=6"`
-	}
-
-	if !validation.BindJSON(c, &req) {
-		return
-	}
-
-	profile, err := h.service.EnableTOTP(userID, req.Code)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Authenticator app enabled", profile)
-}
-
-func (h *AuthHandler) DisableTOTP(c *gin.Context) {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	var req struct {
-		Code string `json:"code" binding:"required,len=6"`
-	}
-
-	if !validation.BindJSON(c, &req) {
-		return
-	}
-
-	profile, err := h.service.DisableTOTP(userID, req.Code)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Authenticator app disabled", profile)
-}
-
-func (h *AuthHandler) SetPreferredMFAMethod(c *gin.Context) {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
-	}
-
-	var req struct {
-		Method string `json:"method" binding:"required"`
-	}
-
-	if !validation.BindJSON(c, &req) {
-		return
-	}
-
-	profile, err := h.service.SetPreferredMFAMethod(userID, req.Method)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "MFA preference updated", profile)
-}
-
 func (h *AuthHandler) GetCSRFToken(c *gin.Context) {
 	token, _ := c.Get("csrf_token")
 	tokenStr, _ := token.(string)
@@ -1616,457 +1312,4 @@ func (h *AuthHandler) GetCSRFToken(c *gin.Context) {
 		"token":  tokenStr,
 		"header": headerStr,
 	})
-}
-
-/* ============================================================================
-
-   Google OAuth
-
-============================================================================ */
-
-type googleOAuthState struct {
-	State      string    `json:"state"`
-	RememberMe bool      `json:"rememberMe"`
-	IssuedAt   time.Time `json:"issuedAt"`
-}
-
-type googleTokenResponse struct {
-	AccessToken string `json:"access_token"`
-}
-
-type googleUserInfo struct {
-	Sub           string `json:"sub"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
-	GivenName     string `json:"given_name"`
-	FamilyName    string `json:"family_name"`
-}
-
-func (h *AuthHandler) StartGoogleOAuth(c *gin.Context) {
-	if !h.googleOAuthEnabled() {
-		utils.ErrorResponse(c, http.StatusServiceUnavailable, "Google sign-in is not configured")
-		return
-	}
-	if h.protector == nil {
-		utils.ErrorResponse(c, http.StatusServiceUnavailable, "Authentication security is not configured")
-		return
-	}
-
-	stateValue, err := generateOAuthStateValue()
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start Google sign-in")
-		return
-	}
-
-	payload := googleOAuthState{
-		State:      stateValue,
-		RememberMe: strings.EqualFold(strings.TrimSpace(c.Query("rememberMe")), "true"),
-		IssuedAt:   time.Now().UTC(),
-	}
-
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to start Google sign-in")
-		return
-	}
-
-	h.setOAuthStateCookie(c, h.protector.SignPayload(raw))
-
-	query := url.Values{}
-	query.Set("client_id", h.googleClientID)
-	query.Set("redirect_uri", h.googleRedirectURL)
-	query.Set("response_type", "code")
-	query.Set("scope", "openid email profile")
-	query.Set("state", stateValue)
-	query.Set("prompt", "select_account")
-	if h.googleHostedDomain != "" {
-		query.Set("hd", h.googleHostedDomain)
-	}
-
-	c.Redirect(http.StatusFound, "https://accounts.google.com/o/oauth2/v2/auth?"+query.Encode())
-}
-
-func (h *AuthHandler) HandleGoogleOAuthCallback(c *gin.Context) {
-	if !h.googleOAuthEnabled() {
-		h.renderOAuthError(c, http.StatusServiceUnavailable, "Google sign-in is not configured")
-		return
-	}
-	if h.protector == nil {
-		h.renderOAuthError(c, http.StatusServiceUnavailable, "Authentication security is not configured")
-		return
-	}
-	if errParam := strings.TrimSpace(c.Query("error")); errParam != "" {
-		h.clearOAuthStateCookie(c)
-		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in was cancelled or denied")
-		return
-	}
-
-	state, err := h.readOAuthState(c)
-	if err != nil {
-		h.clearOAuthStateCookie(c)
-		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in session is invalid or expired")
-		return
-	}
-	if strings.TrimSpace(c.Query("state")) != state.State {
-		h.clearOAuthStateCookie(c)
-		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in validation failed")
-		return
-	}
-
-	code := strings.TrimSpace(c.Query("code"))
-	if code == "" {
-		h.clearOAuthStateCookie(c)
-		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in did not return an authorization code")
-		return
-	}
-
-	userInfo, err := h.fetchGoogleUserInfo(code)
-	h.clearOAuthStateCookie(c)
-	if err != nil {
-		h.renderOAuthError(c, http.StatusBadGateway, "Failed to verify the Google account")
-		return
-	}
-	if !userInfo.EmailVerified {
-		h.renderOAuthError(c, http.StatusForbidden, "Google email address is not verified")
-		return
-	}
-
-	result, err := h.service.CompleteGoogleLogin(
-		userInfo.Sub,
-		userInfo.Email,
-		userInfo.GivenName,
-		userInfo.FamilyName,
-		h.loginMetadata(c),
-	)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, service.ErrAdminPending) {
-			status = http.StatusForbidden
-		}
-		h.clearAuthCookie(c)
-		h.renderOAuthError(c, status, err.Error())
-		return
-	}
-
-	if result == nil || result.User == nil {
-		h.clearAuthCookie(c)
-		h.renderOAuthError(c, http.StatusBadRequest, "Google sign-in did not return a valid user")
-		return
-	}
-	if isAdminAccessRole(result.User.Role) && !result.User.AdminApproved {
-		h.clearAuthCookie(c)
-		h.renderOAuthError(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.")
-		return
-	}
-
-	if result.OTPRequired {
-		h.renderOAuthMFAPage(c, result, state.RememberMe)
-		return
-	}
-
-	if err := h.issueAuthenticatedSession(c, result.User, state.RememberMe, result.AuthMethod); err != nil {
-		h.clearAuthCookie(c)
-		if errors.Is(err, service.ErrAdminPending) {
-			h.renderOAuthError(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.")
-			return
-		}
-		h.renderOAuthError(c, http.StatusInternalServerError, "Failed to create sign-in session")
-		return
-	}
-
-	redirectURL := h.effectivePostLoginRedirectURL()
-	if redirectURL != "" {
-		c.Redirect(http.StatusFound, redirectURL)
-		return
-	}
-
-	h.renderOAuthSuccess(c, "Google sign-in completed successfully.")
-}
-
-func (h *AuthHandler) googleOAuthEnabled() bool {
-	return h.googleClientID != "" && h.googleClientSecret != "" && h.googleRedirectURL != ""
-}
-
-func (h *AuthHandler) setOAuthStateCookie(c *gin.Context, value string) {
-	http.SetCookie(c.Writer, &http.Cookie{
-		Name:     oauthStateCookieName,
-		Value:    value,
-		Path:     "/",
-		Domain:   configuredAuthCookieDomain(),
-		MaxAge:   int((10 * time.Minute) / time.Second),
-		Expires:  time.Now().UTC().Add(10 * time.Minute),
-		Secure:   h.cookieSecure(),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func (h *AuthHandler) clearOAuthStateCookie(c *gin.Context) {
-	secure := h.cookieSecure()
-
-	for _, domain := range authCookieClearDomains() {
-		expireAuthCookie(c, oauthStateCookieName, domain, secure, http.SameSiteLaxMode)
-	}
-}
-
-func (h *AuthHandler) readOAuthState(c *gin.Context) (*googleOAuthState, error) {
-	cookieValue, err := latestCookieValue(c, oauthStateCookieName)
-	if err != nil || strings.TrimSpace(cookieValue) == "" {
-		return nil, errors.New("missing oauth state")
-	}
-
-	payload, err := h.protector.VerifySignedPayload(cookieValue)
-	if err != nil {
-		return nil, err
-	}
-
-	var state googleOAuthState
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(state.State) == "" || time.Since(state.IssuedAt) > 10*time.Minute {
-		return nil, errors.New("oauth state expired")
-	}
-
-	return &state, nil
-}
-
-func (h *AuthHandler) fetchGoogleUserInfo(code string) (*googleUserInfo, error) {
-	form := url.Values{}
-	form.Set("code", code)
-	form.Set("client_id", h.googleClientID)
-	form.Set("client_secret", h.googleClientSecret)
-	form.Set("redirect_uri", h.googleRedirectURL)
-	form.Set("grant_type", "authorization_code")
-
-	req, err := http.NewRequest(http.MethodPost, "https://oauth2.googleapis.com/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errors.New("google token exchange failed")
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var tokenPayload googleTokenResponse
-	if err := json.Unmarshal(body, &tokenPayload); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(tokenPayload.AccessToken) == "" {
-		return nil, errors.New("google access token missing")
-	}
-
-	userReq, err := http.NewRequest(http.MethodGet, "https://openidconnect.googleapis.com/v1/userinfo", nil)
-	if err != nil {
-		return nil, err
-	}
-	userReq.Header.Set("Authorization", "Bearer "+tokenPayload.AccessToken)
-
-	userResp, err := h.httpClient.Do(userReq)
-	if err != nil {
-		return nil, err
-	}
-	defer userResp.Body.Close()
-
-	if userResp.StatusCode < 200 || userResp.StatusCode >= 300 {
-		return nil, errors.New("google user info request failed")
-	}
-
-	userBody, err := io.ReadAll(userResp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var userInfo googleUserInfo
-	if err := json.Unmarshal(userBody, &userInfo); err != nil {
-		return nil, err
-	}
-
-	return &userInfo, nil
-}
-
-func (h *AuthHandler) renderOAuthMFAPage(c *gin.Context, result *service.LoginResult, rememberMe bool) {
-	if result == nil || result.User == nil {
-		h.renderOAuthError(c, http.StatusBadRequest, "Additional verification could not be started")
-		return
-	}
-
-	redirectURL := h.effectivePostLoginRedirectURL()
-	methodLabel := "verification code"
-	instructions := "Enter the code sent to your email to complete sign-in."
-	if strings.TrimSpace(result.MFAMethod) == "totp" {
-		methodLabel = "authenticator code"
-		instructions = "Open your authenticator app and enter the current 6-digit code."
-	}
-
-	page := oauthMFAPageTemplate{
-		Title:        "Complete Sign-in",
-		Instructions: instructions,
-		Email:        result.User.Email,
-		Purpose:      result.OTPPurpose,
-		Method:       result.MFAMethod,
-		RememberMe:   rememberMe,
-		RedirectURL:  redirectURL,
-		InputLabel:   methodLabel,
-	}
-
-	renderOAuthTemplate(c, http.StatusAccepted, oauthMFATemplate, page)
-}
-
-func (h *AuthHandler) renderOAuthSuccess(c *gin.Context, message string) {
-	renderOAuthTemplate(c, http.StatusOK, oauthMessageTemplate, oauthMessagePage{
-		Title:       "Sign-in Complete",
-		Message:     message,
-		RedirectURL: h.effectivePostLoginRedirectURL(),
-		IsError:     false,
-	})
-}
-
-func (h *AuthHandler) renderOAuthError(c *gin.Context, status int, message string) {
-	renderOAuthTemplate(c, status, oauthMessageTemplate, oauthMessagePage{
-		Title:       "Sign-in Unavailable",
-		Message:     message,
-		RedirectURL: h.effectivePostLoginRedirectURL(),
-		IsError:     true,
-	})
-}
-
-type oauthMessagePage struct {
-	Title       string
-	Message     string
-	RedirectURL string
-	IsError     bool
-}
-
-type oauthMFAPageTemplate struct {
-	Title        string
-	Instructions string
-	Email        string
-	Purpose      string
-	Method       string
-	InputLabel   string
-	RememberMe   bool
-	RedirectURL  string
-}
-
-func renderOAuthTemplate(c *gin.Context, status int, markup string, data any) {
-	tpl := template.Must(template.New("oauth-page").Parse(markup))
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.Status(status)
-	_ = tpl.Execute(c.Writer, data)
-}
-
-const oauthMessageTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
-  <style>
-    body { margin: 0; font-family: "Segoe UI", Tahoma, Arial, sans-serif; background: linear-gradient(180deg, #eef4fb 0%, #f7fafc 100%); color: #0f172a; }
-    main { max-width: 760px; margin: 80px auto; padding: 32px; background: #fff; border: 1px solid #dbe3ef; border-radius: 24px; box-shadow: 0 18px 50px rgba(15,23,42,.08); }
-    h1 { margin: 0 0 12px; font-size: 34px; }
-    p { margin: 0; line-height: 1.7; color: #475569; }
-    a { display: inline-block; margin-top: 20px; padding: 12px 18px; border-radius: 999px; text-decoration: none; background: {{if .IsError}}#ffffff{{else}}#0f4c81{{end}}; color: {{if .IsError}}#0f4c81{{else}}#ffffff{{end}}; border: 1px solid #0f4c81; font-weight: 700; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>{{.Title}}</h1>
-    <p>{{.Message}}</p>
-    {{if .RedirectURL}}<a href="{{.RedirectURL}}">Continue</a>{{end}}
-  </main>
-</body>
-</html>`
-
-const oauthMFATemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}}</title>
-  <style>
-    body { margin: 0; font-family: "Segoe UI", Tahoma, Arial, sans-serif; background: linear-gradient(180deg, #eef4fb 0%, #f7fafc 100%); color: #0f172a; }
-    main { max-width: 760px; margin: 80px auto; padding: 32px; background: #fff; border: 1px solid #dbe3ef; border-radius: 24px; box-shadow: 0 18px 50px rgba(15,23,42,.08); }
-    h1 { margin: 0 0 12px; font-size: 34px; }
-    p { margin: 0 0 20px; line-height: 1.7; color: #475569; }
-    label { display: block; margin-bottom: 8px; font-weight: 700; }
-    input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px 16px; font: inherit; }
-    button { margin-top: 16px; border: 0; border-radius: 999px; padding: 14px 22px; background: #0f4c81; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
-    .status { margin-top: 18px; padding: 14px 16px; border-radius: 16px; display: none; }
-    .status.error { display: block; background: #fef3f2; color: #b42318; border: 1px solid #fecdca; }
-    .status.success { display: block; background: #ecfdf3; color: #166534; border: 1px solid #abefc6; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>{{.Title}}</h1>
-    <p>{{.Instructions}}</p>
-    <form id="mfa-form">
-      <label for="code">{{.InputLabel}}</label>
-      <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
-      <button type="submit">Complete Sign-in</button>
-    </form>
-    <div id="status" class="status"></div>
-  </main>
-  <script>
-    const form = document.getElementById('mfa-form');
-    const status = document.getElementById('status');
-    const redirectUrl = {{printf "%q" .RedirectURL}};
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      status.className = 'status';
-      status.textContent = '';
-      const code = (document.getElementById('code').value || '').trim();
-      if (code.length !== 6) {
-        status.className = 'status error';
-        status.textContent = 'Enter the 6-digit verification code.';
-        return;
-      }
-      const response = await fetch('/api/v1/auth/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: {{printf "%q" .Email}},
-          purpose: {{printf "%q" .Purpose}},
-          method: {{printf "%q" .Method}},
-          rememberMe: {{if .RememberMe}}true{{else}}false{{end}},
-          code,
-        }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        status.className = 'status error';
-        status.textContent = body.message || 'Unable to complete sign-in.';
-        return;
-      }
-      status.className = 'status success';
-      status.textContent = 'Sign-in completed successfully.';
-      if (redirectUrl) {
-        window.location.assign(redirectUrl);
-      }
-    });
-  </script>
-</body>
-</html>`
-
-func generateOAuthStateValue() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(buf), nil
 }
