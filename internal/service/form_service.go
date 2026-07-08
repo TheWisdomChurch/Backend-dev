@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -27,6 +26,7 @@ import (
 
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/exportpdf"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -772,13 +772,12 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
 	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
 		target := resolveSubmissionTargetForForm(form, settings)
-		log.Printf(
-			"⚠️ submission target sync failed (formID=%s slug=%s submissionID=%s target=%s): %v",
-			strings.TrimSpace(form.ID),
-			strings.TrimSpace(valueOrEmpty(form.Slug)),
-			strings.TrimSpace(sub.ID),
-			target,
-			err,
+		applog.L().Warn("submission target sync failed",
+			"form_id", strings.TrimSpace(form.ID),
+			"slug", strings.TrimSpace(valueOrEmpty(form.Slug)),
+			"submission_id", strings.TrimSpace(sub.ID),
+			"target", target,
+			"error", err,
 		)
 	}
 
@@ -3267,7 +3266,7 @@ func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr str
 		Message:       message,
 	})
 	if err := s.sender.SendHTML(emailAddr, subject, body); err != nil {
-		log.Printf("⚠️ failed to send registration code email to %s: %v", emailAddr, err)
+		applog.L().Warn("failed to send registration code email", "to", emailAddr, "error", err)
 	}
 }
 
@@ -3466,7 +3465,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 					subject = strings.TrimSpace(*tpl.Subject)
 				}
 			} else if err != nil {
-				log.Printf("⚠️ response email DB template render failed (templateID=%s, formID=%s): %v", tpl.ID, formID, err)
+				applog.L().Warn("response email DB template render failed", "template_id", tpl.ID, "form_id", formID, "error", err)
 			}
 		}
 	}
@@ -3479,7 +3478,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		if err == nil && strings.TrimSpace(htmlOut) != "" {
 			body = htmlOut
 		} else if err != nil {
-			log.Printf("⚠️ response email remote template render failed (templateKey=%s, formID=%s): %v", templateKey, formID, err)
+			applog.L().Warn("response email remote template render failed", "template_key", templateKey, "form_id", formID, "error", err)
 		}
 	}
 
@@ -3505,7 +3504,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	}
 
 	if err := s.sender.SendHTML(addr, subject, body); err != nil {
-		log.Printf("⚠️ failed to send form response email to %s (templateKey=%s, formID=%s): %v", addr, templateKey, formID, err)
+		applog.L().Warn("failed to send form response email", "to", addr, "template_key", templateKey, "form_id", formID, "error", err)
 	}
 }
 
@@ -3802,14 +3801,14 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 		if err != nil {
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, addr)
-			log.Printf("⚠️ failed to render form campaign email for %s (formID=%s): %v", addr, form.ID, err)
+			applog.L().Warn("failed to render form campaign email", "to", addr, "form_id", form.ID, "error", err)
 			continue
 		}
 
 		if err := s.sendFormCampaignMessage(addr, subject, content); err != nil {
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, addr)
-			log.Printf("⚠️ failed to send form campaign email to %s (formID=%s): %v", addr, form.ID, err)
+			applog.L().Warn("failed to send form campaign email", "to", addr, "form_id", form.ID, "error", err)
 			continue
 		}
 		resp.Sent++
@@ -3824,7 +3823,7 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 
 	delivery, saveErr := s.saveFormCampaignDelivery(form, event, templateSelection, resp, actor)
 	if saveErr != nil {
-		log.Printf("⚠️ failed to persist form campaign delivery (formID=%s): %v", form.ID, saveErr)
+		applog.L().Warn("failed to persist form campaign delivery", "form_id", form.ID, "error", saveErr)
 	} else if delivery != nil {
 		resp.DeliveryID = &delivery.ID
 	}
@@ -4579,7 +4578,7 @@ func (s *formService) createCalendarReminder(form *models.Form, event *models.Ev
 
 	token, err := generateSecureToken(24)
 	if err != nil {
-		log.Printf("⚠️ calendar token generation failed (formID=%s, submissionID=%s): %v", form.ID, submissionID, err)
+		applog.L().Warn("calendar token generation failed", "form_id", form.ID, "submission_id", submissionID, "error", err)
 		return "", "", ""
 	}
 
@@ -4629,7 +4628,7 @@ func (s *formService) createCalendarReminder(form *models.Form, event *models.Ev
 		if existing, getErr := s.reminderRepo.GetBySubmissionID(submissionID); getErr == nil && existing != nil {
 			return s.buildCalendarLinksFromReminder(existing)
 		}
-		log.Printf("⚠️ failed to persist calendar reminder (formID=%s, submissionID=%s): %v", form.ID, submissionID, err)
+		applog.L().Warn("failed to persist calendar reminder", "form_id", form.ID, "submission_id", submissionID, "error", err)
 		return "", "", ""
 	}
 
@@ -4767,7 +4766,7 @@ func (s *formService) ConfirmCalendarOptIn(slug, token string) (*models.FormCale
 	}
 
 	if err := s.reminderRepo.MarkOptedIn(row.ID, time.Now().UTC()); err != nil {
-		log.Printf("⚠️ failed to mark calendar opt-in (id=%s): %v", row.ID, err)
+		applog.L().Warn("failed to mark calendar opt-in", "id", row.ID, "error", err)
 	}
 
 	location := ""
@@ -4942,12 +4941,12 @@ func (s *formService) SendEventReminderEmails(now time.Time, lookAhead time.Dura
 
 		if err := s.sender.SendHTML(addr, subject, body); err != nil {
 			failed++
-			log.Printf("⚠️ failed to send event reminder email to %s: %v", addr, err)
+			applog.L().Warn("failed to send event reminder email", "to", addr, "error", err)
 			continue
 		}
 		if err := s.reminderRepo.MarkReminderSent(item.ID, now.UTC()); err != nil {
 			failed++
-			log.Printf("⚠️ failed to mark event reminder sent (id=%s): %v", item.ID, err)
+			applog.L().Warn("failed to mark event reminder sent", "id", item.ID, "error", err)
 			continue
 		}
 		sent++

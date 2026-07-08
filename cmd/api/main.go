@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -38,12 +39,12 @@ import (
 // @BasePath /api/v1
 
 func main() {
-	logger := log.New(os.Stdout, "🚀 ", log.Ldate|log.Ltime|log.Lshortfile)
-
-	logger.Println("Loading configuration...")
+	// Bootstrap-only logging before the structured logger exists (config
+	// determines its level/format, so it can't be initialized any earlier).
+	log.Println("Loading configuration...")
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Fatalf("❌ Failed to load configuration: %v", err)
+		log.Fatalf("failed to load configuration: %v", err)
 	}
 
 	validation.Init()
@@ -55,33 +56,39 @@ func main() {
 	cfg.App.Environment = env
 
 	appLogger.Init(cfg.App.LogLevel, cfg.App.Environment)
+	logger := appLogger.L()
+
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		runMigrateCommand(cfg)
+		return
+	}
 
 	// Distributed tracing — no-op when OTLP_ENDPOINT is not set.
 	telProv, err := telemetry.Init(context.Background(), cfg.Telemetry.OTLPEndpoint, "1.0.0", env)
 	if err != nil {
-		logger.Printf("⚠️ OpenTelemetry init failed: %v", err)
+		logger.Warn("OpenTelemetry init failed", "error", err)
 	} else if telProv != nil {
 		defer func() {
 			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if serr := telProv.Shutdown(shutCtx); serr != nil {
-				logger.Printf("⚠️ Telemetry shutdown: %v", serr)
+				logger.Warn("telemetry shutdown error", "error", serr)
 			}
 		}()
-		logger.Println("✅ OpenTelemetry tracing initialized")
+		logger.Info("OpenTelemetry tracing initialized")
 	}
 
 	disableOTP := isTrueEnv("DISABLE_OTP")
 	disableLoginOTP := isTrueEnv("DISABLE_LOGIN_OTP")
 	disableEmail := isTrueEnv("DISABLE_EMAIL") || disableOTP
 	if disableOTP {
-		logger.Println("⚠️ DISABLE_OTP=true: OTP verification is disabled for login/password reset.")
+		logger.Warn("DISABLE_OTP=true: OTP verification is disabled for login/password reset")
 	}
 	if disableLoginOTP {
-		logger.Println("⚠️ DISABLE_LOGIN_OTP=true: OTP challenges are disabled for login.")
+		logger.Warn("DISABLE_LOGIN_OTP=true: OTP challenges are disabled for login")
 	}
 	if disableEmail {
-		logger.Println("⚠️ DISABLE_EMAIL=true: outbound email sending is disabled.")
+		logger.Warn("DISABLE_EMAIL=true: outbound email sending is disabled")
 	}
 
 	if cfg.App.Environment == "production" {
@@ -99,10 +106,10 @@ func main() {
 	// -------------------------------------------------------------------------
 	var assetUploader service.AssetUploader
 	if uploader, err := service.NewS3UploaderFromEnv(); err != nil {
-		logger.Printf("⚠️ Storage uploader not initialized: %v", err)
+		logger.Warn("storage uploader not initialized", "error", err)
 	} else if uploader != nil {
 		assetUploader = uploader
-		logger.Printf("✅ Storage uploader initialized (%s)", uploader.StorageSummary())
+		logger.Info("storage uploader initialized", "summary", uploader.StorageSummary())
 	}
 
 	// -------------------------------------------------------------------------
@@ -110,17 +117,19 @@ func main() {
 	// -------------------------------------------------------------------------
 	db, err := database.NewDatabase(&cfg.Database, cfg.App.Environment)
 	if err != nil {
-		logger.Fatalf("❌ Failed to connect to database: %v", err)
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
-			logger.Printf("⚠️ Error closing database: %v", err)
+			logger.Warn("error closing database", "error", err)
 		}
-		logger.Println("✅ Database connection closed")
+		logger.Info("database connection closed")
 	}()
 
 	if err := verifyDatabaseConnection(db); err != nil {
-		logger.Fatalf("❌ Database connection failed: %v", err)
+		logger.Error("database connection failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Metrics server — separate port so /metrics is never publicly reachable.
@@ -134,19 +143,22 @@ func main() {
 			WriteTimeout: 10 * time.Second,
 		}
 		go func() {
-			logger.Printf("✅ Metrics endpoint listening on :%s/metrics", metricsPort)
+			logger.Info("metrics endpoint listening", "port", metricsPort)
 			if serr := metricsServer.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
-				logger.Printf("⚠️ Metrics server error: %v", serr)
+				logger.Warn("metrics server error", "error", serr)
 			}
 		}()
 	}
 
 	if err := database.RunMigrations(db.DB, "migrations"); err != nil {
-		logger.Fatalf("❌ Failed to run migrations: %v", err)
+		logger.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
 
+	// Legacy escape hatch — prefer the `migrate` subcommand (see runMigrateCommand)
+	// which does this without the rest of server startup.
 	if isTrueEnv("RUN_AUTOMIGRATE") {
-		logger.Println("✅ RUN_AUTOMIGRATE=true: migrations executed. Exiting without starting server.")
+		logger.Info("RUN_AUTOMIGRATE=true: migrations executed, exiting without starting server")
 		return
 	}
 
@@ -197,14 +209,14 @@ func main() {
 			PoolTimeout:  cfg.Redis.PoolTimeout,
 		})
 		if err != nil {
-			logger.Printf("⚠️ Redis cache not initialized: %v", err)
+			logger.Warn("redis cache not initialized", "error", err)
 		} else {
 			defer func() {
 				if cerr := redisCache.Close(); cerr != nil {
-					logger.Printf("⚠️ Error closing redis cache: %v", cerr)
+					logger.Warn("error closing redis cache", "error", cerr)
 				}
 			}()
-			logger.Println("✅ Redis cache initialized")
+			logger.Info("redis cache initialized")
 		}
 	}
 
@@ -218,33 +230,34 @@ func main() {
 	// -------------------------------------------------------------------------
 	rsaKeyPair, err := authutil.LoadRSAKeyPair(cfg.JWT.PrivateKeyPath, cfg.JWT.PublicKeyPath)
 	if err != nil {
-		logger.Fatalf("❌ Failed to load RSA key pair: %v", err)
+		logger.Error("failed to load RSA key pair", "error", err)
+		os.Exit(1)
 	}
 	if rsaKeyPair != nil {
-		logger.Println("✅ JWT RS256 key pair loaded")
+		logger.Info("JWT RS256 key pair loaded")
 	} else if env != "production" {
 		rsaKeyPair, err = authutil.GenerateEphemeralRSAKeyPair()
 		if err != nil {
-			logger.Printf("⚠️ Could not generate ephemeral RSA key pair, using HS256: %v", err)
+			logger.Warn("could not generate ephemeral RSA key pair, using HS256", "error", err)
 		} else {
-			logger.Println("⚠️ JWT RS256: using ephemeral dev key pair (configure JWT_PRIVATE_KEY_PATH for production)")
+			logger.Warn("JWT RS256: using ephemeral dev key pair (configure JWT_PRIVATE_KEY_PATH for production)")
 		}
 	}
 
 	var tokenBlocklist *authutil.TokenBlocklist
 	if redisCache != nil {
 		tokenBlocklist = authutil.NewTokenBlocklist(redisCache)
-		logger.Println("✅ JWT token blocklist (JTI) initialized")
+		logger.Info("JWT token blocklist (JTI) initialized")
 	}
 
 	var geoDetector *authutil.GeoDetector
 	if redisCache != nil {
 		geoDetector = authutil.NewGeoDetector(redisCache)
-		logger.Println("✅ Geo anomaly detector initialized")
+		logger.Info("geo anomaly detector initialized")
 	}
 
 	// SSE hub — Redis pub/sub fan-out added when Redis is available.
-	sseHub := realtime.New(nil, logger)
+	sseHub := realtime.New(nil)
 
 	// -------------------------------------------------------------------------
 	// Email sender
@@ -252,10 +265,10 @@ func main() {
 	var emailSender service.EmailSender
 	if disableEmail {
 		emailSender = noopEmailSender{}
-		logger.Println("⚠️ Email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
+		logger.Warn("email sender disabled (DISABLE_EMAIL/DISABLE_OTP)")
 	} else {
-		emailSender = initEmailSender(cfg, logger)
-		emailSender = observedEmailSender{inner: emailSender, logger: logger}
+		emailSender = initEmailSender(cfg)
+		emailSender = observedEmailSender{inner: emailSender}
 	}
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
@@ -390,11 +403,11 @@ func main() {
 	paymentProviders := map[string]payment.Provider{}
 	if strings.TrimSpace(cfg.Payment.PaystackSecretKey) != "" {
 		paymentProviders["paystack"] = payment.NewPaystack(cfg.Payment.PaystackSecretKey, cfg.Payment.PaystackWebhookSecret)
-		logger.Println("✅ Paystack payment provider initialized")
+		logger.Info("Paystack payment provider initialized")
 	}
 	if strings.TrimSpace(cfg.Payment.StripeSecretKey) != "" {
 		paymentProviders["stripe"] = payment.NewStripe(cfg.Payment.StripeSecretKey, cfg.Payment.StripeWebhookSecret)
-		logger.Println("✅ Stripe payment provider initialized")
+		logger.Info("Stripe payment provider initialized")
 	}
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
@@ -463,7 +476,7 @@ func main() {
 	sermonHandler := handlers.NewSermonHandler(sermonService)
 	storeHandler := handlers.NewStoreHandler(storeService)
 	givingHandler := handlers.NewGivingHandler()
-	givingV2Handler := handlers.NewGivingV2Handler(givingService)
+	givingPaymentsHandler := handlers.NewGivingPaymentsHandler(givingService)
 	attendanceHandler := handlers.NewAttendanceHandler(attendanceService)
 	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
 	prayerRequestHandler := handlers.NewPrayerRequestHandler(prayerRequestService)
@@ -485,8 +498,8 @@ func main() {
 	defer cleanupCancel()
 
 	go sseHub.Start(cleanupCtx)
-	go startFormCleanup(cleanupCtx, logger, formService, cfg.App.FormCleanupInterval)
-	go startFormReminderScheduler(cleanupCtx, logger, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
+	go startFormCleanup(cleanupCtx, formService, cfg.App.FormCleanupInterval)
+	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {
@@ -509,17 +522,17 @@ func main() {
 		lock := newRedisLock(cfg.Redis.URL)
 		tz := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TZ"))
 		sendAt := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TIME"))
-		go startBirthdayScheduler(cleanupCtx, logger, lock, workforceService, memberService, leadershipService, tz, sendAt)
+		go startBirthdayScheduler(cleanupCtx, lock, workforceService, memberService, leadershipService, tz, sendAt)
 	}
 	if isTrueEnv("BIRTHDAY_SCHEDULER_ONLY") {
 		if !schedulerEnabled {
-			logger.Println("⚠️ BIRTHDAY_SCHEDULER_ONLY=true but BIRTHDAY_SCHEDULER_ENABLED=false")
+			logger.Warn("BIRTHDAY_SCHEDULER_ONLY=true but BIRTHDAY_SCHEDULER_ENABLED=false")
 		}
-		logger.Println("🎂 Birthday scheduler worker mode enabled (API server disabled)")
+		logger.Info("birthday scheduler worker mode enabled (API server disabled)")
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-quit
-		logger.Printf("🛑 Received signal: %v", sig)
+		logger.Info("received signal", "signal", sig.String())
 		cleanupCancel()
 		return
 	}
@@ -565,7 +578,7 @@ func main() {
 		givingHandler,
 		siteContentHandler,
 		engagementHandler,
-		givingV2Handler,
+		givingPaymentsHandler,
 		attendanceHandler,
 		cellGroupHandler,
 		prayerRequestHandler,
@@ -574,9 +587,10 @@ func main() {
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
-		logger.Fatalf("❌ Invalid SERVER_TRUSTED_PROXIES: %v", err)
+		logger.Error("invalid SERVER_TRUSTED_PROXIES", "error", err)
+		os.Exit(1)
 	}
-	logger.Printf("✅ Trusted proxies configured: %v", cfg.Server.TrustedProxies)
+	logger.Info("trusted proxies configured", "proxies", cfg.Server.TrustedProxies)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Server.Port,
@@ -594,7 +608,7 @@ func main() {
 		if cfg.App.Environment == "production" {
 			host = "0.0.0.0"
 		}
-		logger.Printf("✅ Server starting on http://%s:%s", host, cfg.Server.Port)
+		logger.Info("server starting", "address", fmt.Sprintf("http://%s:%s", host, cfg.Server.Port))
 
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			shutdownErr <- err
@@ -608,24 +622,26 @@ func main() {
 
 	select {
 	case sig := <-quit:
-		logger.Printf("🛑 Received signal: %v", sig)
+		logger.Info("received signal", "signal", sig.String())
 	case err := <-shutdownErr:
 		if err != nil {
-			logger.Fatalf("❌ Server failed: %v", err)
+			logger.Error("server failed", "error", err)
+			os.Exit(1)
 		}
-		logger.Println("ℹ️ Server exited.")
+		logger.Info("server exited")
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	logger.Println("🔄 Shutting down server gracefully...")
+	logger.Info("shutting down server gracefully")
 	server.SetKeepAlivesEnabled(false)
 	cleanupCancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Fatalf("❌ Server forced to shutdown: %v", err)
+		logger.Error("server forced to shutdown", "error", err)
+		os.Exit(1)
 	}
-	logger.Println("👋 Server exited gracefully")
+	logger.Info("server exited gracefully")
 }
