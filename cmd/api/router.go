@@ -57,6 +57,7 @@ func setupRouter(
 	prayerRequestHandler *handlers.PrayerRequestHandler,
 	ministryHandler *handlers.MinistryHandler,
 	sseHandler *handlers.SSEHandler,
+	auditLogRepo repository.AuditLogRepository,
 ) *gin.Engine {
 	router := gin.New()
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
@@ -146,7 +147,7 @@ func setupRouter(
 	auth.POST("/token/refresh", authHandler.RotateRefreshToken)
 
 	authProtected := auth.Group("")
-	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth"))
+	authProtected.Use(authGuard, sessionFreshnessGuard, sessionGuard, csrfProtector.Middleware(), middleware.AuditLogger("auth", auditLogRepo))
 	authProtected.GET("/csrf-token", authHandler.GetCSRFToken)
 	authProtected.PATCH("/profile", authHandler.UpdateProfile)
 	authProtected.POST("/change-password", authHandler.ChangePassword)
@@ -243,7 +244,7 @@ func setupRouter(
 		middleware.RequireAdminMFA(userRepo),
 		middleware.RequirePermission(middleware.PermissionAdminAccess),
 		csrfProtector.Middleware(),
-		middleware.AuditLogger("admin"),
+		middleware.AuditLogger("admin", auditLogRepo),
 	)
 
 	auditLogsHandler := func(c *gin.Context) {
@@ -258,17 +259,35 @@ func setupRouter(
 		if limit > 200 {
 			limit = 200
 		}
+		scope := strings.TrimSpace(c.Query("scope"))
+
+		if auditLogRepo == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Audit log storage is not configured"})
+			return
+		}
+
+		logs, total, err := auditLogRepo.List(c.Request.Context(), page, limit, scope)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to load audit logs"})
+			return
+		}
+
+		totalPages := 0
+		if limit > 0 {
+			totalPages = int((total + int64(limit) - 1) / int64(limit))
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "success",
-			"message": "Audit logs are not configured yet",
-			"data":    []gin.H{},
-			"total":   0,
+			"message": "Audit logs loaded",
+			"data":    logs,
+			"total":   total,
 			"page":    page,
 			"limit":   limit,
 			"meta": gin.H{
 				"page": page, "limit": limit,
-				"total_items": 0, "total_pages": 0,
-				"has_next": false, "has_prev": false,
+				"total_items": total, "total_pages": totalPages,
+				"has_next": page < totalPages, "has_prev": page > 1,
 			},
 		})
 	}
