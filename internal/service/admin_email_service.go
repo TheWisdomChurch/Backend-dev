@@ -435,12 +435,18 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 
 		content, err := s.renderComposeContent(templateSelection, templateData)
 		if err != nil {
+			applog.L().Error("admin compose email render failed", "to", recipient.Email, "template_source", templateSelection.Source, "error", err)
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, recipient.Email)
 			continue
 		}
 
 		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content); err != nil {
+			// sendRenderedAdminEmail's own "email is not configured"/"content is nil"/
+			// "html body is empty" guard errors aren't logged by the observedEmailSender
+			// wrapper (they never reach it), so log here too — only the underlying
+			// provider error (SMTP/Brevo) gets double-logged, which is harmless.
+			applog.L().Error("admin compose email send failed", "to", recipient.Email, "template_source", templateSelection.Source, "error", err)
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, recipient.Email)
 			continue
