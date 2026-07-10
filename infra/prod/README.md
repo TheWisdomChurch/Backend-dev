@@ -35,6 +35,27 @@ step required for the app to come up correctly.
 4. Run `make deploy`. That pulls the latest image, runs pending migrations standalone first (so a bad
    migration fails loudly before any container is swapped, not silently mid-boot), then brings up `api`.
 
+## Outbound email was also broken (fixed here too)
+
+Separately from the deploy failure: production email — both transactional ("New giving intent") and the
+admin compose/marketing feature — was failing 100% of the time with:
+
+```
+"error":"smtp send failed: dial failed: dial tcp: lookup host.docker.internal on 127.0.0.11:53: no such host"
+```
+
+`SMTP_HOST=host.docker.internal` in `.env.production` routes outbound mail through a relay running on the
+host machine itself — that's the intended setup here (confirmed). But `host.docker.internal` only resolves
+inside a container automatically on Docker Desktop (Mac/Windows); on Linux it needs an explicit `extra_hosts`
+mapping, which the server's old compose file didn't have. This `docker-compose.yml` now includes it
+(`extra_hosts: host.docker.internal:host-gateway`), matching the same fix already present in the repo's dev
+`docker-compose.yml`. Once you deploy this file, verify with:
+
+```bash
+docker logs wisdom_api 2>&1 | grep -i "email delivery failed"
+```
+— it should stop appearing for new sends after redeploying with this config.
+
 ## About the `wisdom_maintenance` orphan warning
 
 The original failure log also warned about an orphan `wisdom_maintenance` container. This config doesn't
