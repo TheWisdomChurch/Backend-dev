@@ -166,11 +166,21 @@ type AppConfig struct {
 	PublicURL                 string        `json:"public_url" env:"APP_PUBLIC_URL"`
 	FrontendURL               string        `json:"frontend_url" env:"APP_FRONTEND_URL"`
 	LogoURL                   string        `json:"logo_url" env:"APP_LOGO_URL"`
+	Tagline                   string        `json:"tagline" env:"APP_TAGLINE"`
 	PastorName                string        `json:"pastor_name" env:"APP_PASTOR_NAME"`
 	SupportEmail              string        `json:"support_email" env:"APP_SUPPORT_EMAIL"`
 	AdminPortalURL            string        `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
 	FormCleanupInterval       time.Duration `json:"form_cleanup_interval" env:"APP_FORM_CLEANUP_INTERVAL"`
 	EmailTemplateAssetBaseURL string        `json:"email_template_asset_base_url" env:"APP_EMAIL_TEMPLATE_ASSET_BASE_URL"`
+
+	// Social links shown in email footers. Any left unset are simply omitted
+	// from the footer rather than linking somewhere wrong.
+	SocialYouTubeURL   string `json:"social_youtube_url" env:"APP_SOCIAL_YOUTUBE_URL"`
+	SocialInstagramURL string `json:"social_instagram_url" env:"APP_SOCIAL_INSTAGRAM_URL"`
+	SocialXURL         string `json:"social_x_url" env:"APP_SOCIAL_X_URL"`
+	SocialWhatsAppURL  string `json:"social_whatsapp_url" env:"APP_SOCIAL_WHATSAPP_URL"`
+	SocialFacebookURL  string `json:"social_facebook_url" env:"APP_SOCIAL_FACEBOOK_URL"`
+	SocialTikTokURL    string `json:"social_tiktok_url" env:"APP_SOCIAL_TIKTOK_URL"`
 }
 
 /* ========================================================================== */
@@ -336,11 +346,18 @@ func Load() (*Config, error) {
 			PublicURL:                 getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
 			FrontendURL:               getEnv("APP_FRONTEND_URL", "http://localhost:3000"),
 			LogoURL:                   getEnv("APP_LOGO_URL", ""),
+			Tagline:                   getEnv("APP_TAGLINE", ""),
 			PastorName:                getEnv("APP_PASTOR_NAME", "Senior Pastor"),
 			SupportEmail:              getEnv("APP_SUPPORT_EMAIL", ""),
 			AdminPortalURL:            getEnv("APP_ADMIN_PORTAL_URL", ""),
 			FormCleanupInterval:       getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
 			EmailTemplateAssetBaseURL: strings.TrimRight(getEnv("APP_EMAIL_TEMPLATE_ASSET_BASE_URL", ""), "/"),
+			SocialYouTubeURL:          getEnv("APP_SOCIAL_YOUTUBE_URL", ""),
+			SocialInstagramURL:        getEnv("APP_SOCIAL_INSTAGRAM_URL", ""),
+			SocialXURL:                getEnv("APP_SOCIAL_X_URL", ""),
+			SocialWhatsAppURL:         getEnv("APP_SOCIAL_WHATSAPP_URL", ""),
+			SocialFacebookURL:         getEnv("APP_SOCIAL_FACEBOOK_URL", ""),
+			SocialTikTokURL:           getEnv("APP_SOCIAL_TIKTOK_URL", ""),
 		},
 		Telemetry: TelemetryConfig{
 			OTLPEndpoint: getEnv("OTLP_ENDPOINT", ""),
