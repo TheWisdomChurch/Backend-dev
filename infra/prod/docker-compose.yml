@@ -12,6 +12,15 @@ services:
       - .env.production
     ports:
       - "8080:8080"
+    # SMTP_HOST=host.docker.internal routes outbound mail through a relay
+    # running on the host machine itself. That hostname only resolves inside
+    # the container because of this mapping — without it, every outbound
+    # email fails with "lookup host.docker.internal: no such host" before
+    # the SMTP handshake ever starts (this was the actual cause of a
+    # production incident: marketing/campaign and transactional emails were
+    # both silently failing). Requires Docker Engine 20.10+.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/readyz"]
       interval: 30s
