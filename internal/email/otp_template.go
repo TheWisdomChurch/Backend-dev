@@ -2,7 +2,6 @@
 package email
 
 import (
-	"html"
 	"strings"
 	"time"
 )
@@ -17,125 +16,38 @@ type OTPTemplateData struct {
 	HeroImageURL string
 }
 
-// RenderOTPEmail renders a professional OTP / verification email.
+// RenderOTPEmail renders a verification code email.
 func RenderOTPEmail(data OTPTemplateData) string {
 	b := normalizeBranding(data.Branding)
 
 	code := strings.TrimSpace(data.Code)
-	safeCode := html.EscapeString(code)
-
 	headline, purposeLine := otpPurposeCopy(strings.TrimSpace(data.Purpose))
+	expiresText := data.ExpiresAt.Format("Mon, 02 Jan 2006 15:04 MST")
 
-	expiresAt := data.ExpiresAt
-	expiresText := expiresAt.Format("Mon, 02 Jan 2006 15:04 MST")
-
-	logoBlock := renderLogoBlock(b)
-	heroBlock := renderHeroImageBlock(
-		data.HeroImageURL,
-		"Verification code",
-	)
-
-	actionURL := strings.TrimSpace(data.ActionURL)
 	actionLabel := strings.TrimSpace(data.ActionLabel)
 	if actionLabel == "" {
 		actionLabel = "Verify code"
 	}
 
 	actionBlock := ""
-	if actionURL != "" {
-		actionBlock = `<table role="presentation" style="margin:20px 0 0;">
-  <tr>
-    <td style="border-radius:999px;background:#1d4ed8;">
-      <a href="` + html.EscapeString(actionURL) + `" 
-         style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:600;
-                color:#ffffff;text-decoration:none;border-radius:999px;">
-        ` + html.EscapeString(actionLabel) + `
-      </a>
-    </td>
-  </tr>
-</table>`
+	if btn := renderButton(actionLabel, data.ActionURL, "", ""); btn != "" {
+		actionBlock = "<div style=\"margin-top:20px;\">" + btn + "</div>"
 	}
 
-	return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>` + html.EscapeString(b.AppName) + ` • ` + html.EscapeString(headline) + `</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-</head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f172a;padding:32px 16px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#020617;border-radius:20px;border:1px solid #1f2937;overflow:hidden;">
-          <tr>
-            <td style="padding:24px 24px 12px 24px;background:linear-gradient(135deg,#0f172a,#020617);">
-              ` + logoBlock + `
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 24px 8px 24px;">
-              ` + heroBlock + `
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 24px 4px 24px;">
-              <h1 style="margin:0;font-size:22px;line-height:1.4;color:#e5e7eb;">
-                ` + html.EscapeString(headline) + `
-              </h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:4px 24px 14px 24px;">
-              <p style="margin:0;font-size:14px;line-height:1.6;color:#9ca3af;">
-                ` + html.EscapeString(purposeLine) + `
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:6px 24px 4px 24px;">
-              <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;border-radius:16px;background:rgba(15,23,42,0.85);border:1px solid #1f2937;">
-                <tr>
-                  <td align="center" style="padding:18px 16px 10px 16px;">
-                    <div style="font-size:30px;letter-spacing:8px;font-weight:700;color:#f9fafb;">
-                      ` + safeCode + `
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td align="center" style="padding:0 16px 16px 16px;">
-                    <p style="margin:8px 0 0 0;font-size:12px;color:#9ca3af;">
-                      This code will expire at
-                      <span style="color:#e5e7eb;">` + html.EscapeString(expiresText) + `</span>.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 24px 4px 24px;">
-              ` + actionBlock + `
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:12px 24px 8px 24px;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#6b7280;">
-                If you did not request this code, you can safely ignore this email. Your account remains secure.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:8px 24px 20px 24px;">
-              ` + footerBlock(b) + `
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`
+	body := renderBodyOpen() +
+		renderEyebrow("Verification code", "") +
+		renderHeading(headline) +
+		renderParagraph(purposeLine) +
+		renderBodyClose() +
+		renderHeroImageBlock(data.HeroImageURL, "Verification code") +
+		"<tr><td style=\"padding:8px 40px 28px;\">" +
+		renderCodeBlock("Your code", code) +
+		"<p style=\"margin:12px 0 0;font-size:12px;color:" + colorFaint + ";\">This code expires at " + expiresText + ".</p>" +
+		actionBlock +
+		"<p style=\"margin:16px 0 0;font-size:12px;line-height:1.6;color:" + colorFaint + ";\">If you did not request this code, you can safely ignore this email. Your account remains secure.</p>" +
+		"</td></tr>"
+
+	return renderEmailShell(b, "", body)
 }
 
 func otpPurposeCopy(purpose string) (headline string, line string) {
