@@ -15,6 +15,38 @@ type Branding struct {
 	PastorName           string
 	AdminPortalURL       string
 	TemplateAssetBaseURL string
+	AppTagline           string
+	Social               SocialLinks
+}
+
+// Tagline returns the configured tagline, or the default if unset.
+func (b Branding) Tagline() string {
+	if t := strings.TrimSpace(b.AppTagline); t != "" {
+		return t
+	}
+	return "Equipped. Empowered for Greatness"
+}
+
+// SocialLinks holds the church's social profile URLs shown in email footers.
+// Any field left empty is simply omitted from the footer, never linked as a
+// guess.
+type SocialLinks struct {
+	YouTube   string
+	Instagram string
+	X         string
+	WhatsApp  string
+	Facebook  string
+	TikTok    string
+}
+
+// HasAny reports whether at least one social link is configured.
+func (s SocialLinks) HasAny() bool {
+	return strings.TrimSpace(s.YouTube) != "" ||
+		strings.TrimSpace(s.Instagram) != "" ||
+		strings.TrimSpace(s.X) != "" ||
+		strings.TrimSpace(s.WhatsApp) != "" ||
+		strings.TrimSpace(s.Facebook) != "" ||
+		strings.TrimSpace(s.TikTok) != ""
 }
 
 type AdminWelcomeTemplateData struct {
@@ -38,24 +70,24 @@ func RenderAdminWelcomeEmail(data AdminWelcomeTemplateData) string {
 	}
 	portalURL := adminPortalURL(b)
 
-	logoBlock := renderLogoBlock(b)
+	body := renderBodyOpen() +
+		renderEyebrow("Account created", "") +
+		renderHeading("Welcome to the administration team") +
+		renderParagraph("Hello "+name+", your account has been created with <strong style=\"color:"+colorInk+";\">"+role+"</strong> access.") +
+		renderBodyClose() +
+		"<tr><td style=\"padding:8px 40px 0;\">" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid " + colorLine + ";border-bottom:1px solid " + colorLine + ";\">" +
+		"<tr><td style=\"padding:20px 0;font-family:" + fontStack + ";\">" +
+		"<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorMuted + ";margin-bottom:10px;\">Next steps</div>" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">" +
+		"<tr><td style=\"padding:5px 0;font-size:14px;color:" + colorBody + ";line-height:1.5;\">&mdash; Review the dashboard for latest submissions and activity</td></tr>" +
+		"<tr><td style=\"padding:5px 0;font-size:14px;color:" + colorBody + ";line-height:1.5;\">&mdash; Confirm upcoming events and programs are current</td></tr>" +
+		"<tr><td style=\"padding:5px 0;font-size:14px;color:" + colorBody + ";line-height:1.5;\">&mdash; Coordinate outstanding approvals with the ministry team</td></tr>" +
+		"</table></td></tr></table>" +
+		"</td></tr>" +
+		renderActionRow(renderButton("Open admin portal", portalURL, "", ""))
 
-	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family: 'Segoe UI', Tahoma, Arial, sans-serif;line-height:1.6;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;border:1px solid #e5e7eb;\">" +
-		logoBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Welcome to " + html.EscapeString(b.AppName) + " Administration</h2>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Hello " + name + ", your account has been created with <strong>" + role + "</strong> access.</p>" +
-		"<div style=\"background:#f8fafc;border-radius:12px;padding:16px;margin:16px 0;\">" +
-		"<p style=\"margin:0 0 8px;font-size:14px;\"><strong>Next steps:</strong></p>" +
-		"<ul style=\"margin:0;padding-left:18px;font-size:14px;color:#475569;\">" +
-		"<li>Review the admin dashboard for latest activity.</li>" +
-		"<li>Ensure church programs and events are up to date.</li>" +
-		"<li>Coordinate updates with the ministry team.</li>" +
-		"</ul></div>" +
-		"<a href=\"" + html.EscapeString(portalURL) + "\" style=\"display:inline-block;margin-top:8px;padding:12px 18px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;\">Open Admin Portal</a>" +
-		footerBlock(b) +
-		"</div></body></html>"
+	return renderEmailShell(b, "", body)
 }
 
 type AdminApprovedTemplateData struct {
@@ -77,23 +109,15 @@ func RenderAdminApprovedEmail(data AdminApprovedTemplateData) string {
 	if loginURL == "" {
 		loginURL = adminLoginURL(b)
 	}
-	loginURL = html.EscapeString(loginURL)
 
-	logoBlock := renderLogoBlock(b)
-	actionBlock := ""
-	if loginURL != "" {
-		actionBlock = "<a href=\"" + loginURL + "\" style=\"display:inline-block;margin-top:8px;padding:12px 20px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:999px;font-weight:600;\">Visit Website</a>"
-	}
+	body := renderBodyOpen() +
+		renderEyebrow("Account approved", "") +
+		renderHeading("Your admin account is approved") +
+		renderParagraph("Hi "+name+", your admin account has been successfully created and approved. You can now log in with your credentials.") +
+		renderBodyClose() +
+		renderActionRow(renderButton("Visit website", loginURL, "", ""))
 
-	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
-		logoBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Your admin account is approved</h2>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Hi " + name + ", your admin account has been successfully created and approved. You can now log in with your credentials.</p>" +
-		actionBlock +
-		footerBlock(b) +
-		"</div></body></html>"
+	return renderEmailShell(b, "", body)
 }
 
 func RenderSubscriberWelcomeEmail(data SubscriberWelcomeTemplateData) string {
@@ -104,33 +128,32 @@ func RenderSubscriberWelcomeEmail(data SubscriberWelcomeTemplateData) string {
 		greeting = "Dear " + html.EscapeString(name) + ","
 	}
 
-	logoBlock := renderLogoBlock(b)
-
-	unsubscribeBlock := ""
-	if strings.TrimSpace(data.UnsubscribeURL) != "" {
-		unsubscribeBlock = "<p style=\"margin:24px 0 0;font-size:12px;color:#94a3b8;\">If you prefer not to receive these messages, you can <a href=\"" + html.EscapeString(data.UnsubscribeURL) + "\" style=\"color:#64748b;\">unsubscribe here</a>.</p>"
-	}
-
 	pastorName := strings.TrimSpace(b.PastorName)
 	if pastorName == "" {
 		pastorName = "Senior Pastor"
 	}
 
-	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family: 'Segoe UI', Tahoma, Arial, sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
-		"<div style=\"max-width:680px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
-		logoBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:24px;color:#0b2447;\">Welcome to " + html.EscapeString(b.AppName) + "</h2>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">" + greeting + "</p>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Thank you for subscribing. It is a joy to have you with us. We will keep you updated on upcoming programs, prayer meetings, and special moments in our community.</p>" +
-		"<p style=\"margin:0 0 20px;font-size:15px;color:#334155;\">Please expect timely updates, encouragement, and invitations as we grow together in faith.</p>" +
-		"<div style=\"margin-top:20px;padding:16px;background:#f8fafc;border-radius:12px;\">" +
-		"<p style=\"margin:0;font-size:14px;color:#475569;\">With love and prayers,</p>" +
-		"<p style=\"margin:4px 0 0;font-size:14px;font-weight:600;color:#1f2933;\">" + html.EscapeString(pastorName) + "</p>" +
-		"</div>" +
+	unsubscribeBlock := ""
+	if strings.TrimSpace(data.UnsubscribeURL) != "" {
+		unsubscribeBlock = "<p style=\"margin:20px 0 0;font-size:12px;color:" + colorFaint + ";\">If you prefer not to receive these messages, you can <a href=\"" + html.EscapeString(data.UnsubscribeURL) + "\" style=\"color:" + colorMuted + ";\">unsubscribe here</a>.</p>"
+	}
+
+	body := renderBodyOpen() +
+		renderHeading("Welcome to "+b.AppName) +
+		renderParagraph(greeting) +
+		renderParagraph("Thank you for subscribing. It is a joy to have you with us. We will keep you updated on upcoming programs, prayer meetings, and special moments in our community.") +
+		renderParagraph("Please expect timely updates, encouragement, and invitations as we grow together in faith.") +
+		renderBodyClose() +
+		"<tr><td style=\"padding:0 40px 8px;\">" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid " + colorLine + ";\">" +
+		"<tr><td style=\"padding:18px 0;font-family:" + fontStack + ";\">" +
+		"<p style=\"margin:0;font-size:14px;color:" + colorMuted + ";\">With love and prayers,</p>" +
+		"<p style=\"margin:4px 0 0;font-size:14px;font-weight:600;color:" + colorInk + ";\">" + html.EscapeString(pastorName) + "</p>" +
+		"</td></tr></table>" +
 		unsubscribeBlock +
-		footerBlock(b) +
-		"</div></body></html>"
+		"</td></tr>"
+
+	return renderEmailShell(b, "", body)
 }
 
 type PasswordResetTemplateData struct {
@@ -148,21 +171,20 @@ func RenderPasswordResetEmail(data PasswordResetTemplateData) string {
 	} else {
 		name = html.EscapeString(name)
 	}
-	resetURL := html.EscapeString(strings.TrimSpace(data.ResetURL))
 	expires := html.EscapeString(strings.TrimSpace(data.ExpiresAt))
-	logoBlock := renderLogoBlock(b)
 
-	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f4f7fb;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
-		logoBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Reset your " + html.EscapeString(b.AppName) + " password</h2>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">Hi " + name + ", we received a request to reset your password.</p>" +
-		"<a href=\"" + resetURL + "\" style=\"display:inline-block;margin:8px 0;padding:12px 18px;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;\">Verify and reset password</a>" +
-		"<p style=\"margin:16px 0 0;font-size:13px;color:#6b7280;\">This link expires at " + expires + ".</p>" +
-		"<p style=\"margin:12px 0 0;font-size:13px;color:#6b7280;\">If you did not request this, you can ignore this email.</p>" +
-		footerBlock(b) +
-		"</div></body></html>"
+	body := renderBodyOpen() +
+		renderEyebrow("Password reset requested", "") +
+		renderHeading("Reset your "+b.AppName+" password") +
+		renderParagraph("Hi "+name+", we received a request to reset your password.") +
+		renderBodyClose() +
+		"<tr><td style=\"padding:8px 40px 40px;\">" +
+		renderButton("Verify and reset password", data.ResetURL, "", "") +
+		"<p style=\"margin:16px 0 0;font-size:13px;color:" + colorFaint + ";\">This link expires at " + expires + ".</p>" +
+		"<p style=\"margin:8px 0 0;font-size:13px;color:" + colorFaint + ";\">If you did not request this, you can ignore this email.</p>" +
+		"</td></tr>"
+
+	return renderEmailShell(b, "", body)
 }
 
 type LoginAlertTemplateData struct {
@@ -176,25 +198,20 @@ type LoginAlertTemplateData struct {
 func RenderLoginAlertEmail(data LoginAlertTemplateData) string {
 	b := normalizeBranding(data.Branding)
 	emailAddr := html.EscapeString(strings.TrimSpace(data.Email))
-	ip := html.EscapeString(strings.TrimSpace(data.IP))
-	ua := html.EscapeString(strings.TrimSpace(data.UserAgent))
-	ts := html.EscapeString(strings.TrimSpace(data.Timestamp))
-	logoBlock := renderLogoBlock(b)
 
-	return "<!DOCTYPE html>" +
-		"<html><body style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;line-height:1.7;color:#0f172a;background:#f8fafc;padding:24px;\">" +
-		"<div style=\"max-width:640px;margin:0 auto;background:#ffffff;border-radius:18px;padding:32px;border:1px solid #e5e7eb;\">" +
-		logoBlock +
-		"<h2 style=\"margin:0 0 12px;font-size:22px;\">Security alert: failed login attempts</h2>" +
-		"<p style=\"margin:0 0 16px;font-size:15px;color:#334155;\">We detected multiple failed login attempts on your account (" + emailAddr + ").</p>" +
-		"<div style=\"background:#f8fafc;border-radius:12px;padding:16px;margin:16px 0;\">" +
-		"<p style=\"margin:0 0 6px;font-size:14px;color:#475569;\"><strong>IP:</strong> " + ip + "</p>" +
-		"<p style=\"margin:0 0 6px;font-size:14px;color:#475569;\"><strong>Device:</strong> " + ua + "</p>" +
-		"<p style=\"margin:0;font-size:14px;color:#475569;\"><strong>Time:</strong> " + ts + "</p>" +
-		"</div>" +
-		"<p style=\"margin:0;font-size:14px;color:#334155;\">If this was not you, please reset your password immediately.</p>" +
-		footerBlock(b) +
-		"</div></body></html>"
+	body := renderBodyOpen() +
+		renderEyebrow("Action recommended", colorDanger) +
+		renderHeading("Multiple failed sign-in attempts") +
+		renderParagraph("We detected repeated failed sign-in attempts on your account <strong style=\"color:"+colorInk+";\">"+emailAddr+"</strong>. If this was you, no action is needed. If not, reset your password now.") +
+		renderBodyClose() +
+		renderInfoGrid([]infoItem{
+			{Label: "IP address", Value: strings.TrimSpace(data.IP)},
+			{Label: "Device", Value: strings.TrimSpace(data.UserAgent)},
+			{Label: "Time", Value: strings.TrimSpace(data.Timestamp)},
+		}) +
+		renderActionRow(renderButton("Reset password", adminLoginURL(b), "", ""))
+
+	return renderEmailShell(b, colorDanger, body)
 }
 
 func normalizeBranding(b Branding) Branding {
@@ -213,27 +230,27 @@ func normalizeBranding(b Branding) Branding {
 	return b
 }
 
+// brandLogoURL resolves the logo image URL for email templates. Prefers an
+// explicitly configured APP_LOGO_URL (e.g. a CDN asset); otherwise falls back
+// to this backend's own embedded logo, served at PublicURL+LogoAssetPath
+// (see embedded.go and the /assets/logo.webp route in cmd/api/router.go).
 func brandLogoURL(b Branding) string {
 	if logo := strings.TrimSpace(b.LogoURL); logo != "" {
 		return logo
 	}
 
-	for _, rawBase := range []string{b.AdminPortalURL, b.FrontendURL, b.PublicURL} {
-		base := strings.TrimSpace(rawBase)
-		if base == "" {
-			continue
-		}
-		parsed, err := url.Parse(base)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			continue
-		}
-		parsed.Path = "/OIP.webp"
-		parsed.RawQuery = ""
-		parsed.Fragment = ""
-		return parsed.String()
+	base := strings.TrimSpace(b.PublicURL)
+	if base == "" {
+		return ""
 	}
-
-	return ""
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.Path = LogoAssetPath
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func adminPortalURL(b Branding) string {
@@ -271,32 +288,4 @@ func adminLoginURL(b Branding) string {
 		u.Path = path + "/login"
 	}
 	return u.String()
-}
-
-func renderLogoBlock(b Branding) string {
-	b = normalizeBranding(b)
-	logoURL := brandLogoURL(b)
-	logoCell := "<td style=\"vertical-align:middle;padding:0 18px 0 0;\"><div style=\"width:54px;height:54px;border-radius:16px;background:#0f172a;color:#facc15;font-size:20px;line-height:54px;text-align:center;font-weight:900;\">W</div></td>"
-	if logoURL != "" {
-		logoCell = "<td style=\"vertical-align:middle;padding:0 18px 0 0;\"><img src=\"" + html.EscapeString(logoURL) + "\" alt=\"" + html.EscapeString(b.AppName) + " logo\" width=\"54\" height=\"54\" style=\"display:block;width:54px;height:54px;object-fit:cover;border-radius:16px;border:1px solid #e5e7eb;\" /></td>"
-	}
-	return "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 24px;border-collapse:collapse;\">" +
-		"<tr>" +
-		logoCell +
-		"<td style=\"width:1px;background:#e2e8f0;padding:0;\"></td>" +
-		"<td style=\"vertical-align:middle;padding:0 0 0 18px;\">" +
-		"<div style=\"font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:11px;line-height:1.05;font-weight:900;letter-spacing:.18em;color:#0f172a;text-transform:uppercase;\">" +
-		"<div>THE</div><div style=\"margin-top:3px;\">WISDOM</div><div style=\"margin-top:3px;\">CHURCH</div>" +
-		"</div>" +
-		"</td>" +
-		"</tr>" +
-		"</table>"
-}
-
-func footerBlock(b Branding) string {
-	contactLine := ""
-	if strings.TrimSpace(b.SupportEmail) != "" {
-		contactLine = "<p style=\"margin:16px 0 0;font-size:12px;color:#94a3b8;\">Need help? Contact us at <a href=\"mailto:" + html.EscapeString(b.SupportEmail) + "\" style=\"color:#64748b;\">" + html.EscapeString(b.SupportEmail) + "</a>.</p>"
-	}
-	return "<p style=\"margin:24px 0 0;font-size:12px;color:#94a3b8;\">" + html.EscapeString(b.AppName) + "</p>" + contactLine
 }
