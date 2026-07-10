@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -16,6 +17,7 @@ import (
 type adminServiceImpl struct {
 	testimonialRepo repository.TestimonialRepository
 	userRepo        repository.UserRepository
+	auditLogRepo    repository.AuditLogRepository
 	approvalSvc     ApprovalService
 	notifySvc       AdminNotificationService
 	sender          EmailSender
@@ -25,6 +27,7 @@ type adminServiceImpl struct {
 func NewAdminService(
 	testimonialRepo repository.TestimonialRepository,
 	userRepo repository.UserRepository,
+	auditLogRepo repository.AuditLogRepository,
 	approvalSvc ApprovalService,
 	notifySvc AdminNotificationService,
 	sender EmailSender,
@@ -33,6 +36,7 @@ func NewAdminService(
 	return &adminServiceImpl{
 		testimonialRepo: testimonialRepo,
 		userRepo:        userRepo,
+		auditLogRepo:    auditLogRepo,
 		approvalSvc:     approvalSvc,
 		notifySvc:       notifySvc,
 		sender:          sender,
@@ -426,11 +430,19 @@ func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
 		}
 	}
 
+	recentActivity := []models.AuditLog{}
+	if s.auditLogRepo != nil {
+		if recent, err := s.auditLogRepo.Recent(context.Background(), 10); err == nil {
+			recentActivity = recent
+		}
+	}
+
 	return map[string]interface{}{
 		"total_users":          totalUsers,
 		"total_testimonials":   totalTestimonials,
 		"pending_testimonials": pendingTestimonials,
 		"pending_approvals":    pendingApprovals,
+		"recent_activity":      recentActivity,
 	}, nil
 }
 
