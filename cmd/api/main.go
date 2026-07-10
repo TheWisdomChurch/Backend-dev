@@ -359,6 +359,7 @@ func main() {
 	adminService := service.NewAdminService(
 		testimonialRepo,
 		userRepo,
+		auditLogRepo,
 		approvalService,
 		adminNotificationService,
 		emailSender,
