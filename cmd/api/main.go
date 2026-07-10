@@ -284,6 +284,15 @@ func main() {
 		PastorName:           cfg.App.PastorName,
 		AdminPortalURL:       cfg.App.AdminPortalURL,
 		TemplateAssetBaseURL: templateAssetBaseURL,
+		AppTagline:           cfg.App.Tagline,
+		Social: email.SocialLinks{
+			YouTube:   cfg.App.SocialYouTubeURL,
+			Instagram: cfg.App.SocialInstagramURL,
+			X:         cfg.App.SocialXURL,
+			WhatsApp:  cfg.App.SocialWhatsAppURL,
+			Facebook:  cfg.App.SocialFacebookURL,
+			TikTok:    cfg.App.SocialTikTokURL,
+		},
 	}
 
 	// -------------------------------------------------------------------------

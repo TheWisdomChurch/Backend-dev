@@ -13,6 +13,7 @@ import (
 	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/config"
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/handlers"
 	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/middleware"
@@ -83,6 +84,14 @@ func setupRouter(
 	// Health
 	router.GET("/healthz", healthHandler.Liveness)
 	router.GET("/readyz", healthHandler.Readiness)
+
+	// Brand assets embedded in the binary (e.g. the logo referenced by email
+	// templates) — public, unauthenticated, since email clients fetch images
+	// with no session context.
+	router.GET(email.LogoAssetPath, func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Data(http.StatusOK, email.LogoContentType, email.LogoBytes)
+	})
 	router.GET("/forms/:slug", formHandler.ViewPublicFormPage)
 	router.GET("/form/:slug", formHandler.RedirectLegacyPublicFormPage)
 	router.GET("/reports/forms/:slug", formHandler.ViewPublicFormReport)
