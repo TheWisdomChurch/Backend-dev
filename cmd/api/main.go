@@ -187,6 +187,7 @@ func main() {
 	cellGroupRepo := repository.NewCellGroupRepository(db)
 	prayerRequestRepo := repository.NewPrayerRequestRepository(db)
 	ministryRepo := repository.NewMinistryRepository(db)
+	auditLogRepo := repository.NewAuditLogRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -585,6 +586,7 @@ func main() {
 		prayerRequestHandler,
 		ministryHandler,
 		sseHandler,
+		auditLogRepo,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {
