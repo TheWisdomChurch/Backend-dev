@@ -233,6 +233,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 			"target", target,
 			"error", err,
 		)
+		s.notifySubmissionTargetSyncFailure(form, sub.ID, target, err)
 	}
 
 	return nil

@@ -158,6 +158,36 @@ func resolveSubmissionTargetForForm(form *models.Form, settings *models.FormSett
 	return ""
 }
 
+// notifySubmissionTargetSyncFailure surfaces a submission-routing failure to
+// super admins. The submission itself is never lost — it's already durably
+// saved in form_submissions — but without this, a routing failure (e.g. a
+// form's field names don't match what the target (workforce/member/leadership)
+// expects) was previously visible only in a warn-level log line nobody reads,
+// silently leaving the record out of the target table with no indication why.
+func (s *formService) notifySubmissionTargetSyncFailure(form *models.Form, submissionID, target string, syncErr error) {
+	if s.notifySvc == nil || form == nil {
+		return
+	}
+	title := strings.TrimSpace(form.Title)
+	if title == "" {
+		title = "Untitled form"
+	}
+	message := fmt.Sprintf(
+		"A submission to %q could not be routed to %s automatically (%s). The raw submission is saved — open the form's submissions to review and add it manually.",
+		title, target, syncErr.Error(),
+	)
+	entityType := "form_submission"
+	entityID := submissionID
+	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "submission_sync_failed",
+		Title:      "Form submission needs manual review",
+		Message:    message,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"admin", "super_admin"},
+	})
+}
+
 func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {
 	target := resolveSubmissionTargetForForm(form, settings)
 	if target == "" {
