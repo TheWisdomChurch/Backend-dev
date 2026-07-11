@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/lib/pq"
+)
 
 type EventStatus string
 type EventCategory string
@@ -40,10 +44,10 @@ type Event struct {
 	ApprovedByEmail *string    `gorm:"type:varchar(255)" json:"approvedByEmail,omitempty"`
 	ApprovedAt      *time.Time `json:"approvedAt,omitempty"`
 
-	Tags         []string `gorm:"type:text[];default:'{}'" json:"tags"`
-	RegisterLink *string  `gorm:"type:text" json:"registerLink,omitempty"`
-	Speaker      *string  `gorm:"type:varchar(120)" json:"speaker,omitempty"`
-	ContactPhone *string  `gorm:"type:varchar(40)" json:"contactPhone,omitempty"`
+	Tags         pq.StringArray `gorm:"type:text[];default:'{}'" json:"tags"`
+	RegisterLink *string        `gorm:"type:text" json:"registerLink,omitempty"`
+	Speaker      *string        `gorm:"type:varchar(120)" json:"speaker,omitempty"`
+	ContactPhone *string        `gorm:"type:varchar(40)" json:"contactPhone,omitempty"`
 
 	// CDN URLs
 	Image       *string `gorm:"type:text" json:"image,omitempty"`
