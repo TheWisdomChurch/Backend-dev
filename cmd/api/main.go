@@ -385,6 +385,7 @@ func main() {
 		memberService,
 		leadershipService,
 		testimonialService,
+		adminNotificationService,
 		emailSender,
 		branding,
 		assetUploader,

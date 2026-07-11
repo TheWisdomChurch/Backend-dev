@@ -299,11 +299,17 @@ func applySubmissionFilters(q *gorm.DB, formID string, start, end *time.Time) *g
 	return q
 }
 
+// applyNewMemberFormFilter matches forms whose submissions should count as
+// "new member" intake. The primary signal is settings.submissionTarget = "member"
+// — the same field internal/service/form_service_target_sync.go uses to
+// actually route a submission into the members table, so a form configured
+// that way is guaranteed to show up here too. The slug/title checks remain
+// as a fallback for forms created before submissionTarget existed.
 func applyNewMemberFormFilter(q *gorm.DB) *gorm.DB {
 	return q.Where(`(
-		LOWER(COALESCE(forms.slug, '')) = 'add-new-member'
+		LOWER(COALESCE(forms.settings->>'submissionTarget', '')) = 'member'
+		OR LOWER(COALESCE(forms.slug, '')) = 'add-new-member'
 		OR trim(regexp_replace(LOWER(COALESCE(forms.title, '')), '[^a-z0-9]+', ' ', 'g')) = 'add new member'
-		OR LOWER(COALESCE(forms.settings->>'newMemberSource', '')) = 'add-new-member'
 	)`)
 }
 
