@@ -2,11 +2,12 @@ package middleware
 
 import (
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"wisdomHouse-backend/internal/authutil"
 )
 
 const (
@@ -14,78 +15,19 @@ const (
 	sessionLastActivityCookieName = "last_activity"
 )
 
-func normalizeSessionCookieDomain(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return ""
-	}
-
-	value = strings.TrimPrefix(value, "https://")
-	value = strings.TrimPrefix(value, "http://")
-	value = strings.Trim(value, " /")
-
-	if slash := strings.Index(value, "/"); slash >= 0 {
-		value = value[:slash]
-	}
-
-	value = strings.TrimSpace(value)
-
-	// Do not set Domain for localhost, IP addresses, host:port values,
-	// or empty values. Browsers reject those in local development.
-	if value == "" || value == "localhost" || strings.Contains(value, ":") {
-		return ""
-	}
-
-	if !strings.HasPrefix(value, ".") {
-		value = "." + value
-	}
-
-	return value
-}
-
+// Cookie-domain resolution used to be duplicated here with a subtly different
+// implementation (no lowercasing, a narrower clear-domain list) than
+// internal/authutil/cookies.go, which is the package that actually writes
+// these cookies at login. Two independently-maintained copies of "which
+// domain does this cookie live under" is exactly the kind of drift that
+// causes a cookie set at login to not be recognized a moment later — so this
+// now delegates to the single canonical implementation instead.
 func configuredSessionCookieDomain() string {
-	for _, key := range []string{
-		"AUTH_COOKIE_DOMAIN",
-		"SESSION_COOKIE_DOMAIN",
-		"COOKIE_DOMAIN",
-	} {
-		if value := normalizeSessionCookieDomain(os.Getenv(key)); value != "" {
-			return value
-		}
-	}
-
-	return ""
+	return authutil.ConfiguredAuthCookieDomain()
 }
 
 func sessionCookieClearDomains() []string {
-	configuredDomain := configuredSessionCookieDomain()
-
-	// Keep this list broader than the active cookie domain because production
-	// deployments may have previously used host-only cookies, parent-domain
-	// cookies, or explicit API-domain cookies. Clearing all known variants is
-	// what stops duplicate Cookie headers from causing false 401 responses.
-	candidates := []string{
-		"",
-		configuredDomain,
-		".wisdomchurchhq.org",
-		"wisdomchurchhq.org",
-		"api.wisdomchurchhq.org",
-	}
-
-	seen := make(map[string]bool, len(candidates))
-	domains := make([]string, 0, len(candidates))
-
-	for _, domain := range candidates {
-		domain = strings.TrimSpace(domain)
-		if seen[domain] {
-			continue
-		}
-
-		seen[domain] = true
-		domains = append(domains, domain)
-	}
-
-	return domains
+	return authutil.AuthCookieClearDomains()
 }
 
 func sessionCookieClearPaths() []string {
