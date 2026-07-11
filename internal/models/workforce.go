@@ -34,6 +34,17 @@ func (WorkforceMember) TableName() string {
 	return "workforce_members"
 }
 
+// WorkforceLookupResult is the minimal, PII-conscious payload returned by the
+// public email-lookup endpoint — deliberately excludes ID, Notes, and other
+// internal fields since the caller only proves they know the email address,
+// not that they own the record.
+type WorkforceLookupResult struct {
+	FirstName  string `json:"firstName"`
+	LastName   string `json:"lastName"`
+	Phone      string `json:"phone,omitempty"`
+	Department string `json:"department"`
+}
+
 type CreateWorkforceRequest struct {
 	FirstName     string          `json:"firstName" binding:"required"`
 	LastName      string          `json:"lastName" binding:"required"`
