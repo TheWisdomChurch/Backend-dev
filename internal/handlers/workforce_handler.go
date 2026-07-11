@@ -108,6 +108,26 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Member created", member)
 }
 
+// LookupByEmail is public: it lets the "already serving" registration flow
+// pre-fill a form for someone who already has a workforce record, matching
+// only on the email address the caller supplies. Response is intentionally
+// minimal (no ID, no notes) since knowing an email is not proof of ownership.
+func (h *WorkforceHandler) LookupByEmail(c *gin.Context) {
+	email := strings.TrimSpace(c.Query("email"))
+	if email == "" || !strings.Contains(email, "@") {
+		utils.ErrorResponse(c, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+
+	result, err := h.svc.LookupByEmail(email)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "no matching workforce record found")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Workforce member found", result)
+}
+
 func (h *WorkforceHandler) Apply(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
