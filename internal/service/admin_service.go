@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -16,6 +17,7 @@ import (
 type adminServiceImpl struct {
 	testimonialRepo repository.TestimonialRepository
 	userRepo        repository.UserRepository
+	auditLogRepo    repository.AuditLogRepository
 	approvalSvc     ApprovalService
 	notifySvc       AdminNotificationService
 	sender          EmailSender
@@ -25,6 +27,7 @@ type adminServiceImpl struct {
 func NewAdminService(
 	testimonialRepo repository.TestimonialRepository,
 	userRepo repository.UserRepository,
+	auditLogRepo repository.AuditLogRepository,
 	approvalSvc ApprovalService,
 	notifySvc AdminNotificationService,
 	sender EmailSender,
@@ -33,6 +36,7 @@ func NewAdminService(
 	return &adminServiceImpl{
 		testimonialRepo: testimonialRepo,
 		userRepo:        userRepo,
+		auditLogRepo:    auditLogRepo,
 		approvalSvc:     approvalSvc,
 		notifySvc:       notifySvc,
 		sender:          sender,
@@ -394,28 +398,51 @@ func (s *adminServiceImpl) DeleteUser(id string) error {
 }
 
 func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
-	if s.userRepo == nil {
-		return map[string]interface{}{"total_testimonials": 0, "pending_approvals": 0, "total_users": 0, "recent_activity": []map[string]interface{}{}}, nil
+	var totalUsers, totalTestimonials, pendingTestimonials int64
+
+	if s.userRepo != nil {
+		count, err := s.userRepo.GetTotalCount()
+		if err != nil {
+			return nil, err
+		}
+		totalUsers = count
 	}
 
-	users, err := s.userRepo.FindAll()
-	if err != nil {
-		return nil, err
+	if s.testimonialRepo != nil {
+		count, err := s.testimonialRepo.GetTotalCount()
+		if err != nil {
+			return nil, err
+		}
+		totalTestimonials = count
+
+		pending, err := s.testimonialRepo.GetPendingCount()
+		if err != nil {
+			return nil, err
+		}
+		pendingTestimonials = pending
 	}
 
-	pendingRequests := 0
+	pendingApprovals := 0
 	if s.approvalSvc != nil {
 		items, listErr := s.approvalSvc.ListRequests(nil, []models.ApprovalRequestStatus{models.ApprovalStatusPending}, nil, nil, 500)
 		if listErr == nil {
-			pendingRequests = len(items)
+			pendingApprovals = len(items)
+		}
+	}
+
+	recentActivity := []models.AuditLog{}
+	if s.auditLogRepo != nil {
+		if recent, err := s.auditLogRepo.Recent(context.Background(), 10); err == nil {
+			recentActivity = recent
 		}
 	}
 
 	return map[string]interface{}{
-		"total_testimonials": 0,
-		"pending_approvals":  pendingRequests,
-		"total_users":        len(users),
-		"recent_activity":    []map[string]interface{}{},
+		"total_users":          totalUsers,
+		"total_testimonials":   totalTestimonials,
+		"pending_testimonials": pendingTestimonials,
+		"pending_approvals":    pendingApprovals,
+		"recent_activity":      recentActivity,
 	}, nil
 }
 

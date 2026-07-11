@@ -187,6 +187,7 @@ func main() {
 	cellGroupRepo := repository.NewCellGroupRepository(db)
 	prayerRequestRepo := repository.NewPrayerRequestRepository(db)
 	ministryRepo := repository.NewMinistryRepository(db)
+	auditLogRepo := repository.NewAuditLogRepository(db)
 
 	// -------------------------------------------------------------------------
 	// Redis cache (optional)
@@ -284,6 +285,15 @@ func main() {
 		PastorName:           cfg.App.PastorName,
 		AdminPortalURL:       cfg.App.AdminPortalURL,
 		TemplateAssetBaseURL: templateAssetBaseURL,
+		AppTagline:           cfg.App.Tagline,
+		Social: email.SocialLinks{
+			YouTube:   cfg.App.SocialYouTubeURL,
+			Instagram: cfg.App.SocialInstagramURL,
+			X:         cfg.App.SocialXURL,
+			WhatsApp:  cfg.App.SocialWhatsAppURL,
+			Facebook:  cfg.App.SocialFacebookURL,
+			TikTok:    cfg.App.SocialTikTokURL,
+		},
 	}
 
 	// -------------------------------------------------------------------------
@@ -349,6 +359,7 @@ func main() {
 	adminService := service.NewAdminService(
 		testimonialRepo,
 		userRepo,
+		auditLogRepo,
 		approvalService,
 		adminNotificationService,
 		emailSender,
@@ -374,6 +385,7 @@ func main() {
 		memberService,
 		leadershipService,
 		testimonialService,
+		adminNotificationService,
 		emailSender,
 		branding,
 		assetUploader,
@@ -576,6 +588,7 @@ func main() {
 		prayerRequestHandler,
 		ministryHandler,
 		sseHandler,
+		auditLogRepo,
 	)
 
 	if err := router.SetTrustedProxies(cfg.Server.TrustedProxies); err != nil {

@@ -9,11 +9,11 @@ import (
 
 // AdminAnalyticsResult is the strongly-typed response for GetAdminAnalytics.
 type AdminAnalyticsResult struct {
-	TotalEvents      int64            `json:"totalEvents"`
-	UpcomingEvents   int64            `json:"upcomingEvents"`
-	TotalAttendees   int64            `json:"totalAttendees"`
-	EventsByCategory map[string]int64 `json:"eventsByCategory"`
-	MonthlyStats     []any            `json:"monthlyStats"`
+	TotalEvents      int64                         `json:"totalEvents"`
+	UpcomingEvents   int64                         `json:"upcomingEvents"`
+	TotalAttendees   int64                         `json:"totalAttendees"`
+	EventsByCategory map[string]int64              `json:"eventsByCategory"`
+	MonthlyStats     []repository.MonthlyEventStat `json:"monthlyStats"`
 }
 
 // AnalyticsService exposes aggregated analytics queries.
@@ -47,12 +47,16 @@ func (s *analyticsService) GetAdminAnalytics(ctx context.Context) (*AdminAnalyti
 	if err != nil {
 		return nil, err
 	}
+	monthly, err := s.repo.EventsByMonth(ctx, 12)
+	if err != nil {
+		return nil, err
+	}
 	return &AdminAnalyticsResult{
 		TotalEvents:      total,
 		UpcomingEvents:   upcoming,
 		TotalAttendees:   attendees,
 		EventsByCategory: byCategory,
-		MonthlyStats:     []any{},
+		MonthlyStats:     monthly,
 	}, nil
 }
 

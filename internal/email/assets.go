@@ -39,6 +39,9 @@ func ResolveTemplateAssetURL(b Branding, keyOrURL string) string {
 	return base + "/" + strings.TrimLeft(raw, "/")
 }
 
+// renderHeroImageBlock renders a full table row containing a hero image, or
+// "" when no URL is given — callers can concatenate it directly at the
+// table-row level alongside renderInfoGrid/renderActionRow/etc.
 func renderHeroImageBlock(url string, alt string) string {
 	trimmed := strings.TrimSpace(url)
 	if trimmed == "" {
@@ -48,5 +51,7 @@ func renderHeroImageBlock(url string, alt string) string {
 	if altText == "" {
 		altText = "Email illustration"
 	}
-	return "<div style=\"margin:8px 0 18px;\"><img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" style=\"width:100%;max-width:560px;height:auto;border-radius:12px;\"></div>"
+	return "<tr><td style=\"padding:0 40px;\">" +
+		"<img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" style=\"display:block;width:100%;max-width:520px;height:auto;border:1px solid " + colorLine + ";\">" +
+		"</td></tr>"
 }

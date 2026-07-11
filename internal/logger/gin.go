@@ -2,7 +2,6 @@ package logger
 
 import (
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -55,42 +54,4 @@ func GinMiddleware() gin.HandlerFunc {
 // from a Gin context. Falls back to the global logger if none was stored.
 func FromGin(c *gin.Context) *slog.Logger {
 	return FromContext(c.Request.Context())
-}
-
-// AuditMiddleware replaces middleware.AuditLogger — logs mutating requests
-// with structured fields including the authenticated user's ID and role.
-func AuditMiddleware(scope string) gin.HandlerFunc {
-	scope = strings.TrimSpace(scope)
-	if scope == "" {
-		scope = "api"
-	}
-	return func(c *gin.Context) {
-		method := strings.ToUpper(strings.TrimSpace(c.Request.Method))
-		switch method {
-		case "POST", "PUT", "PATCH", "DELETE":
-		default:
-			c.Next()
-			return
-		}
-
-		start := time.Now()
-		c.Next()
-
-		requestID, _ := c.Get("request_id")
-		userID, _ := c.Get("user_id")
-		role, _ := c.Get("role")
-
-		FromContext(c.Request.Context()).Info("audit",
-			"scope", scope,
-			"request_id", requestID,
-			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
-			"status", c.Writer.Status(),
-			"latency_ms", time.Since(start).Milliseconds(),
-			"user_id", userID,
-			"role", role,
-			"ip", c.ClientIP(),
-			"user_agent", c.Request.UserAgent(),
-		)
-	}
 }
