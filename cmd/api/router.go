@@ -220,6 +220,15 @@ func setupRouter(
 	api.GET("/forms/:slug/calendar.ics", formHandler.DownloadCalendarICS)
 
 	// Workforce public apply
+	workforceLookupRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: cfg.RateLimit.Auth.RequestsPerMinute,
+		Burst:             cfg.RateLimit.Auth.Burst,
+		Window:            cfg.RateLimit.Auth.Window,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:workforce-lookup",
+		Message:           "Too many lookup requests. Please wait a moment and try again.",
+	})
+	api.GET("/workforce/member/lookup", workforceLookupRateLimiter, workforceHandler.LookupByEmail)
 	api.POST("/workforce/apply", workforceHandler.Apply)
 	api.POST("/workforce/serving/register", workforceHandler.ApplyServing)
 
@@ -295,6 +304,7 @@ func setupRouter(
 	admin.GET("/dashboard", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetDashboardStats)
 	admin.GET("/security/overview", middleware.RequirePermission(middleware.PermissionSecurityRead), adminHandler.GetSecurityOverview)
 	admin.GET("/testimonials/pending", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetPendingTestimonials)
+	admin.PUT("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.UpdateTestimonial)
 	admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 	admin.GET("/audit", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 	admin.GET("/activity", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
@@ -379,6 +389,7 @@ func setupRouter(
 	admin.GET("/forms/:id/submissions/export.pdf", middleware.RequirePermission(middleware.PermissionFormsExport), formHandler.ExportAdminSubmissionsPDF)
 	admin.GET("/forms/:id/submissions/stats", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.GetFormSubmissionStats)
 	admin.GET("/forms/stats", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.GetFormStats)
+	admin.DELETE("/form-submissions/:id", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.DeleteFormSubmission)
 
 	// Notifications (admin)
 	admin.GET("/notifications/subscribers", middleware.RequirePermission(middleware.PermissionNotificationsManage), notificationHandler.ListSubscribers)
@@ -419,6 +430,7 @@ func setupRouter(
 
 	// Events
 	admin.GET("/events", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.List)
+	admin.GET("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Get)
 	admin.POST("/events", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Create)
 	admin.PUT("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Update)
 	admin.DELETE("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Delete)
@@ -483,6 +495,7 @@ func setupRouter(
 	superAdmin := admin.Group("")
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/users/:id/approve", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ApproveUser)
+	superAdmin.POST("/users/:id/reject", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.RejectUser)
 	superAdmin.POST("/workforce/:id/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Approve)
 	superAdmin.POST("/workforce/:id/delete/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.ApproveDelete)
 	superAdmin.POST("/leadership/:id/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Approve)
