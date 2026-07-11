@@ -20,6 +20,13 @@ dist/
 *.exe
 *.test
 
+# Ad-hoc throwaway verification binaries built at repo root during development
+# (e.g. `go build -o formtest ./cmd/formtest`) — never meant to be committed.
+/formtest
+/migratetest
+/crudtest
+/schematest
+
 # OS
 .DS_Store
 Thumbs.db
