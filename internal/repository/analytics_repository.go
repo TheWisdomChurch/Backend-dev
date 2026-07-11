@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
@@ -87,11 +88,14 @@ func (r *analyticsRepository) EventsByMonth(ctx context.Context, months int) ([]
 		Month string
 		Count int64
 	}
+	// Window starts at the first day of the month N-1 months ago, so the
+	// oldest bucket captures its whole calendar month rather than being
+	// cut short by a day-precise "N months back from today" boundary.
 	var rows []row
 	err := r.db.WithContext(ctx).Model(&models.Event{}).
 		Select("to_char(date::date, 'YYYY-MM') as month, COUNT(*) as count").
 		Where("date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'").
-		Where("date::date >= (CURRENT_DATE - (? * INTERVAL '1 month'))", months-1).
+		Where("date::date >= (date_trunc('month', CURRENT_DATE) - (? * INTERVAL '1 month'))", months-1).
 		Group("month").
 		Order("month ASC").
 		Scan(&rows).Error
