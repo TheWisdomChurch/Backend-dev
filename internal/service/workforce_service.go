@@ -16,6 +16,7 @@ import (
 
 type WorkforceService interface {
 	List(page, limit int, department, status string) ([]models.WorkforceMember, int64, error)
+	LookupByEmail(email string) (*models.WorkforceLookupResult, error)
 	Create(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	CreateApplication(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
@@ -65,6 +66,27 @@ func (s *workforceService) List(page, limit int, department, status string) ([]m
 	}
 	offset := (page - 1) * limit
 	return s.repo.List(offset, limit, department, status)
+}
+
+func (s *workforceService) LookupByEmail(email string) (*models.WorkforceLookupResult, error) {
+	clean := strings.ToLower(strings.TrimSpace(email))
+	if clean == "" {
+		return nil, errors.New("email is required")
+	}
+	member, err := s.repo.GetByEmail(clean)
+	if err != nil {
+		return nil, err
+	}
+	phone := ""
+	if member.Phone != nil {
+		phone = *member.Phone
+	}
+	return &models.WorkforceLookupResult{
+		FirstName:  member.FirstName,
+		LastName:   member.LastName,
+		Phone:      phone,
+		Department: member.Department,
+	}, nil
 }
 
 func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
