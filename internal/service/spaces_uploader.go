@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -13,11 +12,11 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -552,6 +551,18 @@ func firstEnv(keys ...string) string {
    Supabase direct SigV4 PUT
 ========================= */
 
+// uploadSupabaseSigV4 signs a raw HTTP PUT with the AWS SDK's own v4.Signer
+// rather than the S3 client's PutObject.
+//
+// This is deliberately NOT s.client.PutObject: newer aws-sdk-go-v2 S3 clients
+// default to streaming uploads with trailing checksums ("aws-chunked" transfer
+// encoding, x-amz-checksum-*), which Supabase Storage's S3-compatible gateway
+// does not implement — those requests fail before Supabase ever validates the
+// signature. A plain, fully-buffered http.Request sidesteps that entirely.
+// What this function used to also do — hand-roll the canonical request and
+// HMAC chain by hand — bought nothing: v4.Signer.SignHTTP is the exact same
+// signer the SDK itself uses internally, so it produces an identical
+// Authorization header without ~150 lines of unverified hand-written crypto.
 func (s *S3Uploader) uploadSupabaseSigV4(ctx context.Context, key string, contentType string, r io.Reader) (string, error) {
 	if s == nil {
 		return "", errors.New("uploader not configured")
@@ -583,10 +594,6 @@ func (s *S3Uploader) uploadSupabaseSigV4(ctx context.Context, key string, conten
 	endpointURL.RawQuery = ""
 	endpointURL.RawPath = ""
 
-	now := time.Now().UTC()
-	amzDate := now.Format("20060102T150405Z")
-	dateStamp := now.Format("20060102")
-
 	region := strings.TrimSpace(s.region)
 	if region == "" {
 		region = "us-east-1"
@@ -595,74 +602,26 @@ func (s *S3Uploader) uploadSupabaseSigV4(ctx context.Context, key string, conten
 	payloadHash := sha256Hex(payload)
 	ct := strings.TrimSpace(contentType)
 
-	headerMap := map[string]string{
-		"host":                 endpointURL.Host,
-		"x-amz-content-sha256": payloadHash,
-		"x-amz-date":           amzDate,
-	}
-
-	if ct != "" {
-		headerMap["content-type"] = ct
-	}
-
-	// Supabase rejects ACL headers. This remains here only for non-Supabase-compatible fallback.
-	if s.publicRead && s.supportsACL() {
-		headerMap["x-amz-acl"] = "public-read"
-	}
-
-	signedHeaderNames := sortedHeaderNames(headerMap)
-	canonicalHeaders := canonicalHeaderString(headerMap, signedHeaderNames)
-	signedHeaders := strings.Join(signedHeaderNames, ";")
-	canonicalURI := canonicalS3Path(endpointURL.Path)
-
-	canonicalRequest := strings.Join([]string{
-		http.MethodPut,
-		canonicalURI,
-		"",
-		canonicalHeaders,
-		signedHeaders,
-		payloadHash,
-	}, "\n")
-
-	algorithm := "AWS4-HMAC-SHA256"
-	credentialScope := strings.Join([]string{dateStamp, region, "s3", "aws4_request"}, "/")
-
-	stringToSign := strings.Join([]string{
-		algorithm,
-		amzDate,
-		credentialScope,
-		sha256HexString(canonicalRequest),
-	}, "\n")
-
-	signingKey := sigV4SigningKey(s.secretKey, dateStamp, region, "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
-
-	authorization := fmt.Sprintf(
-		"%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
-		algorithm,
-		s.accessKey,
-		credentialScope,
-		signedHeaders,
-		signature,
-	)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpointURL.String(), bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("failed to build signed upload request: %w", err)
+		return "", fmt.Errorf("failed to build upload request: %w", err)
 	}
-
 	req.Host = endpointURL.Host
 	req.ContentLength = int64(len(payload))
-	req.Header.Set("Authorization", authorization)
-	req.Header.Set("X-Amz-Date", amzDate)
-	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
-
 	if ct != "" {
 		req.Header.Set("Content-Type", ct)
 	}
+	// Supabase Storage's S3-compatible gateway rejects ACL headers outright.
+	if s.publicRead && s.supportsACL() {
+		req.Header.Set("X-Amz-Acl", "public-read")
+	}
 
-	if acl := headerMap["x-amz-acl"]; acl != "" {
-		req.Header.Set("X-Amz-Acl", acl)
+	credentials := aws.Credentials{
+		AccessKeyID:     s.accessKey,
+		SecretAccessKey: s.secretKey,
+	}
+	if err := v4.NewSigner().SignHTTP(ctx, credentials, req, payloadHash, "s3", region, time.Now().UTC()); err != nil {
+		return "", fmt.Errorf("failed to sign upload request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
@@ -710,82 +669,9 @@ func joinS3URLPath(basePath string, bucket string, key string) string {
 	return "/" + path.Join(base, bucket, key)
 }
 
-func canonicalS3Path(rawPath string) string {
-	rawPath = strings.TrimSpace(rawPath)
-	if rawPath == "" {
-		return "/"
-	}
-
-	leadingSlash := strings.HasPrefix(rawPath, "/")
-	segments := strings.Split(rawPath, "/")
-
-	encoded := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		if segment == "" {
-			continue
-		}
-		encoded = append(encoded, awsURIEncode(segment))
-	}
-
-	out := strings.Join(encoded, "/")
-	if leadingSlash {
-		return "/" + out
-	}
-
-	return out
-}
-
-func awsURIEncode(value string) string {
-	escaped := url.PathEscape(value)
-	return strings.ReplaceAll(escaped, "+", "%20")
-}
-
-func sortedHeaderNames(headers map[string]string) []string {
-	names := make([]string, 0, len(headers))
-	for name := range headers {
-		names = append(names, strings.ToLower(strings.TrimSpace(name)))
-	}
-
-	sort.Strings(names)
-
-	return names
-}
-
-func canonicalHeaderString(headers map[string]string, names []string) string {
-	var b strings.Builder
-
-	for _, name := range names {
-		value := headers[name]
-		value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-		b.WriteString(name)
-		b.WriteString(":")
-		b.WriteString(value)
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
-
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-func sha256HexString(value string) string {
-	return sha256Hex([]byte(value))
-}
-
-func hmacSHA256(key []byte, data []byte) []byte {
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write(data)
-	return mac.Sum(nil)
-}
-
-func sigV4SigningKey(secret string, dateStamp string, region string, service string) []byte {
-	kDate := hmacSHA256([]byte("AWS4"+secret), []byte(dateStamp))
-	kRegion := hmacSHA256(kDate, []byte(region))
-	kService := hmacSHA256(kRegion, []byte(service))
-	return hmacSHA256(kService, []byte("aws4_request"))
 }
 
 func safeSuffix(value string, count int) string {
