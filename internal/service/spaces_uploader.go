@@ -611,6 +611,12 @@ func (s *S3Uploader) uploadSupabaseSigV4(ctx context.Context, key string, conten
 	if ct != "" {
 		req.Header.Set("Content-Type", ct)
 	}
+	// SignHTTP only uses payloadHash to compute the signature — it does not
+	// add this as a request header. S3(-compatible) servers re-derive the
+	// canonical request from the headers they actually receive, so this must
+	// be set on the wire request too, or the server-side signature check
+	// fails even though the client-side signing "succeeded".
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	// Supabase Storage's S3-compatible gateway rejects ACL headers outright.
 	if s.publicRead && s.supportsACL() {
 		req.Header.Set("X-Amz-Acl", "public-read")
