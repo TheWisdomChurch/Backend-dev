@@ -11,4 +11,6 @@ type AssetUploader interface {
 	BuildEventAssetKey(eventID, kind, ext string) (string, error)
 	BuildTestimonialImageKey(ext string) (string, error)
 	BuildGenericAssetKey(folder, ext string) (string, error)
+	BuildImageVariantKey(folder, assetID, variant, ext string) (string, error)
+	NewAssetID() string
 }

@@ -21,10 +21,11 @@ import (
 type UploadHandler struct {
 	storage service.AssetUploader
 	assets  service.AssetService
+	images  service.ImageProcessor
 }
 
 func NewUploadHandler(storage service.AssetUploader, assets ...service.AssetService) *UploadHandler {
-	h := &UploadHandler{storage: storage}
+	h := &UploadHandler{storage: storage, images: service.NewImageProcessor()}
 	if len(assets) > 0 {
 		h.assets = assets[0]
 	}
