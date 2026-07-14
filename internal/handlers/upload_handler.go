@@ -8,12 +8,15 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
 
+	"wisdomHouse-backend/internal/jobs"
 	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -21,17 +24,26 @@ import (
 )
 
 type UploadHandler struct {
-	storage service.AssetUploader
-	assets  service.AssetService
-	images  service.ImageProcessor
+	storage    service.AssetUploader
+	assets     service.AssetService
+	images     service.ImageProcessor
+	videos     service.VideoProcessor
+	videoQueue *asynq.Client
 }
 
 func NewUploadHandler(storage service.AssetUploader, assets ...service.AssetService) *UploadHandler {
-	h := &UploadHandler{storage: storage, images: service.NewImageProcessor()}
+	h := &UploadHandler{storage: storage, images: service.NewImageProcessor(), videos: service.NewVideoProcessor()}
 	if len(assets) > 0 {
 		h.assets = assets[0]
 	}
 	return h
+}
+
+// SetVideoQueue wires the async transcode queue in after construction —
+// separate from NewUploadHandler so callers that don't need video
+// processing (tests, presign-only setups) aren't forced to configure asynq.
+func (h *UploadHandler) SetVideoQueue(client *asynq.Client) {
+	h.videoQueue = client
 }
 
 func (h *UploadHandler) UploadImage(c *gin.Context) {
@@ -111,6 +123,11 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 
 	if kind == "image" && h.images != nil {
 		h.uploadImage(ctx, c, src, fh, contentType, module, ownerType, ownerID, folder)
+		return
+	}
+
+	if kind == "video" && h.videos != nil && h.videos.Available() {
+		h.uploadVideo(ctx, c, src, fh, contentType, ext, module, ownerType, ownerID, folder)
 		return
 	}
 
@@ -307,6 +324,164 @@ func (h *UploadHandler) uploadImage(
 		resp["bucket"] = asset.Bucket
 		resp["provider"] = asset.Provider
 		resp["status"] = string(asset.Status)
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Upload successful", resp)
+}
+
+// uploadVideo buffers the upload to a temp file (never the full file in
+// memory — these can be up to 250MB), validates it's a real, decodable video
+// via ffprobe, stores the original immediately so nothing is lost, extracts
+// a poster frame for instant preview, then hands the file off to the async
+// transcode queue rather than blocking the request on a multi-minute
+// ffmpeg run. The client gets back a "processing" status and can poll
+// GET /admin/uploads/:id (already wired) for the transcoded URL.
+func (h *UploadHandler) uploadVideo(
+	ctx context.Context,
+	c *gin.Context,
+	src multipart.File,
+	fh *multipart.FileHeader,
+	claimedContentType, ext string,
+	module, ownerType, ownerID, folder string,
+) {
+	tmp, err := os.CreateTemp("", "wisdom-video-upload-*")
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to buffer upload")
+		return
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	hasher := sha256.New()
+	written, err := io.Copy(tmp, io.TeeReader(src, hasher))
+	closeErr := tmp.Close()
+	if err != nil || closeErr != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to buffer upload")
+		return
+	}
+
+	meta, err := h.videos.Probe(ctx, tmpPath)
+	if err != nil {
+		applog.L().Warn("video probe failed", "module", module, "folder", folder, "content_type", claimedContentType, "size", written, "error", err)
+		utils.ErrorResponse(c, http.StatusBadRequest, "file is not a valid, processable video")
+		return
+	}
+
+	assetID := h.storage.NewAssetID()
+	checksum := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	originalName := filepath.Base(fh.Filename)
+
+	originalKey, err := h.storage.BuildImageVariantKey(folder, assetID, "original", ext)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
+		return
+	}
+	origFile, err := os.Open(tmpPath)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to read buffered upload")
+		return
+	}
+	originalURL, err := h.storage.Upload(ctx, originalKey, claimedContentType, origFile)
+	origFile.Close()
+	if err != nil {
+		applog.L().Warn("video upload failed", "module", module, "folder", folder, "asset_id", assetID, "error", err)
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
+		return
+	}
+
+	var posterURL string
+	if posterBytes, err := h.videos.ExtractPosterFrame(ctx, tmpPath, meta.DurationSeconds); err != nil {
+		// Poster is a nice-to-have, not essential — the original video is
+		// already safely stored, so a poster failure doesn't fail the
+		// whole upload. The client falls back to a placeholder thumbnail.
+		applog.L().Warn("poster frame extraction failed", "asset_id", assetID, "error", err)
+	} else if posterKey, err := h.storage.BuildImageVariantKey(folder, assetID, "poster", "jpg"); err == nil {
+		if url, err := h.storage.Upload(ctx, posterKey, "image/jpeg", bytes.NewReader(posterBytes)); err == nil {
+			posterURL = url
+		} else {
+			applog.L().Warn("poster upload failed", "asset_id", assetID, "error", err)
+		}
+	}
+
+	status := models.AssetStatusReady
+	queued := false
+	if h.videoQueue != nil {
+		task, taskErr := jobs.NewVideoProcessTask(jobs.VideoProcessPayload{
+			AssetID:   assetID,
+			Folder:    folder,
+			SourceURL: originalURL,
+		})
+		if taskErr == nil {
+			if _, enqErr := h.videoQueue.Enqueue(task); enqErr == nil {
+				status = models.AssetStatusPending
+				queued = true
+			} else {
+				applog.L().Warn("failed to enqueue video transcode", "asset_id", assetID, "error", enqErr)
+			}
+		} else {
+			applog.L().Warn("failed to build video transcode task", "asset_id", assetID, "error", taskErr)
+		}
+	}
+
+	var asset *models.Asset
+	if h.assets != nil {
+		metadata := map[string]any{
+			"width":    meta.Width,
+			"height":   meta.Height,
+			"duration": meta.DurationSeconds,
+		}
+		if posterURL != "" {
+			metadata["poster"] = posterURL
+		}
+		recordReq := &models.RecordUploadedAssetRequest{
+			OwnerType:    nilIfEmptyString(ownerType),
+			OwnerID:      nilIfEmptyString(ownerID),
+			Kind:         nilIfEmptyString("video"),
+			Folder:       nilIfEmptyString(folder),
+			ObjectKey:    originalURL,
+			PublicURL:    originalURL,
+			ContentType:  claimedContentType,
+			SizeBytes:    written,
+			Checksum:     &checksum,
+			OriginalName: &originalName,
+			Metadata:     metadata,
+			Status:       &status,
+		}
+		var recErr error
+		asset, recErr = h.assets.RecordUploadedAsset(recordReq, nil)
+		if recErr != nil {
+			applog.L().Warn("video asset metadata record failed", "url", originalURL, "error", recErr)
+			utils.ErrorResponse(c, http.StatusInternalServerError, "file uploaded but metadata save failed")
+			return
+		}
+	}
+
+	resp := gin.H{
+		"folder":       folder,
+		"url":          originalURL,
+		"publicUrl":    originalURL,
+		"posterUrl":    posterURL,
+		"contentType":  claimedContentType,
+		"mimeType":     claimedContentType,
+		"sizeBytes":    written,
+		"kind":         "video",
+		"module":       module,
+		"ownerType":    ownerType,
+		"ownerId":      ownerID,
+		"checksum":     checksum,
+		"originalName": originalName,
+		"width":        meta.Width,
+		"height":       meta.Height,
+		"duration":     meta.DurationSeconds,
+		"status":       string(status),
+		"processing":   queued,
+	}
+
+	if asset != nil {
+		resp["id"] = asset.ID
+		resp["assetId"] = asset.ID
+		resp["bucket"] = asset.Bucket
+		resp["provider"] = asset.Provider
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Upload successful", resp)
@@ -540,7 +715,12 @@ func sanitizeAssetSegment(v string) string {
 
 func uploadTimeout(kind string) time.Duration {
 	switch kind {
-	case "video", "audio":
+	case "video":
+		// Covers the synchronous part only (buffer to temp, ffprobe
+		// validate, extract poster, upload original + poster) — the actual
+		// transcode runs in the background job with its own timeout.
+		return 5 * time.Minute
+	case "audio":
 		return 90 * time.Second
 	default:
 		return 30 * time.Second

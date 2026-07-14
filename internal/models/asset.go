@@ -79,6 +79,10 @@ type RecordUploadedAssetRequest struct {
 	// alongside the folder/originalName/ownerID bookkeeping the service
 	// already tracks.
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// Status overrides the default AssetStatusReady — used by the video
+	// upload path, where the original is stored but a background transcode
+	// is still pending.
+	Status *AssetStatus `json:"status,omitempty"`
 }
 
 type UploadedAssetResponse struct {
