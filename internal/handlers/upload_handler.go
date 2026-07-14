@@ -418,24 +418,14 @@ func (h *UploadHandler) uploadVideo(
 		}
 	}
 
+	// Willing-to-queue is decided before the row is created (so Status is
+	// correct from the first write), but the task itself is only enqueued
+	// AFTER the row commits — enqueueing first would let the worker pick up
+	// the job and look up an asset ID that doesn't exist in the DB yet.
+	willQueue := h.videoQueue != nil
 	status := models.AssetStatusReady
-	queued := false
-	if h.videoQueue != nil {
-		task, taskErr := jobs.NewVideoProcessTask(jobs.VideoProcessPayload{
-			AssetID:   assetID,
-			Folder:    folder,
-			SourceURL: originalURL,
-		})
-		if taskErr == nil {
-			if _, enqErr := h.videoQueue.Enqueue(task); enqErr == nil {
-				status = models.AssetStatusPending
-				queued = true
-			} else {
-				applog.L().Warn("failed to enqueue video transcode", "asset_id", assetID, "error", enqErr)
-			}
-		} else {
-			applog.L().Warn("failed to build video transcode task", "asset_id", assetID, "error", taskErr)
-		}
+	if willQueue {
+		status = models.AssetStatusPending
 	}
 
 	var asset *models.Asset
@@ -469,6 +459,34 @@ func (h *UploadHandler) uploadVideo(
 			applog.L().Warn("video asset metadata record failed", "url", originalURL, "error", recErr)
 			utils.ErrorResponse(c, http.StatusInternalServerError, "file uploaded but metadata save failed")
 			return
+		}
+	}
+
+	queued := false
+	if willQueue {
+		task, taskErr := jobs.NewVideoProcessTask(jobs.VideoProcessPayload{
+			AssetID:   assetID,
+			Folder:    folder,
+			SourceURL: originalURL,
+		})
+		if taskErr == nil {
+			if _, enqErr := h.videoQueue.Enqueue(task); enqErr == nil {
+				queued = true
+			} else {
+				applog.L().Warn("failed to enqueue video transcode", "asset_id", assetID, "error", enqErr)
+			}
+		} else {
+			applog.L().Warn("failed to build video transcode task", "asset_id", assetID, "error", taskErr)
+		}
+		if !queued && asset != nil {
+			// Enqueue failed after the row was already written as Pending —
+			// correct the record so it doesn't sit in "pending" forever
+			// with no job ever coming to finish it.
+			if err := h.assets.UpdateProcessingResult(assetID, models.AssetStatusReady, map[string]any{}); err != nil {
+				applog.L().Warn("failed to revert asset status after enqueue failure", "asset_id", assetID, "error", err)
+			} else {
+				status = models.AssetStatusReady
+			}
 		}
 	}
 
