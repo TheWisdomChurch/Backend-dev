@@ -64,9 +64,9 @@ type ProcessedImage struct {
 // smaller than a rung on the size ladder, that rung is simply omitted and
 // callers fall back to the next size up (or the original).
 type ProcessedImageSet struct {
-	Original      ProcessedImage
-	Variants      map[ImageVariantName]ProcessedImage
-	OriginalWidth int
+	Original       ProcessedImage
+	Variants       map[ImageVariantName]ProcessedImage
+	OriginalWidth  int
 	OriginalHeight int
 }
 
@@ -106,8 +106,7 @@ func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 
-	outFormat, contentType, ext := outputFormatFor(format, img)
-	_ = ext
+	outFormat, contentType := outputFormatFor(format, img)
 
 	encode := func(im image.Image) (ProcessedImage, error) {
 		var buf bytes.Buffer
@@ -172,11 +171,11 @@ func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
 // re-encode losslessly in those formats — becomes JPEG, the one format with
 // zero compatibility risk across every browser, email client, and social
 // share unfurl.
-func outputFormatFor(sourceFormat string, img image.Image) (imaging.Format, string, string) {
+func outputFormatFor(sourceFormat string, img image.Image) (imaging.Format, string) {
 	if strings.EqualFold(sourceFormat, "png") && hasAlpha(img) {
-		return imaging.PNG, "image/png", "png"
+		return imaging.PNG, "image/png"
 	}
-	return imaging.JPEG, "image/jpeg", "jpg"
+	return imaging.JPEG, "image/jpeg"
 }
 
 func hasAlpha(img image.Image) bool {
