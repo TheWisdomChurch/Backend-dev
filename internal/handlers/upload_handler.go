@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -104,6 +106,14 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 	ownerID := strings.TrimSpace(c.DefaultPostForm("ownerId", c.DefaultPostForm("relatedId", "")))
 	folder := sanitizeAssetFolder(c.DefaultPostForm("folder", defaultAssetFolder(module, kind)))
 
+	ctx, cancel := context.WithTimeout(c.Request.Context(), uploadTimeout(kind))
+	defer cancel()
+
+	if kind == "image" && h.images != nil {
+		h.uploadImage(ctx, c, src, fh, contentType, module, ownerType, ownerID, folder)
+		return
+	}
+
 	objectKey, err := h.storage.BuildGenericAssetKey(folder, ext)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to build storage key")
@@ -112,9 +122,6 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 
 	hasher := sha256.New()
 	reader := io.TeeReader(src, hasher)
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), uploadTimeout(kind))
-	defer cancel()
 
 	publicURL, err := h.storage.Upload(ctx, objectKey, contentType, reader)
 	if err != nil {
@@ -175,6 +182,141 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Upload successful", resp)
+}
+
+// uploadImage runs the shared multi-size pipeline: decode + validate the
+// real image bytes (not just the client's claimed Content-Type), strip EXIF,
+// auto-correct orientation, and produce the original plus every variant in
+// the size ladder that's smaller than the source. Every produced size is
+// uploaded under one shared assetID so the set stays discoverable together.
+func (h *UploadHandler) uploadImage(
+	ctx context.Context,
+	c *gin.Context,
+	src multipart.File,
+	fh *multipart.FileHeader,
+	claimedContentType string,
+	module, ownerType, ownerID, folder string,
+) {
+	data, err := io.ReadAll(src)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	sum := sha256.Sum256(data)
+	checksum := "sha256:" + hex.EncodeToString(sum[:])
+	originalName := filepath.Base(fh.Filename)
+
+	set, err := h.images.Process(data)
+	if err != nil {
+		// A decode failure here means the bytes are not actually a valid
+		// image, regardless of what Content-Type the client claimed —
+		// real validation the old byte-passthrough path never did.
+		applog.L().Warn("image processing failed", "module", module, "folder", folder, "content_type", claimedContentType, "size", fh.Size, "error", err)
+		utils.ErrorResponse(c, http.StatusBadRequest, "file is not a valid, processable image")
+		return
+	}
+
+	assetID := h.storage.NewAssetID()
+	ext := extFromContentType(set.Original.ContentType)
+
+	upload := func(variant string, img service.ProcessedImage) (string, error) {
+		key, err := h.storage.BuildImageVariantKey(folder, assetID, variant, ext)
+		if err != nil {
+			return "", err
+		}
+		return h.storage.Upload(ctx, key, img.ContentType, bytes.NewReader(img.Bytes))
+	}
+
+	originalURL, err := upload("original", set.Original)
+	if err != nil {
+		applog.L().Warn("image upload failed", "module", module, "folder", folder, "asset_id", assetID, "variant", "original", "error", err)
+		utils.ErrorResponse(c, http.StatusBadGateway, "upload to storage failed")
+		return
+	}
+
+	type variantOut struct {
+		URL    string `json:"url"`
+		Width  int    `json:"width"`
+		Height int    `json:"height"`
+	}
+	variantURLs := make(map[string]variantOut, len(set.Variants))
+	for name, img := range set.Variants {
+		url, err := upload(string(name), img)
+		if err != nil {
+			// One variant failing to upload shouldn't fail the whole
+			// request — the original is already safely stored, and every
+			// consumer of this response falls back to a larger size (or
+			// the original) when a specific variant is absent.
+			applog.L().Warn("image variant upload failed", "module", module, "folder", folder, "asset_id", assetID, "variant", name, "error", err)
+			continue
+		}
+		variantURLs[string(name)] = variantOut{URL: url, Width: img.Width, Height: img.Height}
+	}
+
+	var asset *models.Asset
+	if h.assets != nil {
+		sizeBytes := int64(len(set.Original.Bytes))
+		recordReq := &models.RecordUploadedAssetRequest{
+			OwnerType:    nilIfEmptyString(ownerType),
+			OwnerID:      nilIfEmptyString(ownerID),
+			Kind:         nilIfEmptyString("image"),
+			Folder:       nilIfEmptyString(folder),
+			ObjectKey:    originalURL,
+			PublicURL:    originalURL,
+			ContentType:  set.Original.ContentType,
+			SizeBytes:    sizeBytes,
+			Checksum:     &checksum,
+			OriginalName: &originalName,
+			Metadata: map[string]any{
+				"width":    set.OriginalWidth,
+				"height":   set.OriginalHeight,
+				"variants": variantURLs,
+			},
+		}
+		var err error
+		asset, err = h.assets.RecordUploadedAsset(recordReq, nil)
+		if err != nil {
+			applog.L().Warn("asset metadata record failed", "url", originalURL, "error", err)
+			utils.ErrorResponse(c, http.StatusInternalServerError, "file uploaded but metadata save failed")
+			return
+		}
+	}
+
+	resp := gin.H{
+		"folder":       folder,
+		"url":          originalURL,
+		"publicUrl":    originalURL,
+		"contentType":  set.Original.ContentType,
+		"mimeType":     set.Original.ContentType,
+		"sizeBytes":    len(set.Original.Bytes),
+		"kind":         "image",
+		"module":       module,
+		"ownerType":    ownerType,
+		"ownerId":      ownerID,
+		"checksum":     checksum,
+		"originalName": originalName,
+		"width":        set.OriginalWidth,
+		"height":       set.OriginalHeight,
+		"variants":     variantURLs,
+	}
+
+	if asset != nil {
+		resp["id"] = asset.ID
+		resp["assetId"] = asset.ID
+		resp["bucket"] = asset.Bucket
+		resp["provider"] = asset.Provider
+		resp["status"] = string(asset.Status)
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Upload successful", resp)
+}
+
+func extFromContentType(ct string) string {
+	if ct == "image/png" {
+		return "png"
+	}
+	return "jpg"
 }
 
 func normalizeUploadKind(v string) string {
