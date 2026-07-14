@@ -449,6 +449,7 @@ func (h *UploadHandler) uploadVideo(
 			metadata["poster"] = posterURL
 		}
 		recordReq := &models.RecordUploadedAssetRequest{
+			ID:           &assetID,
 			OwnerType:    nilIfEmptyString(ownerType),
 			OwnerID:      nilIfEmptyString(ownerID),
 			Kind:         nilIfEmptyString("video"),
