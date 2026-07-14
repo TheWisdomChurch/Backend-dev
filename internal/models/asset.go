@@ -64,6 +64,13 @@ type PresignAssetResponse struct {
 }
 
 type RecordUploadedAssetRequest struct {
+	// ID overrides the default random primary key — used by the video
+	// upload path, where the storage keys (original/poster/video variants)
+	// and the async transcode job's payload are already built around an ID
+	// generated before the DB row exists. Without this, the row would get
+	// its own separate random ID and the async worker's lookup would never
+	// find it.
+	ID           *string `json:"id,omitempty"`
 	OwnerType    *string `json:"ownerType,omitempty"`
 	OwnerID      *string `json:"ownerId,omitempty"`
 	Kind         *string `json:"kind,omitempty"`
