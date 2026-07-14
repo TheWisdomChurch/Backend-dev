@@ -187,6 +187,9 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 	if req.Status != nil {
 		asset.Status = *req.Status
 	}
+	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
+		asset.ID = strings.TrimSpace(*req.ID)
+	}
 
 	applyAssetMetadata(asset, metadata)
 
