@@ -184,6 +184,9 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 		Status:      models.AssetStatusReady,
 		CreatedByID: createdBy,
 	}
+	if req.Status != nil {
+		asset.Status = *req.Status
+	}
 
 	applyAssetMetadata(asset, metadata)
 
