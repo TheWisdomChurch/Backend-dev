@@ -26,6 +26,12 @@ dist/
 /migratetest
 /crudtest
 /schematest
+/videopipelinetest
+/uploadpipelinetest
+/uploadtest
+/lookuptest
+/prayertest
+/doctest
 
 # OS
 .DS_Store
