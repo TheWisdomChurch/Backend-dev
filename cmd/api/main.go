@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
 
 	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/cache"
@@ -22,6 +24,7 @@ import (
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/handlers"
+	"wisdomHouse-backend/internal/jobs"
 	appLogger "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/realtime"
@@ -31,6 +34,20 @@ import (
 	"wisdomHouse-backend/internal/telemetry"
 	"wisdomHouse-backend/internal/validation"
 )
+
+// asynqLoggerAdapter routes the video queue's internal log lines through the
+// app's existing structured slog logger instead of asynq's own stdlib-log
+// default, so worker logs show up in the same place/format as everything
+// else in production.
+type asynqLoggerAdapter struct {
+	l *slog.Logger
+}
+
+func (a asynqLoggerAdapter) Debug(args ...interface{}) { a.l.Debug(fmt.Sprint(args...)) }
+func (a asynqLoggerAdapter) Info(args ...interface{})  { a.l.Info(fmt.Sprint(args...)) }
+func (a asynqLoggerAdapter) Warn(args ...interface{})  { a.l.Warn(fmt.Sprint(args...)) }
+func (a asynqLoggerAdapter) Error(args ...interface{}) { a.l.Error(fmt.Sprint(args...)) }
+func (a asynqLoggerAdapter) Fatal(args ...interface{}) { a.l.Error(fmt.Sprint(args...)); os.Exit(1) }
 
 func main() {
 	// Bootstrap-only logging before the structured logger exists (config
@@ -450,6 +467,52 @@ func main() {
 	adminHandler := handlers.NewAdminHandler(adminService)
 	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader, assetService)
+
+	// -------------------------------------------------------------------------
+	// Video transcode worker (optional — requires Redis + ffmpeg/ffprobe)
+	//
+	// Runs in-process rather than as a separate deployable: this app is a
+	// single-service monolith today, and a queued, Redis-backed job still
+	// gets the properties that actually matter — the upload request never
+	// blocks on a multi-minute transcode, and a job survives an API restart
+	// instead of being silently dropped like a bare goroutine would.
+	// -------------------------------------------------------------------------
+	videoProcessor := service.NewVideoProcessor()
+	if !videoProcessor.Available() {
+		logger.Warn("ffmpeg/ffprobe not found — video uploads will store the original only, no poster or transcode")
+	}
+	if videoProcessor.Available() && strings.TrimSpace(cfg.Redis.URL) != "" {
+		redisConnOpt, err := asynq.ParseRedisURI(cfg.Redis.URL)
+		if err != nil {
+			logger.Warn("invalid REDIS_URL for video queue — video processing disabled", "error", err)
+		} else {
+			asynqClient := asynq.NewClient(redisConnOpt)
+			defer func() {
+				if cerr := asynqClient.Close(); cerr != nil {
+					logger.Warn("error closing video queue client", "error", cerr)
+				}
+			}()
+			uploadHandler.SetVideoQueue(asynqClient)
+
+			asynqServer := asynq.NewServer(redisConnOpt, asynq.Config{
+				Concurrency: 2, // transcoding is CPU-heavy; keep this modest regardless of core count
+				Queues:      map[string]int{"video": 1},
+				Logger:      asynqLoggerAdapter{logger},
+			})
+			mux := asynq.NewServeMux()
+			videoTaskHandler := jobs.NewVideoProcessHandler(assetService, assetUploader, videoProcessor)
+			mux.HandleFunc(jobs.TypeVideoProcess, videoTaskHandler.ProcessTask)
+
+			go func() {
+				logger.Info("video transcode worker starting")
+				if err := asynqServer.Run(mux); err != nil {
+					logger.Error("video transcode worker stopped", "error", err)
+				}
+			}()
+			defer asynqServer.Shutdown()
+		}
+	}
+
 	assetHandler := handlers.NewAssetHandler(assetService)
 	eventHandler := handlers.NewEventHandler(
 		eventRepo,
