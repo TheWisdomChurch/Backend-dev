@@ -67,13 +67,18 @@ type RecordUploadedAssetRequest struct {
 	OwnerType    *string `json:"ownerType,omitempty"`
 	OwnerID      *string `json:"ownerId,omitempty"`
 	Kind         *string `json:"kind,omitempty"`
-	Folder       *string `json:"folder,omitempty"`
-	ObjectKey    string  `json:"objectKey"`
-	PublicURL    string  `json:"publicUrl"`
-	ContentType  string  `json:"contentType"`
-	SizeBytes    int64   `json:"sizeBytes"`
-	Checksum     *string `json:"checksum,omitempty"`
-	OriginalName *string `json:"originalName,omitempty"`
+	Folder       *string        `json:"folder,omitempty"`
+	ObjectKey    string         `json:"objectKey"`
+	PublicURL    string         `json:"publicUrl"`
+	ContentType  string         `json:"contentType"`
+	SizeBytes    int64          `json:"sizeBytes"`
+	Checksum     *string        `json:"checksum,omitempty"`
+	OriginalName *string        `json:"originalName,omitempty"`
+	// Metadata carries caller-supplied extras (e.g. image dimensions and
+	// derived-variant URLs) merged into the stored asset's Metadata JSONB
+	// alongside the folder/originalName/ownerID bookkeeping the service
+	// already tracks.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type UploadedAssetResponse struct {
