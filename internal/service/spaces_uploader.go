@@ -315,6 +315,38 @@ func (s *S3Uploader) BuildGenericAssetKey(folder, ext string) (string, error) {
 	return s.withBasePath(key), nil
 }
 
+// BuildImageVariantKey builds one key in a shared-assetID group — the
+// original plus each derived size (see ImageProcessor) all live under
+// folder/assetID/, so a processed image and all its variants are trivially
+// discoverable as a set instead of being scattered under unrelated random
+// keys.
+func (s *S3Uploader) BuildImageVariantKey(folder, assetID, variant, ext string) (string, error) {
+	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if ext == "" {
+		return "", errors.New("ext is required")
+	}
+	assetID = sanitizeS3Segment(assetID)
+	variant = sanitizeS3Segment(variant)
+	if assetID == "" || variant == "" {
+		return "", errors.New("assetID and variant are required")
+	}
+
+	folder, err := sanitizeS3Folder(folder)
+	if err != nil {
+		return "", err
+	}
+
+	key := path.Join(folder, assetID, variant+"."+ext)
+	return s.withBasePath(key), nil
+}
+
+// NewAssetID generates the shared ID BuildImageVariantKey groups variants
+// under. A plain function would do, but keeping ID generation behind the
+// uploader keeps callers from needing their own uuid import just for this.
+func (s *S3Uploader) NewAssetID() string {
+	return uuid.NewString()
+}
+
 func (s *S3Uploader) PublicBaseURL() string {
 	if s == nil {
 		return ""
