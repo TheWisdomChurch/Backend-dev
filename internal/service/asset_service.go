@@ -160,6 +160,9 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 	for k, v := range ownerIDMetadata {
 		metadata[k] = v
 	}
+	for k, v := range req.Metadata {
+		metadata[k] = v
+	}
 
 	asset := &models.Asset{
 		OwnerType:   nilIfEmpty(ownerType),
