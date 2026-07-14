@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -137,8 +138,22 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 		return
 	}
 
+	// Peek the header before streaming to storage: catches a spoofed
+	// Content-Type (e.g. an .exe renamed to "invoice.pdf") without buffering
+	// the whole file — Peek doesn't consume the bytes, so the same reader
+	// still yields them for the actual upload below.
+	buffered := bufio.NewReaderSize(src, documentSniffLen)
+	if kind == "document" {
+		header, _ := buffered.Peek(documentSniffLen)
+		if !validateDocumentMagicBytes(contentType, header) {
+			applog.L().Warn("document failed magic-byte validation", "module", module, "content_type", contentType, "filename", fh.Filename)
+			utils.ErrorResponse(c, http.StatusBadRequest, "file content does not match its declared type")
+			return
+		}
+	}
+
 	hasher := sha256.New()
-	reader := io.TeeReader(src, hasher)
+	reader := io.TeeReader(buffered, hasher)
 
 	publicURL, err := h.storage.Upload(ctx, objectKey, contentType, reader)
 	if err != nil {
@@ -492,6 +507,35 @@ func extFromContentType(ct string) string {
 		return "png"
 	}
 	return "jpg"
+}
+
+// documentSniffLen only needs to cover the longest magic-byte signature
+// checked below (8 bytes, the OLE Compound File header) — kept a little
+// larger for headroom.
+const documentSniffLen = 16
+
+// validateDocumentMagicBytes checks the file's actual leading bytes against
+// the signature its declared Content-Type implies — the same class of check
+// browsers/OS file-type detection does, closing the gap where the passthrough
+// upload path used to trust the client-supplied header outright. Plain-text
+// formats (CSV/TXT) have no reliable magic bytes, so they pass unchecked.
+func validateDocumentMagicBytes(ct string, header []byte) bool {
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	switch ct {
+	case "application/pdf":
+		return bytes.HasPrefix(header, []byte("%PDF-"))
+	case "application/msword", "application/vnd.ms-excel":
+		// Legacy OLE Compound File Binary Format — shared by .doc and .xls.
+		return bytes.HasPrefix(header, []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1})
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		// .docx/.xlsx are ZIP containers (OOXML).
+		return bytes.HasPrefix(header, []byte{0x50, 0x4B, 0x03, 0x04})
+	case "text/csv", "text/plain":
+		return true
+	default:
+		return true
+	}
 }
 
 func normalizeUploadKind(v string) string {
