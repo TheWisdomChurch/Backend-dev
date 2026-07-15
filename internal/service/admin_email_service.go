@@ -47,6 +47,7 @@ type adminComposeRequestView struct {
 	TemplateKey      string
 	ManualRecipients []adminComposeRecipient
 	FormIDs          []string
+	Attachments      []models.AdminEmailAttachmentInput
 }
 
 type adminComposeRecipient struct {
@@ -406,6 +407,14 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 	resp.Targeted = len(resolvedRecipients)
 	resp.TotalRecipients = resp.Targeted
 
+	var attachments []email.Attachment
+	if len(normalized.Attachments) > 0 {
+		attachments, err = s.fetchComposeAttachments(normalized.Attachments)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	for _, recipient := range resolvedRecipients {
 		subscribeURL, unsubscribeURL := buildAdminComposeSubscriptionLinks(s.branding, recipient.Email, recipient.Name)
 		recipientName := strings.TrimSpace(recipient.Name)
@@ -441,7 +450,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			continue
 		}
 
-		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content); err != nil {
+		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content, attachments); err != nil {
 			// sendRenderedAdminEmail's own "email is not configured"/"content is nil"/
 			// "html body is empty" guard errors aren't logged by the observedEmailSender
 			// wrapper (they never reach it), so log here too — only the underlying
@@ -511,6 +520,11 @@ func normalizeAdminComposeRequest(req *models.SendAdminComposeEmailRequest) (*ad
 		return nil, errors.New("htmlBody, templateId, or templateKey is required")
 	}
 
+	attachments, err := normalizeAdminComposeAttachments(req.Attachments)
+	if err != nil {
+		return nil, err
+	}
+
 	return &adminComposeRequestView{
 		Subject:          subject,
 		HTMLBody:         htmlBody,
@@ -519,7 +533,42 @@ func normalizeAdminComposeRequest(req *models.SendAdminComposeEmailRequest) (*ad
 		TemplateKey:      templateKey,
 		ManualRecipients: manualRecipients,
 		FormIDs:          formIDs,
+		Attachments:      attachments,
 	}, nil
+}
+
+const maxAdminComposeAttachments = 10
+
+func normalizeAdminComposeAttachments(items *[]models.AdminEmailAttachmentInput) ([]models.AdminEmailAttachmentInput, error) {
+	if items == nil {
+		return nil, nil
+	}
+	if len(*items) > maxAdminComposeAttachments {
+		return nil, fmt.Errorf("a campaign email may have at most %d attachments", maxAdminComposeAttachments)
+	}
+
+	attachments := make([]models.AdminEmailAttachmentInput, 0, len(*items))
+	for i, item := range *items {
+		rawURL := strings.TrimSpace(item.URL)
+		if rawURL == "" {
+			return nil, fmt.Errorf("attachments[%d].url is required", i)
+		}
+		parsed, err := url.Parse(rawURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			return nil, fmt.Errorf("attachments[%d].url must be a valid https URL", i)
+		}
+
+		filename := strings.TrimSpace(item.Filename)
+		if utf8.RuneCountInString(filename) > 200 {
+			return nil, fmt.Errorf("attachments[%d].filename must be 200 characters or fewer", i)
+		}
+
+		attachments = append(attachments, models.AdminEmailAttachmentInput{
+			URL:      rawURL,
+			Filename: filename,
+		})
+	}
+	return attachments, nil
 }
 
 func normalizeAdminComposeRecipients(items *[]models.AdminEmailRecipientInput) ([]adminComposeRecipient, error) {
@@ -846,7 +895,37 @@ func (s *adminEmailService) renderComposeContent(selection *formCampaignTemplate
 	return nil, errors.New("email template could not be rendered")
 }
 
-func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *formCampaignRenderedContent) error {
+// fetchComposeAttachments resolves every requested attachment's bytes once
+// (not per-recipient) from its already-uploaded asset URL, enforcing the
+// combined size cap across the whole set.
+func (s *adminEmailService) fetchComposeAttachments(items []models.AdminEmailAttachmentInput) ([]email.Attachment, error) {
+	fetcher, ok := s.sender.(interface {
+		FetchAttachment(ctx context.Context, fileURL, filename string) (email.Attachment, error)
+	})
+	if !ok {
+		return nil, errors.New("email sender does not support attachments")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	attachments := make([]email.Attachment, 0, len(items))
+	var total int64
+	for i, item := range items {
+		att, err := fetcher.FetchAttachment(ctx, item.URL, item.Filename)
+		if err != nil {
+			return nil, fmt.Errorf("attachments[%d]: %w", i, err)
+		}
+		total += int64(len(att.Bytes))
+		if total > email.MaxTotalAttachmentBytes {
+			return nil, fmt.Errorf("attachments exceed the combined %dMB limit", email.MaxTotalAttachmentBytes/(1024*1024))
+		}
+		attachments = append(attachments, att)
+	}
+	return attachments, nil
+}
+
+func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *formCampaignRenderedContent, attachments []email.Attachment) error {
 	if sender == nil {
 		return errors.New("email sender is not configured")
 	}
@@ -859,6 +938,16 @@ func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *for
 		return errors.New("rendered email html body is empty")
 	}
 	textBody := strings.TrimSpace(content.Text)
+
+	if len(attachments) > 0 {
+		withAttachments, ok := sender.(interface {
+			SendHTMLWithAttachments(to, subject, htmlBody, textBody string, attachments []email.Attachment) error
+		})
+		if !ok {
+			return errors.New("email sender does not support attachments")
+		}
+		return withAttachments.SendHTMLWithAttachments(to, subject, htmlBody, textBody, attachments)
+	}
 
 	if multipart, ok := sender.(interface {
 		SendHTMLText(to, subject, htmlBody, textBody string) error
