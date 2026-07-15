@@ -32,7 +32,12 @@ CMD ["air", "-c", ".air.toml"]
 # =========================
 FROM alpine:latest AS production
 
-RUN apk --no-cache add ca-certificates postgresql-client
+# ffmpeg/ffprobe power the video upload pipeline (internal/service/video_processor.go):
+# real content validation, poster-frame extraction, and background transcoding.
+# Without them, video uploads still work but silently skip processing (see
+# UploadHandler.uploadFile's videos.Available() check) — so this is required
+# for the feature, not optional hardening.
+RUN apk --no-cache add ca-certificates postgresql-client ffmpeg
 
 WORKDIR /app
 
