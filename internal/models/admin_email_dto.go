@@ -13,14 +13,25 @@ type AdminEmailAudienceFormSummary struct {
 	UniqueRecipients int    `json:"uniqueRecipients"`
 }
 
+// AdminEmailAttachmentInput references a file already uploaded through the
+// existing /admin/uploads pipeline (images, documents, etc.) — the compose
+// request carries only the public URL and display filename; the backend
+// fetches the bytes server-side at send time rather than accepting raw
+// payloads in the JSON body.
+type AdminEmailAttachmentInput struct {
+	URL      string `json:"url"`
+	Filename string `json:"filename,omitempty"`
+}
+
 type SendAdminComposeEmailRequest struct {
-	Subject          *string                     `json:"subject,omitempty"`
-	HTMLBody         *string                     `json:"htmlBody,omitempty"`
-	TextBody         *string                     `json:"textBody,omitempty"`
-	TemplateID       *string                     `json:"templateId,omitempty"`
-	TemplateKey      *string                     `json:"templateKey,omitempty"`
-	ManualRecipients *[]AdminEmailRecipientInput `json:"manualRecipients,omitempty"`
-	FormIDs          *[]string                   `json:"formIds,omitempty"`
+	Subject          *string                      `json:"subject,omitempty"`
+	HTMLBody         *string                      `json:"htmlBody,omitempty"`
+	TextBody         *string                      `json:"textBody,omitempty"`
+	TemplateID       *string                      `json:"templateId,omitempty"`
+	TemplateKey      *string                      `json:"templateKey,omitempty"`
+	ManualRecipients *[]AdminEmailRecipientInput  `json:"manualRecipients,omitempty"`
+	FormIDs          *[]string                    `json:"formIds,omitempty"`
+	Attachments      *[]AdminEmailAttachmentInput `json:"attachments,omitempty"`
 }
 
 type SendAdminComposeEmailResponse struct {
