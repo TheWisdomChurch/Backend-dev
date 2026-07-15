@@ -246,6 +246,120 @@ func (s *Sender) SendMultipartWithAttachment(
 	})
 }
 
+// Attachment is a generic file attachment (image, document, PDF, etc.) with
+// its bytes already resolved — see FetchAttachment for pulling those bytes
+// from an uploaded asset's public URL.
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Bytes       []byte
+}
+
+// SendHTMLWithAttachments sends an HTML email (with an optional plain-text
+// alternative) plus zero or more file attachments — the general-purpose
+// "attach images/documents/files to a campaign email" send path. Unlike
+// SendMultipartWithAttachment (single PDF, receipt-specific), this accepts
+// any number of attachments of any type.
+func (s *Sender) SendHTMLWithAttachments(to, subject, htmlBody, textBody string, attachments []Attachment) error {
+	htmlBody = strings.TrimSpace(htmlBody)
+	if htmlBody == "" {
+		return fmt.Errorf("html body is required")
+	}
+	textBody = strings.TrimSpace(textBody)
+
+	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
+		if textBody != "" {
+			msg.SetBodyString(gomail.TypeTextPlain, textBody)
+			msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+		} else {
+			msg.SetBodyString(gomail.TypeTextHTML, htmlBody)
+		}
+
+		for _, att := range attachments {
+			if len(att.Bytes) == 0 {
+				continue
+			}
+			name := strings.TrimSpace(att.Filename)
+			if name == "" {
+				name = "attachment"
+			}
+			ct := strings.TrimSpace(att.ContentType)
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			if err := msg.AttachReader(
+				name,
+				bytes.NewReader(att.Bytes),
+				gomail.WithFileName(name),
+				gomail.WithFileContentType(gomail.ContentType(ct)),
+			); err != nil {
+				return fmt.Errorf("attach %s failed: %w", name, err)
+			}
+		}
+		return nil
+	})
+}
+
+// MaxAttachmentBytes and MaxTotalAttachmentBytes bound what
+// FetchAttachment/compose-email attachments will accept — most SMTP relays
+// reject messages above ~25MB once MIME/base64 overhead is included, so stay
+// comfortably under that.
+const (
+	MaxAttachmentBytes      = 15 * 1024 * 1024
+	MaxTotalAttachmentBytes = 20 * 1024 * 1024
+)
+
+// FetchAttachment downloads a single attachment's bytes from its public URL
+// (an already-uploaded asset — see AdminEmailAttachmentInput) with a size
+// cap, so a campaign email can reference files uploaded through the existing
+// /admin/uploads pipeline instead of accepting raw payloads over JSON.
+func (s *Sender) FetchAttachment(ctx context.Context, fileURL, filename string) (Attachment, error) {
+	parsed, err := url.Parse(strings.TrimSpace(fileURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return Attachment{}, fmt.Errorf("attachment url must be a valid https URL")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return Attachment{}, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return Attachment{}, fmt.Errorf("failed to fetch attachment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return Attachment{}, fmt.Errorf("attachment url returned status %d", resp.StatusCode)
+	}
+	if resp.ContentLength > MaxAttachmentBytes && resp.ContentLength != -1 {
+		return Attachment{}, fmt.Errorf("attachment exceeds the %dMB limit", MaxAttachmentBytes/(1024*1024))
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxAttachmentBytes+1))
+	if err != nil {
+		return Attachment{}, fmt.Errorf("failed to read attachment: %w", err)
+	}
+	if int64(len(body)) > MaxAttachmentBytes {
+		return Attachment{}, fmt.Errorf("attachment exceeds the %dMB limit", MaxAttachmentBytes/(1024*1024))
+	}
+
+	name := strings.TrimSpace(filename)
+	if name == "" {
+		name = filenameFromURL(parsed)
+	}
+	if name == "" {
+		name = "attachment"
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+
+	return Attachment{Filename: name, ContentType: ct, Bytes: body}, nil
+}
+
 // SendTemplateReceiptWithPDF fetches templates from S3, enforces size limits (in TemplateStore),
 // optionally embeds images <= MaxInlineImgMB, and attaches the encrypted PDF.
 func (s *Sender) SendTemplateReceiptWithPDF(
