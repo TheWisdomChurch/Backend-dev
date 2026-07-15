@@ -64,6 +64,13 @@ type PresignAssetResponse struct {
 }
 
 type RecordUploadedAssetRequest struct {
+	// ID overrides the default random primary key — used by the video
+	// upload path, where the storage keys (original/poster/video variants)
+	// and the async transcode job's payload are already built around an ID
+	// generated before the DB row exists. Without this, the row would get
+	// its own separate random ID and the async worker's lookup would never
+	// find it.
+	ID           *string `json:"id,omitempty"`
 	OwnerType    *string `json:"ownerType,omitempty"`
 	OwnerID      *string `json:"ownerId,omitempty"`
 	Kind         *string `json:"kind,omitempty"`
@@ -74,6 +81,15 @@ type RecordUploadedAssetRequest struct {
 	SizeBytes    int64   `json:"sizeBytes"`
 	Checksum     *string `json:"checksum,omitempty"`
 	OriginalName *string `json:"originalName,omitempty"`
+	// Metadata carries caller-supplied extras (e.g. image dimensions and
+	// derived-variant URLs) merged into the stored asset's Metadata JSONB
+	// alongside the folder/originalName/ownerID bookkeeping the service
+	// already tracks.
+	Metadata map[string]any `json:"metadata,omitempty"`
+	// Status overrides the default AssetStatusReady — used by the video
+	// upload path, where the original is stored but a background transcode
+	// is still pending.
+	Status *AssetStatus `json:"status,omitempty"`
 }
 
 type UploadedAssetResponse struct {

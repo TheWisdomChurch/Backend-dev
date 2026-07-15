@@ -21,6 +21,12 @@ type AssetService interface {
 	GetByID(id string) (*models.Asset, error)
 	List(page, limit int, ownerType, ownerID string) ([]models.Asset, int64, error)
 	RecordUploadedAsset(req *models.RecordUploadedAssetRequest, createdBy *string) (*models.Asset, error)
+	// UpdateProcessingResult is called by the async video worker once
+	// transcoding finishes (or fails) to move the asset out of "pending" and
+	// merge in the derived output — the transcoded URL on success, or an
+	// error note on failure. Existing metadata (poster, original, probed
+	// dimensions) is preserved, not overwritten.
+	UpdateProcessingResult(id string, status models.AssetStatus, metadataPatch map[string]any) error
 }
 
 type presignCapable interface {
@@ -160,6 +166,9 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 	for k, v := range ownerIDMetadata {
 		metadata[k] = v
 	}
+	for k, v := range req.Metadata {
+		metadata[k] = v
+	}
 
 	asset := &models.Asset{
 		OwnerType:   nilIfEmpty(ownerType),
@@ -175,6 +184,12 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 		Status:      models.AssetStatusReady,
 		CreatedByID: createdBy,
 	}
+	if req.Status != nil {
+		asset.Status = *req.Status
+	}
+	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
+		asset.ID = strings.TrimSpace(*req.ID)
+	}
 
 	applyAssetMetadata(asset, metadata)
 
@@ -183,6 +198,34 @@ func (s *assetService) RecordUploadedAsset(req *models.RecordUploadedAssetReques
 	}
 
 	return asset, nil
+}
+
+func (s *assetService) UpdateProcessingResult(id string, status models.AssetStatus, metadataPatch map[string]any) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("asset id is required")
+	}
+
+	asset, err := s.repo.GetByID(id)
+	if err != nil {
+		return err
+	}
+
+	existing := map[string]any{}
+	if len(asset.Metadata) > 0 {
+		_ = json.Unmarshal(asset.Metadata, &existing)
+	}
+	for k, v := range metadataPatch {
+		existing[k] = v
+	}
+	applyAssetMetadata(asset, existing)
+	asset.Status = status
+
+	if url, ok := metadataPatch["transcodedUrl"].(string); ok && strings.TrimSpace(url) != "" {
+		asset.PublicURL = url
+	}
+
+	return s.repo.Update(asset)
 }
 
 func (s *assetService) CompleteUpload(id string) (*models.Asset, error) {
