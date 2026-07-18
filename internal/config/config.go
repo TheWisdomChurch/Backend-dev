@@ -266,8 +266,14 @@ func Load() (*Config, error) {
 		Server: ServerConfig{
 			Port:           serverPort,
 			GinMode:        serverGinMode,
-			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 10*time.Second),
-			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
+			// 10s was too short for real file uploads: WriteTimeout in
+			// Go's net/http covers the entire handler execution (not just
+			// the final response write), so an upload still streaming to
+			// S3 past 10s gets its connection killed mid-request. 120s
+			// gives realistic headroom for image/document/audio uploads
+			// on ordinary admin connections.
+			ReadTimeout:    getEnvAsDuration("SERVER_READ_TIMEOUT", 120*time.Second),
+			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 120*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 			TrustedProxies: splitEnv("SERVER_TRUSTED_PROXIES", []string{}),
 			// Default must be >= the largest per-kind upload limit
