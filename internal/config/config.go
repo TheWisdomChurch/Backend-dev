@@ -270,7 +270,10 @@ func Load() (*Config, error) {
 			WriteTimeout:   getEnvAsDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			MaxHeaderBytes: getEnvAsInt("SERVER_MAX_HEADER_BYTES", 1<<20),
 			TrustedProxies: splitEnv("SERVER_TRUSTED_PROXIES", []string{}),
-			RequestBodyMax: getEnvAsInt64("SERVER_REQUEST_BODY_MAX_BYTES", 2<<20),
+			// Default must be >= the largest per-kind upload limit
+			// (video, 250MB in upload_handler.go) or it silently becomes a
+			// smaller, conflicting ceiling underneath those limits.
+			RequestBodyMax: getEnvAsInt64("SERVER_REQUEST_BODY_MAX_BYTES", 300<<20),
 		},
 		Redis: RedisConfig{
 			URL:          getEnv("REDIS_URL", "redis://redis:6379"),
