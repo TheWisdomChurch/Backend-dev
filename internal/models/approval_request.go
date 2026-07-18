@@ -8,6 +8,7 @@ type ApprovalRequestStatus string
 const (
 	ApprovalTypeTestimonial      ApprovalRequestType = "testimonial"
 	ApprovalTypeEvent            ApprovalRequestType = "event"
+	ApprovalTypeEventDelete      ApprovalRequestType = "event_delete"
 	ApprovalTypeAdminUser        ApprovalRequestType = "admin_user"
 	ApprovalTypeLeadershipDelete ApprovalRequestType = "leadership_delete"
 	ApprovalTypeWorkforceDelete  ApprovalRequestType = "workforce_delete"
@@ -28,6 +29,10 @@ type ApprovalRequest struct {
 
 	EntityID    *string `gorm:"type:uuid" json:"entityId,omitempty"`
 	EntityLabel *string `gorm:"type:varchar(255)" json:"entityLabel,omitempty"`
+	// Reason is the requester's stated justification — required for
+	// delete-approval requests so the super-admin has real context, not just
+	// an entity label, before approving an irreversible action.
+	Reason *string `gorm:"type:text" json:"reason,omitempty"`
 
 	RequestedByID    *string `gorm:"type:uuid" json:"requestedById,omitempty"`
 	RequestedByName  *string `gorm:"type:varchar(120)" json:"requestedByName,omitempty"`
