@@ -66,12 +66,16 @@ func setupRouter(
 	router.Use(metrics.GinMiddleware())
 	router.Use(gin.CustomRecovery(apperror.PanicRecoveryHandler))
 	router.Use(apperror.Handler())
+	// CORS must run before any middleware capable of aborting the request
+	// (body-size limit, rate limiter, etc.), otherwise an aborted request's
+	// error response goes out without CORS headers and the browser reports
+	// a misleading "CORS policy" error instead of the real HTTP status.
+	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.RequestID())
 	router.Use(middleware.CampusContext())
 	router.Use(middleware.Logger(cfg.App.LogLevel))
 	router.Use(middleware.SecurityHeaders(secure))
 	router.Use(middleware.RequestBodyLimit(cfg.Server.RequestBodyMax))
-	router.Use(middleware.CORS(&cfg.CORS))
 	router.Use(middleware.RateLimiter(middleware.RateLimiterOptions{
 		RequestsPerMinute: cfg.RateLimit.Global.RequestsPerMinute,
 		Burst:             cfg.RateLimit.Global.Burst,
