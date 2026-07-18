@@ -415,22 +415,14 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 		}
 	}
 
-	for _, recipient := range resolvedRecipients {
-		subscribeURL, unsubscribeURL := buildAdminComposeSubscriptionLinks(s.branding, recipient.Email, recipient.Name)
-		recipientName := strings.TrimSpace(recipient.Name)
-		if recipientName == "" {
-			recipientName = firstToken(strings.TrimSpace(strings.SplitN(recipient.Email, "@", 2)[0]))
-		}
-		if recipientName == "" {
-			recipientName = "Friend"
-		}
-		templateData := map[string]any{
+	buildTemplateData := func(recipientName, recipientEmail, subscribeURL, unsubscribeURL string) map[string]any {
+		return map[string]any{
 			"Branding":             s.branding,
 			"RecipientName":        recipientName,
 			"FullName":             recipientName,
 			"Name":                 recipientName,
 			"FirstName":            firstToken(recipientName),
-			"Email":                recipient.Email,
+			"Email":                recipientEmail,
 			"Subject":              subject,
 			"SubscribeURL":         subscribeURL,
 			"UnsubscribeURL":       unsubscribeURL,
@@ -441,6 +433,28 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			"SourceForms":          sourceForms,
 			"Year":                 time.Now().UTC().Year(),
 		}
+	}
+
+	// Every recipient gets the exact same set of template keys (only the
+	// values differ), so a single dry-run render up front catches an
+	// unsupported/misspelled merge tag (e.g. a stray {{.YouTubeLink}} pasted
+	// in from another tool) before it burns through the whole audience —
+	// without this, a single bad tag silently fails every send and the admin
+	// only ever sees "0 delivered" with no indication of why.
+	if _, err := s.renderComposeContent(templateSelection, buildTemplateData("Preview Recipient", "preview@example.com", "#", "#")); err != nil {
+		return nil, fmt.Errorf("email content could not be rendered — it likely references an unsupported variable (%w). Supported variables: RecipientName, FirstName, Email, SubscribeURL, UnsubscribeURL, Subject, Year, Branding.*", err)
+	}
+
+	for _, recipient := range resolvedRecipients {
+		subscribeURL, unsubscribeURL := buildAdminComposeSubscriptionLinks(s.branding, recipient.Email, recipient.Name)
+		recipientName := strings.TrimSpace(recipient.Name)
+		if recipientName == "" {
+			recipientName = firstToken(strings.TrimSpace(strings.SplitN(recipient.Email, "@", 2)[0]))
+		}
+		if recipientName == "" {
+			recipientName = "Friend"
+		}
+		templateData := buildTemplateData(recipientName, recipient.Email, subscribeURL, unsubscribeURL)
 
 		content, err := s.renderComposeContent(templateSelection, templateData)
 		if err != nil {
