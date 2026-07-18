@@ -22,6 +22,7 @@ type CreateApprovalRequest struct {
 	Type             models.ApprovalRequestType
 	EntityID         *string
 	EntityLabel      *string
+	Reason           *string
 	RequestedByID    *string
 	RequestedByName  *string
 	RequestedByEmail *string
@@ -72,6 +73,7 @@ func (s *approvalService) CreateRequest(input CreateApprovalRequest) (*models.Ap
 		Status:           models.ApprovalStatusPending,
 		EntityID:         input.EntityID,
 		EntityLabel:      input.EntityLabel,
+		Reason:           input.Reason,
 		RequestedByID:    input.RequestedByID,
 		RequestedByName:  input.RequestedByName,
 		RequestedByEmail: input.RequestedByEmail,
@@ -189,6 +191,8 @@ func (s *approvalService) ticketPrefix(t models.ApprovalRequestType, now time.Ti
 		label = "Testimonials"
 	case models.ApprovalTypeEvent:
 		label = "Events"
+	case models.ApprovalTypeEventDelete:
+		label = "EventDelete"
 	case models.ApprovalTypeAdminUser:
 		label = "Admins"
 	case models.ApprovalTypeLeadershipDelete:
