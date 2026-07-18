@@ -331,19 +331,159 @@ func (h *EventHandler) Approve(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Event approved", existing)
 }
 
+// Delete does not remove the event directly — any admin can ask for an event
+// to come down, but only a super admin can actually take it off the live
+// site. This creates a pending approval_requests ticket (type event_delete)
+// carrying the requester's stated reason; ApproveDeleteEvent performs the
+// actual deletion once a super admin signs off.
 func (h *EventHandler) Delete(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id", "event id")
 	if !ok {
 		return
 	}
 
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !validation.BindJSON(c, &body) {
+		return
+	}
+
+	if h.approvalSvc == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Approval service not configured")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	if err := h.repo.DeleteWithContext(ctx, id); err != nil {
+	event, err := h.repo.GetByIDWithContext(ctx, id)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Event not found")
+		return
+	}
+
+	requester := h.currentUser(c)
+	var requestedByID, requestedByName, requestedByEmail *string
+	if requester != nil {
+		requestedByID = &requester.ID
+		name := strings.TrimSpace(strings.Join([]string{requester.FirstName, requester.LastName}, " "))
+		if name != "" {
+			requestedByName = &name
+		}
+		if requester.Email != "" {
+			email := requester.Email
+			requestedByEmail = &email
+		}
+	}
+
+	label := strings.TrimSpace(event.Title)
+	if label == "" {
+		label = id
+	}
+	reason := strings.TrimSpace(body.Reason)
+
+	req, err := h.approvalSvc.CreateRequest(service.CreateApprovalRequest{
+		Type:             models.ApprovalTypeEventDelete,
+		EntityID:         &id,
+		EntityLabel:      &label,
+		Reason:           &reason,
+		RequestedByID:    requestedByID,
+		RequestedByName:  requestedByName,
+		RequestedByEmail: requestedByEmail,
+	})
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if h.notifySvc != nil {
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "event_delete_request",
+			Title:      "Event delete approval required",
+			Message:    fmt.Sprintf("%q was marked for removal: %s", label, reason),
+			TicketCode: &req.TicketCode,
+			EntityType: func() *string { t := "event_delete"; return &t }(),
+			EntityID:   &id,
+			Roles:      []string{"super_admin"},
+		})
+	}
+
+	utils.SuccessResponse(c, http.StatusAccepted, "Delete request sent for super admin approval", req)
+}
+
+// ApproveDeleteEvent performs the actual removal once a super admin has
+// approved the pending event_delete request. Accepts either the event's own
+// id or the approval request's id, matching the workforce/leadership
+// delete-approve pattern.
+func (h *EventHandler) ApproveDeleteEvent(c *gin.Context) {
+	id, ok := parseUUIDParam(c, "id", "event id")
+	if !ok {
+		return
+	}
+
+	if h.approvalSvc == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Approval service not configured")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	approver := h.currentUser(c)
+	entityID := id
+
+	event, err := h.repo.GetByIDWithContext(ctx, entityID)
+	if err != nil {
+		// id might be the approval request's own id rather than the event's.
+		req, reqErr := h.approvalSvc.GetRequest(id)
+		if reqErr != nil || req.Type != models.ApprovalTypeEventDelete || req.EntityID == nil {
+			utils.ErrorResponse(c, http.StatusNotFound, "Event or delete request not found")
+			return
+		}
+		entityID = strings.TrimSpace(*req.EntityID)
+		event, err = h.repo.GetByIDWithContext(ctx, entityID)
+		if err != nil {
+			// Event already gone — still resolve the ticket so it doesn't
+			// sit pending forever.
+			_, _ = h.approvalSvc.CompleteRequestByID(req.ID, models.ApprovalStatusApproved, approver)
+			utils.SuccessResponse(c, http.StatusOK, "Event already removed", nil)
+			return
+		}
+	}
+
+	label := strings.TrimSpace(event.Title)
+	if label == "" {
+		label = entityID
+	}
+
+	req, err := h.approvalSvc.CompleteRequest(models.ApprovalTypeEventDelete, entityID, models.ApprovalStatusApproved, approver)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.repo.DeleteWithContext(ctx, entityID); err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete event")
 		return
 	}
+
+	if h.notifySvc != nil {
+		ticket := ""
+		if req != nil {
+			ticket = req.TicketCode
+		}
+		_ = h.notifySvc.NotifyRoles(service.AdminNotificationInput{
+			Type:       "event_delete_approved",
+			Title:      "Event removed",
+			Message:    fmt.Sprintf("%q has been approved for removal and taken off the site.", label),
+			TicketCode: &ticket,
+			EntityType: func() *string { t := "event_delete"; return &t }(),
+			EntityID:   &entityID,
+			Roles:      []string{"admin", "super_admin"},
+		})
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Event deleted", nil)
 }
 
