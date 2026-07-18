@@ -504,6 +504,7 @@ func setupRouter(
 	superAdmin.PATCH("/testimonials/:id/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveTestimonial)
 	superAdmin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Approve)
+	superAdmin.POST("/events/:id/delete/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.ApproveDeleteEvent)
 
 	return router
 }
