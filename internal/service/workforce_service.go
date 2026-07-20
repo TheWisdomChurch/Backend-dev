@@ -23,7 +23,7 @@ type WorkforceService interface {
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
 	RejectRegistration(id, reason string, approver *models.User) (*models.WorkforceMember, error)
-	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error)
 	ApproveDelete(id string, approver *models.User) error
 	Stats() (*models.WorkforceStatsResponse, error)
 
@@ -421,9 +421,14 @@ func (s *workforceService) RejectRegistration(id, reason string, approver *model
 	return updated, nil
 }
 
-func (s *workforceService) RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+func (s *workforceService) RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error) {
 	if s.approvalSvc == nil {
 		return nil, errors.New("approval service not configured")
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, errors.New("a reason is required")
 	}
 
 	member, err := s.repo.GetByID(id)
@@ -453,6 +458,7 @@ func (s *workforceService) RequestDelete(id string, requestedBy *models.User) (*
 		Type:             models.ApprovalTypeWorkforceDelete,
 		EntityID:         &member.ID,
 		EntityLabel:      &label,
+		Reason:           &reason,
 		RequestedByID:    requestedByID,
 		RequestedByName:  requestedByName,
 		RequestedByEmail: requestedByEmail,
