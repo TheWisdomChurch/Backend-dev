@@ -240,7 +240,15 @@ func (h *LeadershipHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	req, err := h.svc.RequestDelete(id, h.currentUser(c))
+
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !validation.BindJSON(c, &body) {
+		return
+	}
+
+	req, err := h.svc.RequestDelete(id, body.Reason, h.currentUser(c))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return

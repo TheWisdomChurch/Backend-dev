@@ -199,6 +199,8 @@ func (s *approvalService) ticketPrefix(t models.ApprovalRequestType, now time.Ti
 		label = "LeadershipDelete"
 	case models.ApprovalTypeWorkforceDelete:
 		label = "WorkforceDelete"
+	case models.ApprovalTypeWorkforceRegistration:
+		label = "WorkforceJoin"
 	}
 	return fmt.Sprintf("%s-%s", date, label)
 }
