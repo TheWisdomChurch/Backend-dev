@@ -284,6 +284,11 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 		}
 	}
 
+	member, err := s.repo.GetByID(entityID)
+	if err != nil {
+		return err
+	}
+
 	if _, err := s.approvalSvc.CompleteRequest(
 		models.ApprovalTypeLeadershipDelete,
 		entityID,
@@ -292,11 +297,51 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 	); err != nil {
 		return err
 	}
-	return s.repo.Delete(entityID)
+	if err := s.repo.Delete(entityID); err != nil {
+		return err
+	}
+	s.retireLeadershipIntakeSubmissions(member.Email)
+	return nil
 }
 
 func (s *leadershipService) Delete(id string) error {
-	return s.repo.Delete(id)
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.Delete(id); err != nil {
+		return err
+	}
+	s.retireLeadershipIntakeSubmissions(member.Email)
+	return nil
+}
+
+// retireLeadershipIntakeSubmissions soft-deletes the intake form
+// submission(s) behind a now-deleted leadership member. Without this, the
+// next admin page load re-runs syncLeadershipIntakeSubmissions, sees the
+// original public application still sitting there with no member matching
+// its email, and silently re-creates the very member that was just
+// deleted — so an approved deletion never actually sticks. Matching is by
+// email (the same key the sync loop itself uses; members have no stored
+// link back to their source submission).
+func (s *leadershipService) retireLeadershipIntakeSubmissions(email *string) {
+	if email == nil || s.formRepo == nil {
+		return
+	}
+	clean := strings.ToLower(strings.TrimSpace(*email))
+	if clean == "" {
+		return
+	}
+	submissions, err := s.formRepo.ListLeadershipIntakeSubmissions(500)
+	if err != nil {
+		return
+	}
+	for _, submission := range submissions {
+		if submission.Email == nil || strings.ToLower(strings.TrimSpace(*submission.Email)) != clean {
+			continue
+		}
+		_ = s.formRepo.DeleteSubmission(submission.ID)
+	}
 }
 
 func (s *leadershipService) BirthdayStats() (*models.BirthdayStatsResponse, error) {

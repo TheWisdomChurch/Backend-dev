@@ -6,12 +6,13 @@ type ApprovalRequestType string
 type ApprovalRequestStatus string
 
 const (
-	ApprovalTypeTestimonial      ApprovalRequestType = "testimonial"
-	ApprovalTypeEvent            ApprovalRequestType = "event"
-	ApprovalTypeEventDelete      ApprovalRequestType = "event_delete"
-	ApprovalTypeAdminUser        ApprovalRequestType = "admin_user"
-	ApprovalTypeLeadershipDelete ApprovalRequestType = "leadership_delete"
-	ApprovalTypeWorkforceDelete  ApprovalRequestType = "workforce_delete"
+	ApprovalTypeTestimonial           ApprovalRequestType = "testimonial"
+	ApprovalTypeEvent                 ApprovalRequestType = "event"
+	ApprovalTypeEventDelete           ApprovalRequestType = "event_delete"
+	ApprovalTypeAdminUser             ApprovalRequestType = "admin_user"
+	ApprovalTypeLeadershipDelete      ApprovalRequestType = "leadership_delete"
+	ApprovalTypeWorkforceDelete       ApprovalRequestType = "workforce_delete"
+	ApprovalTypeWorkforceRegistration ApprovalRequestType = "workforce_registration"
 )
 
 const (

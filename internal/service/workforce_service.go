@@ -22,6 +22,7 @@ type WorkforceService interface {
 	RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error)
 	Update(id string, req *models.UpdateWorkforceRequest) (*models.WorkforceMember, error)
 	Approve(id string) (*models.WorkforceMember, error)
+	RejectRegistration(id, reason string, approver *models.User) (*models.WorkforceMember, error)
 	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
 	ApproveDelete(id string, approver *models.User) error
 	Stats() (*models.WorkforceStatsResponse, error)
@@ -106,7 +107,62 @@ func (s *workforceService) Create(req *models.CreateWorkforceRequest) (*models.W
 }
 
 func (s *workforceService) CreateApplication(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
-	return s.createWithStatus(req, models.WorkforceStatusPending)
+	member, err := s.createWithStatus(req, models.WorkforceStatusPending)
+	if err != nil {
+		return nil, err
+	}
+	s.createRegistrationTicket(member)
+	return member, nil
+}
+
+// createRegistrationTicket raises a super-admin ticket for a new pending
+// workforce application. Without this, "pending" was just a status field any
+// admin could flip via the regular edit form — there was no queue a super
+// admin could actually discover the application in, even though the real
+// approve action (below) was already super-admin-gated.
+func (s *workforceService) createRegistrationTicket(member *models.WorkforceMember) {
+	if s.approvalSvc == nil || member == nil {
+		return
+	}
+	label := workforceMemberName(member)
+	if label == "" {
+		label = member.ID
+	}
+	req, err := s.approvalSvc.CreateRequest(CreateApprovalRequest{
+		Type:        models.ApprovalTypeWorkforceRegistration,
+		EntityID:    &member.ID,
+		EntityLabel: &label,
+	})
+	if err != nil {
+		slog.Warn("workforce_service: failed to create registration approval ticket", "member_id", member.ID, "error", err)
+		return
+	}
+	s.notifyWorkforceRegistration(member, req)
+}
+
+func (s *workforceService) notifyWorkforceRegistration(member *models.WorkforceMember, req *models.ApprovalRequest) {
+	if s.notifySvc == nil || member == nil || req == nil {
+		return
+	}
+	fullName := workforceMemberName(member)
+	if fullName == "" {
+		fullName = "A new applicant"
+	}
+	title := "New workforce registration"
+	message := fmt.Sprintf("%s applied to join the workforce in %s and is awaiting super admin approval.", fullName, member.Department)
+	entityType := "workforce_registration"
+	entityID := member.ID
+	if err := s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "workforce_registration_request",
+		Title:      title,
+		Message:    message,
+		TicketCode: &req.TicketCode,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"super_admin"},
+	}); err != nil {
+		slog.Warn("workforce_service: failed to notify super admins of registration", "member_id", member.ID, "error", err)
+	}
 }
 
 func (s *workforceService) RegisterExisting(req *models.CreateWorkforceRequest) (*models.WorkforceMember, error) {
@@ -166,6 +222,17 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 		updates["department"] = strings.TrimSpace(*req.Department)
 	}
 	if req.Status != nil {
+		// Moving a member OUT of pending is what Approve/RejectRegistration
+		// are for — they also resolve the registration ticket. Letting this
+		// generic edit form silently flip the same field would leave that
+		// ticket open forever while the member already shows as decided.
+		current, err := s.repo.GetByID(id)
+		if err != nil {
+			return nil, err
+		}
+		if (current.Status == models.WorkforceStatusPending || current.Status == models.WorkforceStatusNew) && *req.Status != current.Status {
+			return nil, errors.New("use the approve or reject action to decide a pending registration")
+		}
 		updates["status"] = *req.Status
 	}
 	if req.Notes != nil {
@@ -316,7 +383,41 @@ func (s *workforceService) Approve(id string) (*models.WorkforceMember, error) {
 		return nil, err
 	}
 
+	if s.approvalSvc != nil {
+		if _, err := s.approvalSvc.CompleteRequest(models.ApprovalTypeWorkforceRegistration, updated.ID, models.ApprovalStatusApproved, nil); err != nil {
+			slog.Warn("workforce_service: failed to complete registration ticket on approve", "member_id", updated.ID, "error", err)
+		}
+	}
+
 	s.sendApprovalEmail(updated)
+	return updated, nil
+}
+
+// RejectRegistration declines a pending workforce application. The member
+// row is kept (as not_serving) rather than deleted, mirroring how admin
+// user rejection deactivates rather than removes — reversible, with an
+// audit trail, instead of silently vanishing.
+func (s *workforceService) RejectRegistration(id, reason string, approver *models.User) (*models.WorkforceMember, error) {
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if member.Status != models.WorkforceStatusPending && member.Status != models.WorkforceStatusNew {
+		return nil, errors.New("member is not awaiting approval")
+	}
+
+	updated, err := s.repo.Update(id, map[string]interface{}{"status": models.WorkforceStatusNotServing})
+	if err != nil {
+		return nil, err
+	}
+
+	if s.approvalSvc != nil {
+		if _, err := s.approvalSvc.CompleteRequest(models.ApprovalTypeWorkforceRegistration, updated.ID, models.ApprovalStatusRejected, approver); err != nil {
+			slog.Warn("workforce_service: failed to complete registration ticket on reject", "member_id", updated.ID, "error", err)
+		}
+	}
+
+	s.sendRejectionEmail(updated, reason)
 	return updated, nil
 }
 
@@ -507,5 +608,53 @@ func (s *workforceService) sendApprovalEmail(member *models.WorkforceMember) {
 	subject := "Welcome to the workforce"
 	if err := s.sender.SendHTML(addr, subject, body); err != nil {
 		slog.Warn("workforce_service: failed to send approval email", "member_id", member.ID, "error", err)
+	}
+}
+
+func (s *workforceService) sendRejectionEmail(member *models.WorkforceMember, reason string) {
+	addr := ""
+	if member != nil {
+		addr = strings.TrimSpace(ptrString(member.Email))
+	}
+	if s.sender == nil || member == nil || addr == "" {
+		return
+	}
+
+	appName := strings.TrimSpace(s.branding.AppName)
+	if appName == "" {
+		appName = "Wisdom House"
+	}
+	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	if fullName == "" {
+		fullName = "there"
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Your application was not approved at this time."
+	}
+
+	body := fmt.Sprintf(`<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;color:#111827;">
+    <table width="100%%" cellpadding="0" cellspacing="0" style="padding:28px 14px;">
+      <tr>
+        <td align="center">
+          <table width="100%%" style="max-width:520px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;">
+            <tr><td>
+              <p style="margin:0 0 12px;font-size:16px;">Hi %s,</p>
+              <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Thank you for applying to join the workforce at %s. After review, we're not able to move forward with your application right now.</p>
+              <p style="margin:0 0 12px;font-size:15px;line-height:1.6;"><strong>Reason:</strong> %s</p>
+              <p style="margin:0;font-size:15px;line-height:1.6;">You're welcome to apply again in the future.</p>
+            </td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`, fullName, appName, reason)
+
+	subject := "Update on your workforce application"
+	if err := s.sender.SendHTML(addr, subject, body); err != nil {
+		slog.Warn("workforce_service: failed to send rejection email", "member_id", member.ID, "error", err)
 	}
 }
