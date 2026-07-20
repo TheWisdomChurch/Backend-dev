@@ -364,18 +364,7 @@ func (h *EventHandler) Delete(c *gin.Context) {
 	}
 
 	requester := h.currentUser(c)
-	var requestedByID, requestedByName, requestedByEmail *string
-	if requester != nil {
-		requestedByID = &requester.ID
-		name := strings.TrimSpace(strings.Join([]string{requester.FirstName, requester.LastName}, " "))
-		if name != "" {
-			requestedByName = &name
-		}
-		if requester.Email != "" {
-			email := requester.Email
-			requestedByEmail = &email
-		}
-	}
+	requestedByID, requestedByName, requestedByEmail := requester.ApprovalRequesterFields()
 
 	label := strings.TrimSpace(event.Title)
 	if label == "" {
