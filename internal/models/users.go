@@ -2,6 +2,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -36,4 +37,27 @@ type User struct {
 // Optional: Add TableName method for consistency
 func (User) TableName() string {
 	return "users"
+}
+
+// ApprovalRequesterFields builds the (id, name, email) triple approval-ticket
+// creation stores as "who requested this" — nil-safe so callers can pass a
+// possibly-nil *User straight through without a guard.
+func (u *User) ApprovalRequesterFields() (id, name, email *string) {
+	if u == nil {
+		return nil, nil, nil
+	}
+
+	id = &u.ID
+
+	fullName := strings.TrimSpace(strings.Join([]string{u.FirstName, u.LastName}, " "))
+	if fullName != "" {
+		name = &fullName
+	}
+
+	trimmedEmail := strings.TrimSpace(u.Email)
+	if trimmedEmail != "" {
+		email = &trimmedEmail
+	}
+
+	return id, name, email
 }

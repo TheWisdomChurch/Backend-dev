@@ -441,18 +441,7 @@ func (s *workforceService) RequestDelete(id, reason string, requestedBy *models.
 		label = id
 	}
 
-	var requestedByID, requestedByName, requestedByEmail *string
-	if requestedBy != nil {
-		requestedByID = &requestedBy.ID
-		name := strings.TrimSpace(strings.Join([]string{requestedBy.FirstName, requestedBy.LastName}, " "))
-		if name != "" {
-			requestedByName = &name
-		}
-		if strings.TrimSpace(requestedBy.Email) != "" {
-			email := strings.TrimSpace(requestedBy.Email)
-			requestedByEmail = &email
-		}
-	}
+	requestedByID, requestedByName, requestedByEmail := requestedBy.ApprovalRequesterFields()
 
 	req, err := s.approvalSvc.CreateRequest(CreateApprovalRequest{
 		Type:             models.ApprovalTypeWorkforceDelete,
