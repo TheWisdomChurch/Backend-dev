@@ -264,8 +264,8 @@ func Load() (*Config, error) {
 			ConnMaxLifetime: getEnvAsDuration("DATABASE_CONN_MAX_LIFETIME", time.Hour),
 		},
 		Server: ServerConfig{
-			Port:           serverPort,
-			GinMode:        serverGinMode,
+			Port:    serverPort,
+			GinMode: serverGinMode,
 			// 10s was too short for real file uploads: WriteTimeout in
 			// Go's net/http covers the entire handler execution (not just
 			// the final response write), so an upload still streaming to
