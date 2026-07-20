@@ -501,6 +501,7 @@ func setupRouter(
 	superAdmin.POST("/users/:id/approve", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ApproveUser)
 	superAdmin.POST("/users/:id/reject", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.RejectUser)
 	superAdmin.POST("/workforce/:id/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Approve)
+	superAdmin.POST("/workforce/:id/registration/reject", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.RejectRegistration)
 	superAdmin.POST("/workforce/:id/delete/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.ApproveDelete)
 	superAdmin.POST("/leadership/:id/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Approve)
 	superAdmin.POST("/leadership/:id/decline", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Decline)

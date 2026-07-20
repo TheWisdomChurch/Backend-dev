@@ -432,17 +432,26 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			"TotalRecipientCount":  resp.Targeted,
 			"SourceForms":          sourceForms,
 			"Year":                 time.Now().UTC().Year(),
+			// Flat aliases for the church's social links, sourced from the
+			// same config as the footer (s.branding.Social.*), so a compose
+			// HTML/text body can drop in a "watch live" or "follow us" CTA
+			// without knowing the nested Branding.Social.* path.
+			"YouTubeLink":   s.branding.Social.YouTube,
+			"InstagramLink": s.branding.Social.Instagram,
+			"XLink":         s.branding.Social.X,
+			"WhatsAppLink":  s.branding.Social.WhatsApp,
+			"FacebookLink":  s.branding.Social.Facebook,
+			"TikTokLink":    s.branding.Social.TikTok,
 		}
 	}
 
 	// Every recipient gets the exact same set of template keys (only the
 	// values differ), so a single dry-run render up front catches an
-	// unsupported/misspelled merge tag (e.g. a stray {{.YouTubeLink}} pasted
-	// in from another tool) before it burns through the whole audience —
-	// without this, a single bad tag silently fails every send and the admin
-	// only ever sees "0 delivered" with no indication of why.
+	// unsupported/misspelled merge tag before it burns through the whole
+	// audience — without this, a single bad tag silently fails every send
+	// and the admin only ever sees "0 delivered" with no indication of why.
 	if _, err := s.renderComposeContent(templateSelection, buildTemplateData("Preview Recipient", "preview@example.com", "#", "#")); err != nil {
-		return nil, fmt.Errorf("email content could not be rendered — it likely references an unsupported variable (%w). Supported variables: RecipientName, FirstName, Email, SubscribeURL, UnsubscribeURL, Subject, Year, Branding.*", err)
+		return nil, fmt.Errorf("email content could not be rendered — it likely references an unsupported variable (%w). Supported variables: RecipientName, FirstName, Email, SubscribeURL, UnsubscribeURL, Subject, Year, YouTubeLink, InstagramLink, XLink, WhatsAppLink, FacebookLink, TikTokLink, Branding.*", err)
 	}
 
 	for _, recipient := range resolvedRecipients {
