@@ -23,7 +23,7 @@ type LeadershipService interface {
 	Update(id string, req *models.UpdateLeadershipRequest) (*models.LeadershipMember, error)
 	Approve(id string) (*models.LeadershipMember, error)
 	Decline(id string) (*models.LeadershipMember, error)
-	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error)
 	ApproveDelete(id string, approver *models.User) error
 	Delete(id string) error
 
@@ -198,9 +198,14 @@ func (s *leadershipService) Decline(id string) (*models.LeadershipMember, error)
 	return updated, nil
 }
 
-func (s *leadershipService) RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+func (s *leadershipService) RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error) {
 	if s.approvalSvc == nil {
 		return nil, errors.New("approval service not configured")
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, errors.New("a reason is required")
 	}
 
 	member, err := s.repo.GetByID(id)
@@ -230,6 +235,7 @@ func (s *leadershipService) RequestDelete(id string, requestedBy *models.User) (
 		Type:             models.ApprovalTypeLeadershipDelete,
 		EntityID:         &member.ID,
 		EntityLabel:      &label,
+		Reason:           &reason,
 		RequestedByID:    requestedByID,
 		RequestedByName:  requestedByName,
 		RequestedByEmail: requestedByEmail,
