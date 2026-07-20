@@ -90,6 +90,12 @@ func presentApprovalRequest(req models.ApprovalRequest) approvalRequestResponse 
 	case models.ApprovalTypeEvent:
 		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve event", Method: http.MethodPatch, URL: "/api/v1/admin/events/" + entityID + "/approve"}
 		resp.DeleteAction = &approvalRequestActionLink{Label: "Reject/delete event", Method: http.MethodDelete, URL: "/api/v1/admin/events/" + entityID}
+	case models.ApprovalTypeEventDelete:
+		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve event deletion", Method: http.MethodPost, URL: "/api/v1/admin/events/" + entityID + "/delete/approve"}
+		resp.RejectAction = &approvalRequestActionLink{Label: "Reject event deletion", Method: http.MethodPost, URL: "/api/v1/admin/requests/" + req.ID + "/reject"}
+	case models.ApprovalTypeWorkforceRegistration:
+		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve workforce registration", Method: http.MethodPost, URL: "/api/v1/admin/workforce/" + entityID + "/approve"}
+		resp.RejectAction = &approvalRequestActionLink{Label: "Reject workforce registration", Method: http.MethodPost, URL: "/api/v1/admin/workforce/" + entityID + "/registration/reject"}
 	case models.ApprovalTypeLeadershipDelete:
 		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve leadership delete", Method: http.MethodPost, URL: "/api/v1/admin/leadership/" + req.ID + "/delete/approve"}
 		resp.RejectAction = &approvalRequestActionLink{Label: "Reject leadership delete", Method: http.MethodPost, URL: "/api/v1/admin/requests/" + req.ID + "/reject"}

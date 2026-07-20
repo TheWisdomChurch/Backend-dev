@@ -23,7 +23,7 @@ type LeadershipService interface {
 	Update(id string, req *models.UpdateLeadershipRequest) (*models.LeadershipMember, error)
 	Approve(id string) (*models.LeadershipMember, error)
 	Decline(id string) (*models.LeadershipMember, error)
-	RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error)
 	ApproveDelete(id string, approver *models.User) error
 	Delete(id string) error
 
@@ -198,9 +198,14 @@ func (s *leadershipService) Decline(id string) (*models.LeadershipMember, error)
 	return updated, nil
 }
 
-func (s *leadershipService) RequestDelete(id string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+func (s *leadershipService) RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error) {
 	if s.approvalSvc == nil {
 		return nil, errors.New("approval service not configured")
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, errors.New("a reason is required")
 	}
 
 	member, err := s.repo.GetByID(id)
@@ -230,6 +235,7 @@ func (s *leadershipService) RequestDelete(id string, requestedBy *models.User) (
 		Type:             models.ApprovalTypeLeadershipDelete,
 		EntityID:         &member.ID,
 		EntityLabel:      &label,
+		Reason:           &reason,
 		RequestedByID:    requestedByID,
 		RequestedByName:  requestedByName,
 		RequestedByEmail: requestedByEmail,
@@ -284,6 +290,11 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 		}
 	}
 
+	member, err := s.repo.GetByID(entityID)
+	if err != nil {
+		return err
+	}
+
 	if _, err := s.approvalSvc.CompleteRequest(
 		models.ApprovalTypeLeadershipDelete,
 		entityID,
@@ -292,11 +303,51 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 	); err != nil {
 		return err
 	}
-	return s.repo.Delete(entityID)
+	if err := s.repo.Delete(entityID); err != nil {
+		return err
+	}
+	s.retireLeadershipIntakeSubmissions(member.Email)
+	return nil
 }
 
 func (s *leadershipService) Delete(id string) error {
-	return s.repo.Delete(id)
+	member, err := s.repo.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.Delete(id); err != nil {
+		return err
+	}
+	s.retireLeadershipIntakeSubmissions(member.Email)
+	return nil
+}
+
+// retireLeadershipIntakeSubmissions soft-deletes the intake form
+// submission(s) behind a now-deleted leadership member. Without this, the
+// next admin page load re-runs syncLeadershipIntakeSubmissions, sees the
+// original public application still sitting there with no member matching
+// its email, and silently re-creates the very member that was just
+// deleted — so an approved deletion never actually sticks. Matching is by
+// email (the same key the sync loop itself uses; members have no stored
+// link back to their source submission).
+func (s *leadershipService) retireLeadershipIntakeSubmissions(email *string) {
+	if email == nil || s.formRepo == nil {
+		return
+	}
+	clean := strings.ToLower(strings.TrimSpace(*email))
+	if clean == "" {
+		return
+	}
+	submissions, err := s.formRepo.ListLeadershipIntakeSubmissions(500)
+	if err != nil {
+		return
+	}
+	for _, submission := range submissions {
+		if submission.Email == nil || strings.ToLower(strings.TrimSpace(*submission.Email)) != clean {
+			continue
+		}
+		_ = s.formRepo.DeleteSubmission(submission.ID)
+	}
 }
 
 func (s *leadershipService) BirthdayStats() (*models.BirthdayStatsResponse, error) {

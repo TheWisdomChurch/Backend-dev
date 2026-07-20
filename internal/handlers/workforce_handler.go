@@ -233,13 +233,42 @@ func (h *WorkforceHandler) Approve(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Workforce request approved", member)
 }
 
+func (h *WorkforceHandler) RejectRegistration(c *gin.Context) {
+	id, ok := parseUUIDParam(c, "id", "workforce member id")
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !validation.BindJSON(c, &body) {
+		return
+	}
+
+	member, err := h.svc.RejectRegistration(id, body.Reason, h.currentUser(c))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Workforce registration rejected", member)
+}
+
 func (h *WorkforceHandler) Delete(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id", "workforce member id")
 	if !ok {
 		return
 	}
 
-	req, err := h.svc.RequestDelete(id, h.currentUser(c))
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if !validation.BindJSON(c, &body) {
+		return
+	}
+
+	req, err := h.svc.RequestDelete(id, body.Reason, h.currentUser(c))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
