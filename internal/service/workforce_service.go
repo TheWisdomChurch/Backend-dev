@@ -181,18 +181,24 @@ func (s *workforceService) createWithStatus(req *models.CreateWorkforceRequest, 
 	if err != nil {
 		return nil, err
 	}
+	anniversaryMonth, anniversaryDay, err := parseAnniversary(req.AnniversaryMonth, req.AnniversaryDay, req.Anniversary)
+	if err != nil {
+		return nil, err
+	}
 
 	member := &models.WorkforceMember{
-		FirstName:     strings.TrimSpace(req.FirstName),
-		LastName:      strings.TrimSpace(req.LastName),
-		Email:         optionalStringPtr(req.Email),
-		Phone:         optionalStringPtr(req.Phone),
-		Department:    strings.TrimSpace(req.Department),
-		SourceChannel: strings.TrimSpace(req.SourceChannel),
-		Status:        status,
-		Notes:         sanitize.TextPtr(req.Notes),
-		BirthdayMonth: month,
-		BirthdayDay:   day,
+		FirstName:        strings.TrimSpace(req.FirstName),
+		LastName:         strings.TrimSpace(req.LastName),
+		Email:            optionalStringPtr(req.Email),
+		Phone:            optionalStringPtr(req.Phone),
+		Department:       strings.TrimSpace(req.Department),
+		SourceChannel:    strings.TrimSpace(req.SourceChannel),
+		Status:           status,
+		Notes:            sanitize.TextPtr(req.Notes),
+		BirthdayMonth:    month,
+		BirthdayDay:      day,
+		AnniversaryMonth: anniversaryMonth,
+		AnniversaryDay:   anniversaryDay,
 	}
 	if member.SourceChannel == "" {
 		member.SourceChannel = "frontend:web:workforce"
@@ -245,6 +251,14 @@ func (s *workforceService) Update(id string, req *models.UpdateWorkforceRequest)
 		}
 		updates["birthday_month"] = month
 		updates["birthday_day"] = day
+	}
+	if req.AnniversaryMonth != nil || req.AnniversaryDay != nil || req.Anniversary != nil {
+		month, day, err := parseAnniversary(req.AnniversaryMonth, req.AnniversaryDay, req.Anniversary)
+		if err != nil {
+			return nil, err
+		}
+		updates["anniversary_month"] = month
+		updates["anniversary_day"] = day
 	}
 
 	if len(updates) == 0 {
