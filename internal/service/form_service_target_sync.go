@@ -280,9 +280,10 @@ func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsD
 	}
 
 	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
-	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber", "contact_number")
 	notes := valueAsString(values, "notes", "note", "comment", "message")
-	birthday := valueAsString(values, "birthday", "birthDate", "dob")
+	birthday := valueAsString(values, "birthday", "birthDate", "birth_date", "dob", "dateOfBirth", "date_of_birth")
+	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "wedding_anniversary", "anniversaryDate", "anniversary_date")
 
 	req := &models.CreateWorkforceRequest{
 		FirstName:  strings.TrimSpace(first),
@@ -298,9 +299,13 @@ func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsD
 		n := strings.TrimSpace(notes)
 		req.Notes = &n
 	}
-	if birthday != "" {
+	if strings.TrimSpace(birthday) != "" {
 		b := strings.TrimSpace(birthday)
 		req.Birthday = &b
+	}
+	if strings.TrimSpace(anniversary) != "" {
+		a := strings.TrimSpace(anniversary)
+		req.Anniversary = &a
 	}
 	return req, nil
 }
@@ -346,33 +351,6 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 		req.Birthday = &b
 	}
 	return req, nil
-}
-
-func normalizeDDMMInput(value string) string {
-	clean := strings.TrimSpace(value)
-	if clean == "" {
-		return ""
-	}
-
-	clean = strings.ReplaceAll(clean, "-", "/")
-	clean = strings.ReplaceAll(clean, ".", "/")
-	clean = strings.ReplaceAll(clean, " ", "/")
-
-	parts := strings.Split(clean, "/")
-	if len(parts) != 2 {
-		return clean
-	}
-
-	day := strings.TrimLeft(strings.TrimSpace(parts[0]), "0")
-	month := strings.TrimLeft(strings.TrimSpace(parts[1]), "0")
-	if day == "" {
-		day = "0"
-	}
-	if month == "" {
-		month = "0"
-	}
-
-	return fmt.Sprintf("%02s/%02s", day, month)
 }
 
 func isDataImageValue(value string) bool {
@@ -440,9 +418,6 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 	)
 	birthday := valueAsString(values, "birthday", "birthDate", "birth_date", "dob", "dateOfBirth", "date_of_birth")
 	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "wedding_anniversary", "anniversaryDate", "anniversary_date")
-
-	birthday = normalizeDDMMInput(birthday)
-	anniversary = normalizeDDMMInput(anniversary)
 
 	// Never save raw base64 data images as leadership image URLs.
 	// Public form uploads should upload first, then submit the returned public URL.
