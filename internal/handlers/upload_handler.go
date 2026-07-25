@@ -118,12 +118,13 @@ func (h *UploadHandler) uploadFile(c *gin.Context, forcedKind string, maxBytes i
 	ownerType := strings.ToLower(strings.TrimSpace(c.DefaultPostForm("ownerType", module)))
 	ownerID := strings.TrimSpace(c.DefaultPostForm("ownerId", c.DefaultPostForm("relatedId", "")))
 	folder := sanitizeAssetFolder(c.DefaultPostForm("folder", defaultAssetFolder(module, kind)))
+	aspectRatio := strings.TrimSpace(c.PostForm("aspectRatio"))
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), uploadTimeout(kind))
 	defer cancel()
 
 	if kind == "image" && h.images != nil {
-		h.uploadImage(ctx, c, src, fh, contentType, module, ownerType, ownerID, folder)
+		h.uploadImage(ctx, c, src, fh, contentType, module, ownerType, ownerID, folder, aspectRatio)
 		return
 	}
 
@@ -227,7 +228,7 @@ func (h *UploadHandler) uploadImage(
 	src multipart.File,
 	fh *multipart.FileHeader,
 	claimedContentType string,
-	module, ownerType, ownerID, folder string,
+	module, ownerType, ownerID, folder, aspectRatio string,
 ) {
 	data, err := io.ReadAll(src)
 	if err != nil {
@@ -239,7 +240,13 @@ func (h *UploadHandler) uploadImage(
 	checksum := "sha256:" + hex.EncodeToString(sum[:])
 	originalName := filepath.Base(fh.Filename)
 
-	set, err := h.images.Process(data)
+	// aspectRatio must be one of the sitewide allow-listed keys (e.g.
+	// "16:9") — never a raw client-supplied float. An unknown, empty, or
+	// malformed value simply means "no enforcement," matching the
+	// pre-existing behavior for every caller that doesn't send it.
+	opts := service.ProcessOptions{TargetAspectRatio: service.AllowedAspectRatios[aspectRatio]}
+
+	set, err := h.images.Process(data, opts)
 	if err != nil {
 		// A decode failure here means the bytes are not actually a valid
 		// image, regardless of what Content-Type the client claimed —
@@ -247,6 +254,13 @@ func (h *UploadHandler) uploadImage(
 		applog.L().Warn("image processing failed", "module", module, "folder", folder, "content_type", claimedContentType, "size", fh.Size, "error", err)
 		utils.ErrorResponse(c, http.StatusBadRequest, "file is not a valid, processable image")
 		return
+	}
+
+	if set.Cropped {
+		// The caller's crop UI (if any) didn't already produce this shape —
+		// worth watching for, since /api/v1/uploads has no auth guard and
+		// this is the only enforcement that exists for non-portal callers.
+		applog.L().Info("image center-cropped server-side to match target aspect ratio", "module", module, "folder", folder, "aspect_ratio", aspectRatio)
 	}
 
 	assetID := h.storage.NewAssetID()

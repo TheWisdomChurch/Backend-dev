@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	"strings"
 
 	"github.com/disintegration/imaging"
@@ -48,6 +49,22 @@ const maxDecodeMegapixels = 40 * 1_000_000 // 40MP — comfortably above any rea
 // quality-95+ export.
 const jpegQuality = 82
 
+// AllowedAspectRatios is the sitewide vocabulary of crop targets. Callers
+// pass one of these keys (never a raw float) so an aspect-ratio target is
+// always one of a small, deliberately chosen set — never an arbitrary,
+// possibly-degenerate value from client input.
+var AllowedAspectRatios = map[string]float64{
+	"16:9": 16.0 / 9.0,
+	"1:1":  1.0,
+	"4:5":  4.0 / 5.0,
+}
+
+// aspectRatioTolerance is how close a source image's ratio must already be
+// to the target before it's left untouched instead of center-cropped. 0.5%
+// comfortably absorbs rounding from prior resizes without ever visibly
+// cropping an image that's already an exact (or near-exact) match.
+const aspectRatioTolerance = 0.005
+
 // ProcessedImage is one derived size: its encoded bytes plus the dimensions
 // the caller needs to render an <img> without layout shift.
 type ProcessedImage struct {
@@ -68,14 +85,29 @@ type ProcessedImageSet struct {
 	Variants       map[ImageVariantName]ProcessedImage
 	OriginalWidth  int
 	OriginalHeight int
+	// Cropped is true when the source's aspect ratio didn't already match
+	// ProcessOptions.TargetAspectRatio and had to be center-cropped to fit.
+	// Surfaced so callers can log/observe when server-side enforcement had
+	// to actually intervene — a signal that whatever produced this upload
+	// didn't already crop to the right shape.
+	Cropped bool
+}
+
+// ProcessOptions configures one Process call.
+type ProcessOptions struct {
+	// TargetAspectRatio is width/height (e.g. 16.0/9.0). Zero or negative
+	// means "no enforcement" — the source's aspect ratio is preserved
+	// exactly as before this option existed.
+	TargetAspectRatio float64
 }
 
 type ImageProcessor interface {
 	// Process decodes raw image bytes, strips metadata (EXIF — including
 	// GPS location data — never survives re-encoding through image.Image),
-	// auto-corrects orientation, and produces the original plus every
-	// variant in the size ladder that's smaller than the source.
-	Process(data []byte) (*ProcessedImageSet, error)
+	// auto-corrects orientation, center-crops to opts.TargetAspectRatio if
+	// set, and produces the (possibly cropped) original plus every variant
+	// in the size ladder that's smaller than the source.
+	Process(data []byte, opts ProcessOptions) (*ProcessedImageSet, error)
 }
 
 type imageProcessor struct{}
@@ -84,7 +116,7 @@ func NewImageProcessor() ImageProcessor {
 	return &imageProcessor{}
 }
 
-func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
+func (p *imageProcessor) Process(data []byte, opts ProcessOptions) (*ProcessedImageSet, error) {
 	if len(data) == 0 {
 		return nil, errors.New("image data is empty")
 	}
@@ -105,6 +137,13 @@ func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
+
+	// Crop to the target ratio (if any) before anything is encoded, so the
+	// stored original and every derived variant below all come from the
+	// same already-correctly-shaped source instead of drifting relative to
+	// each other.
+	croppedImg, cropped := applyTargetAspectRatio(img, opts.TargetAspectRatio)
+	img = croppedImg
 
 	outFormat, contentType := outputFormatFor(format, img)
 
@@ -139,6 +178,7 @@ func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
 		Variants:       make(map[ImageVariantName]ProcessedImage, len(imageVariantWidths)),
 		OriginalWidth:  original.Width,
 		OriginalHeight: original.Height,
+		Cropped:        cropped,
 	}
 
 	// Each step resizes from the previous (smaller) image rather than the
@@ -163,6 +203,42 @@ func (p *imageProcessor) Process(data []byte) (*ProcessedImageSet, error) {
 	}
 
 	return set, nil
+}
+
+// applyTargetAspectRatio center-crops img to the given width/height ratio if
+// its current ratio isn't already within aspectRatioTolerance of it. It never
+// resizes — only crops — so it never upscales, matching the "never upscale"
+// rule the variant ladder already follows. target <= 0 (or a zero-area
+// source, which can't happen post-decode but is guarded defensively) is a
+// no-op. Returns the possibly-cropped image and whether a crop happened.
+func applyTargetAspectRatio(img image.Image, target float64) (image.Image, bool) {
+	if target <= 0 {
+		return img, false
+	}
+
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w == 0 || h == 0 {
+		return img, false
+	}
+
+	current := float64(w) / float64(h)
+	if math.Abs(current-target)/target < aspectRatioTolerance {
+		return img, false
+	}
+
+	var newW, newH int
+	if current > target {
+		// Wider than target — crop width, keep height.
+		newH = h
+		newW = int(math.Round(float64(h) * target))
+	} else {
+		// Taller than target — crop height, keep width.
+		newW = w
+		newH = int(math.Round(float64(w) / target))
+	}
+
+	return imaging.CropCenter(img, newW, newH), true
 }
 
 // outputFormatFor decides the re-encode target. PNG sources with an alpha
