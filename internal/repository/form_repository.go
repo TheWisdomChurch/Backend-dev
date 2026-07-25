@@ -43,6 +43,7 @@ type FormRepository interface {
 	CountNewMemberSubmissions(start, end *time.Time) (int64, error)
 	CountNewMemberSubmissionsByPeriod(period string, start, end *time.Time) ([]models.GrowthBucket, error)
 	ListLeadershipIntakeSubmissions(limit int) ([]models.FormSubmissionWithForm, error)
+	ListWorkforceIntakeSubmissions(limit int) ([]models.FormSubmissionWithForm, error)
 	DeleteExpired(now time.Time) (int64, error)
 }
 
@@ -323,6 +324,16 @@ func applyLeadershipIntakeFormFilter(q *gorm.DB) *gorm.DB {
 	)`)
 }
 
+func applyWorkforceIntakeFormFilter(q *gorm.DB) *gorm.DB {
+	return q.Where(`(
+		LOWER(COALESCE(forms.settings->>'submissionTarget', '')) LIKE 'workforce%'
+		OR LOWER(COALESCE(forms.settings->>'formType', '')) = 'workforce'
+		OR LOWER(COALESCE(forms.slug, '')) LIKE '%workforce%'
+		OR LOWER(COALESCE(forms.title, '')) LIKE '%workforce%'
+		OR LOWER(COALESCE(forms.title, '')) LIKE '%worker%'
+	)`)
+}
+
 func applyNewMemberSubmissionFilters(q *gorm.DB, start, end *time.Time) *gorm.DB {
 	q = q.Joins("JOIN forms ON forms.id = form_submissions.form_id")
 	q = applyNewMemberFormFilter(q)
@@ -501,6 +512,31 @@ func (r *formRepository) ListLeadershipIntakeSubmissions(limit int) ([]models.Fo
 	}
 
 	q := applyLeadershipIntakeFormFilter(r.db.DB.Model(&models.FormSubmission{})).
+		Select(`form_submissions.id,
+			form_submissions.form_id,
+			COALESCE(forms.title, '') as form_title,
+			form_submissions.name,
+			form_submissions.email,
+			form_submissions.contact_number,
+			form_submissions.contact_address,
+			form_submissions.registration_code,
+			form_submissions.values,
+			form_submissions.created_at`).
+		Joins("JOIN forms ON forms.id = form_submissions.form_id").
+		Where("form_submissions.deleted_at IS NULL").
+		Order("form_submissions.created_at DESC").
+		Limit(limit)
+
+	return items, q.Scan(&items).Error
+}
+
+func (r *formRepository) ListWorkforceIntakeSubmissions(limit int) ([]models.FormSubmissionWithForm, error) {
+	var items []models.FormSubmissionWithForm
+	if limit < 1 || limit > 1000 {
+		limit = 500
+	}
+
+	q := applyWorkforceIntakeFormFilter(r.db.DB.Model(&models.FormSubmission{})).
 		Select(`form_submissions.id,
 			form_submissions.form_id,
 			COALESCE(forms.title, '') as form_title,
