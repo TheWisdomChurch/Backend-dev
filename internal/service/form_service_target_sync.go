@@ -254,6 +254,15 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 	}
 }
 
+// BuildWorkforceRequestFromValues exposes the same field-mapping logic
+// syncSubmissionTarget uses at submission time, for one-off maintenance
+// scripts (e.g. backfilling birthday/anniversary from a submission whose
+// original mapping predates a fix) that need it without duplicating the
+// key-lookup list.
+func BuildWorkforceRequestFromValues(values map[string]any) (*models.CreateWorkforceRequest, error) {
+	return buildWorkforceRequest(values, nil, false)
+}
+
 func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsDTO, existing bool) (*models.CreateWorkforceRequest, error) {
 	first := valueAsString(values, "firstName", "first_name", "firstname", "givenName")
 	last := valueAsString(values, "lastName", "last_name", "lastname", "surname", "familyName")
