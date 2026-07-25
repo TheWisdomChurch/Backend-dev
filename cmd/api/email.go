@@ -217,6 +217,23 @@ func initEmailSender(cfg *config.Config) service.EmailSender {
 	var primaryName string
 	var fallbackName string
 
+	// Brevo goes first when configured: it's the fully-authenticated path
+	// (SPF + DKIM both verified against wisdomchurchhq.org's DNS). The raw
+	// SMTP relay only picks up SPF via the domain's "mx" rule and has no
+	// DKIM signing of its own, so mail sent through it as primary was
+	// passing SMTP delivery (the app saw "sent") while still getting
+	// silently spam-filtered or dropped by the receiving provider.
+	if hasAnyEnv("BREVO_API_KEY", "BREVO_FROM_EMAIL", "BREVO_FROM_NAME", "BREVO_BASE_URL") {
+		s, err := email.NewBrevoSender(cfg.Redis.URL, "", "", "", "")
+		if err != nil {
+			applog.L().Warn("Brevo email sender not initialized", "error", err)
+		} else {
+			primary = s
+			primaryName = "Brevo"
+			applog.L().Info("email sender initialized (Brevo API)")
+		}
+	}
+
 	if strings.TrimSpace(cfg.SMTP.Host) != "" {
 		s, err := email.NewSender(
 			cfg.Redis.URL,
@@ -229,25 +246,14 @@ func initEmailSender(cfg *config.Config) service.EmailSender {
 		)
 		if err != nil {
 			applog.L().Warn("SMTP sender not initialized", "error", err)
-		} else {
+		} else if primary == nil {
 			primary = s
 			primaryName = "SMTP"
 			applog.L().Info("email sender initialized (SMTP relay)")
-		}
-	}
-
-	if hasAnyEnv("BREVO_API_KEY", "BREVO_FROM_EMAIL", "BREVO_FROM_NAME", "BREVO_BASE_URL") {
-		s, err := email.NewBrevoSender(cfg.Redis.URL, "", "", "", "")
-		if err != nil {
-			applog.L().Warn("Brevo email sender not initialized", "error", err)
-		} else if primary == nil {
-			primary = s
-			primaryName = "Brevo"
-			applog.L().Info("email sender initialized (Brevo API)")
-		} else if fallback == nil {
+		} else {
 			fallback = s
-			fallbackName = "Brevo"
-			applog.L().Info("email fallback configured (Brevo API)")
+			fallbackName = "SMTP"
+			applog.L().Info("email fallback configured (SMTP relay)")
 		}
 	}
 
