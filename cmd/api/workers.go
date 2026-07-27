@@ -13,6 +13,7 @@ import (
 	applog "wisdomHouse-backend/internal/logger"
 
 	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 )
 
@@ -75,6 +76,43 @@ func startFormCleanup(ctx context.Context, svc service.FormService, interval tim
 			if count > 0 {
 				applog.L().Info("cleaned up expired forms", "count", count)
 			}
+		}
+	}
+}
+
+func startAnalyticsRawCleanup(ctx context.Context, lock *redisLock, db *database.Database, interval time.Duration) {
+	if db == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 24 * time.Hour
+	}
+	run := func() {
+		if lock != nil {
+			ok, err := lock.Acquire(ctx, "analytics_raw_cleanup:"+time.Now().UTC().Format("20060102"), 25*time.Hour)
+			if err != nil || !ok {
+				if err != nil {
+					applog.L().Warn("analytics cleanup lock failed", "error", err)
+				}
+				return
+			}
+		}
+		result := db.WithContext(ctx).Where("expires_at < ?", time.Now().UTC()).Delete(&models.AnalyticsBatch{})
+		if result.Error != nil {
+			applog.L().Warn("analytics raw batch cleanup failed", "error", result.Error)
+		} else if result.RowsAffected > 0 {
+			applog.L().Info("expired analytics raw batches removed", "count", result.RowsAffected)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
 		}
 	}
 }

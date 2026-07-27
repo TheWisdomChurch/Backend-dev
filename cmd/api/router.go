@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -188,7 +189,15 @@ func setupRouter(
 	api.GET("/events/:id", eventHandler.Get)
 	api.GET("/reels", reelHandler.List)
 	api.GET("/sermons", sermonHandler.List)
-	api.POST("/analytics/events", analyticsHandler.IngestEvents)
+	analyticsIngestLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: 30,
+		Burst:             10,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:analytics-ingest",
+		Message:           "Too many analytics batches. Please retry later.",
+	})
+	api.POST("/analytics/events", analyticsIngestLimiter, analyticsHandler.IngestEvents)
 
 	// Notifications (newsletter-style)
 	api.POST("/notifications/subscribe", notificationHandler.Subscribe)

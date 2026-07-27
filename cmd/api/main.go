@@ -587,6 +587,7 @@ func main() {
 
 	go sseHub.Start(cleanupCtx)
 	go startFormCleanup(cleanupCtx, formService, cfg.App.FormCleanupInterval)
+	go startAnalyticsRawCleanup(cleanupCtx, newRedisLock(cfg.Redis.URL), db, 24*time.Hour)
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
