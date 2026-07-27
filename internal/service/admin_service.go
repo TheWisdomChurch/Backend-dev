@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -397,7 +398,7 @@ func (s *adminServiceImpl) DeleteUser(id string) error {
 	return s.userRepo.DeleteHard(id)
 }
 
-func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
+func (s *adminServiceImpl) GetDashboardStats(ctx context.Context) (interface{}, error) {
 	var totalUsers, totalTestimonials, pendingTestimonials int64
 
 	if s.userRepo != nil {
@@ -422,19 +423,22 @@ func (s *adminServiceImpl) GetDashboardStats() (interface{}, error) {
 		pendingTestimonials = pending
 	}
 
-	pendingApprovals := 0
+	var pendingApprovals int64
 	if s.approvalSvc != nil {
-		items, listErr := s.approvalSvc.ListRequests(nil, []models.ApprovalRequestStatus{models.ApprovalStatusPending}, nil, nil, 500)
-		if listErr == nil {
-			pendingApprovals = len(items)
+		count, countErr := s.approvalSvc.CountRequests(ctx, []models.ApprovalRequestStatus{models.ApprovalStatusPending})
+		if countErr != nil {
+			return nil, fmt.Errorf("count pending approvals: %w", countErr)
 		}
+		pendingApprovals = count
 	}
 
 	recentActivity := []models.AuditLog{}
 	if s.auditLogRepo != nil {
-		if recent, err := s.auditLogRepo.Recent(context.Background(), 10); err == nil {
-			recentActivity = recent
+		recent, err := s.auditLogRepo.Recent(ctx, 10)
+		if err != nil {
+			return nil, fmt.Errorf("load recent activity: %w", err)
 		}
+		recentActivity = recent
 	}
 
 	return map[string]interface{}{

@@ -1,7 +1,9 @@
 package service
 
+import "context"
+
 type AdminService interface {
-	GetDashboardStats() (interface{}, error)
+	GetDashboardStats(ctx context.Context) (interface{}, error)
 	GetSecurityOverview() (interface{}, error)
 	GetPendingTestimonials() (interface{}, error)
 	GetAllUsers() (interface{}, error)
