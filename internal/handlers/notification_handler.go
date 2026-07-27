@@ -65,13 +65,20 @@ func (h *NotificationHandler) Unsubscribe(c *gin.Context) {
 
 func (h *NotificationHandler) UnsubscribeByLink(c *gin.Context) {
 	token := strings.TrimSpace(c.Query("token"))
-	if token == "" {
+	var unsubscribeErr error
+	if token != "" {
+		unsubscribeErr = h.svc.UnsubscribeByToken(token)
+	} else if emailAddr := strings.TrimSpace(c.Query("email")); emailAddr != "" {
+		// Compatibility for links issued before authenticated tokens. New links
+		// never expose the subscriber's address in the URL.
+		unsubscribeErr = h.svc.Unsubscribe(emailAddr)
+	} else {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid unsubscribe link")
 		return
 	}
 
-	if err := h.svc.UnsubscribeByToken(token); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if unsubscribeErr != nil {
+		if errors.Is(unsubscribeErr, gorm.ErrRecordNotFound) {
 			utils.ErrorResponse(c, http.StatusNotFound, "Subscriber not found")
 			return
 		}
