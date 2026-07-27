@@ -173,6 +173,47 @@ func startFormReminderScheduler(
 	}
 }
 
+func startNewMemberWorkflowScheduler(ctx context.Context, lock *redisLock, svc service.NewMemberWorkflowService, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 15 * time.Minute
+	}
+	run := func() {
+		now := time.Now().UTC()
+		if lock != nil {
+			ok, err := lock.Acquire(ctx, "new_member_workflow:"+now.Format("200601021504"), interval+time.Minute)
+			if err != nil {
+				applog.L().Warn("new-member workflow lock failed", "error", err)
+				return
+			}
+			if !ok {
+				return
+			}
+		}
+		processed, err := svc.ProcessDue(ctx, now)
+		if err != nil {
+			applog.L().Warn("new-member workflow scheduler failed", "error", err)
+			return
+		}
+		if processed > 0 {
+			applog.L().Info("new-member workflow reminders processed", "count", processed)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
+
 func parseHourMinute(raw string) (int, int, error) {
 	parts := strings.Split(strings.TrimSpace(raw), ":")
 	if len(parts) != 2 {
