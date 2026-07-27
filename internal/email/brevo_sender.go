@@ -83,9 +83,13 @@ func (s *BrevoSender) SendHTML(to, subject, body string) error {
 }
 
 func (s *BrevoSender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	return s.SendHTMLTextWithOptions(to, subject, htmlBody, textBody, MessageOptions{})
+}
+
+func (s *BrevoSender) SendHTMLTextWithOptions(to, subject, htmlBody, textBody string, opts MessageOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.opTimeout)
 	defer cancel()
-	return s.SendHTMLTextContext(ctx, to, subject, htmlBody, textBody)
+	return s.sendHTMLTextContext(ctx, to, subject, htmlBody, textBody, opts)
 }
 
 func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body string) error {
@@ -93,6 +97,10 @@ func (s *BrevoSender) SendHTMLContext(ctx context.Context, to, subject, body str
 }
 
 func (s *BrevoSender) SendHTMLTextContext(ctx context.Context, to, subject, htmlBody, textBody string) error {
+	return s.sendHTMLTextContext(ctx, to, subject, htmlBody, textBody, MessageOptions{})
+}
+
+func (s *BrevoSender) sendHTMLTextContext(ctx context.Context, to, subject, htmlBody, textBody string, opts MessageOptions) error {
 	// Rate limit: max 10/min per recipient
 	if s.redis != nil {
 		key := fmt.Sprintf("email_rate:%s:limit", to)
@@ -128,11 +136,12 @@ func (s *BrevoSender) SendHTMLTextContext(ctx context.Context, to, subject, html
 		Name  string `json:"name,omitempty"`
 	}
 	type brevoRequest struct {
-		Sender      sender      `json:"sender"`
-		To          []recipient `json:"to"`
-		Subject     string      `json:"subject"`
-		TextContent string      `json:"textContent,omitempty"`
-		HTMLContent string      `json:"htmlContent"`
+		Sender      sender            `json:"sender"`
+		To          []recipient       `json:"to"`
+		Subject     string            `json:"subject"`
+		TextContent string            `json:"textContent,omitempty"`
+		HTMLContent string            `json:"htmlContent"`
+		Headers     map[string]string `json:"headers,omitempty"`
 	}
 
 	payload := brevoRequest{
@@ -144,6 +153,12 @@ func (s *BrevoSender) SendHTMLTextContext(ctx context.Context, to, subject, html
 		Subject:     subject,
 		TextContent: strings.TrimSpace(textBody),
 		HTMLContent: htmlBody,
+	}
+	if unsubscribeURL := strings.TrimSpace(opts.UnsubscribeURL); unsubscribeURL != "" {
+		payload.Headers = map[string]string{
+			"List-Unsubscribe":      "<" + unsubscribeURL + ">",
+			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		}
 	}
 
 	data, err := json.Marshal(payload)

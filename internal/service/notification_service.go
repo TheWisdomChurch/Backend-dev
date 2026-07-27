@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -21,6 +22,7 @@ type EmailSender interface {
 type NotificationService interface {
 	Subscribe(req *models.SubscribeRequest) (*models.Subscriber, error)
 	Unsubscribe(email string) error
+	UnsubscribeByToken(token string) error
 	ListSubscribers(page, limit int, status, search, source string) ([]models.Subscriber, int64, error)
 	GetSubscriberSummary() (*models.SubscriberSummary, error)
 	SendNotification(req *models.SendNotificationRequest) (*models.SendNotificationResult, error)
@@ -32,6 +34,7 @@ type notificationService struct {
 	eventRepo     *repository.EventRepository
 	sender        EmailSender
 	branding      email.Branding
+	protector     *authutil.Protector
 }
 
 func NewNotificationService(
@@ -40,14 +43,47 @@ func NewNotificationService(
 	eventRepo *repository.EventRepository,
 	sender EmailSender,
 	branding email.Branding,
-) NotificationService {
+	authSecret string,
+) (NotificationService, error) {
+	if subscriberRepo == nil {
+		return nil, errors.New("subscriber repository is required")
+	}
+	protector, err := authutil.NewProtector(authSecret)
+	if err != nil {
+		return nil, fmt.Errorf("configure subscription tokens: %w", err)
+	}
 	return &notificationService{
 		subscribers:   subscriberRepo,
 		notifications: notificationRepo,
 		eventRepo:     eventRepo,
 		sender:        sender,
 		branding:      branding,
+		protector:     protector,
+	}, nil
+}
+
+func (s *notificationService) UnsubscribeByToken(token string) error {
+	plaintext, err := s.protector.DecryptString(strings.TrimSpace(token))
+	if err != nil {
+		return errors.New("unsubscribe link is invalid")
 	}
+	purpose, emailAddr, ok := strings.Cut(plaintext, "\n")
+	if !ok || purpose != "unsubscribe" || normalizeEmail(emailAddr) == "" {
+		return errors.New("unsubscribe link is invalid")
+	}
+	return s.Unsubscribe(emailAddr)
+}
+
+func (s *notificationService) unsubscribeURL(emailAddr string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
+	if base == "" || s.protector == nil {
+		return ""
+	}
+	token, err := s.protector.EncryptString("unsubscribe\n" + normalizeEmail(emailAddr))
+	if err != nil {
+		return ""
+	}
+	return base + "/api/v1/notifications/unsubscribe?token=" + url.QueryEscape(token)
 }
 
 func (s *notificationService) Subscribe(req *models.SubscribeRequest) (*models.Subscriber, error) {
@@ -192,6 +228,7 @@ func (s *notificationService) SendNotification(req *models.SendNotificationReque
 	}
 
 	for _, sub := range subscribers {
+		unsubscribeURL := s.unsubscribeURL(sub.Email)
 		delivery := &models.NotificationDelivery{
 			NotificationID: notification.ID,
 			SubscriberID:   sub.ID,
@@ -203,15 +240,32 @@ func (s *notificationService) SendNotification(req *models.SendNotificationReque
 		}
 
 		body := email.RenderNotificationEmail(email.NotificationTemplateData{
-			Branding:      s.branding,
-			Title:         notification.Title,
-			Message:       notification.Message,
-			Event:         event,
-			RecipientName: sub.Name,
+			Branding:       s.branding,
+			Title:          notification.Title,
+			Message:        notification.Message,
+			Event:          event,
+			RecipientName:  sub.Name,
+			UnsubscribeURL: unsubscribeURL,
+		})
+		textBody := email.RenderNotificationText(email.NotificationTemplateData{
+			Title: notification.Title, Message: notification.Message, Event: event,
+			RecipientName: sub.Name, UnsubscribeURL: unsubscribeURL,
 		})
 
-		if err := s.sender.SendHTML(sub.Email, notification.Subject, body); err != nil {
-			errMsg := err.Error()
+		var sendErr error
+		if sender, ok := s.sender.(interface {
+			SendHTMLTextWithOptions(string, string, string, string, email.MessageOptions) error
+		}); ok {
+			sendErr = sender.SendHTMLTextWithOptions(sub.Email, notification.Subject, body, textBody, email.MessageOptions{UnsubscribeURL: unsubscribeURL})
+		} else if sender, ok := s.sender.(interface {
+			SendHTMLText(string, string, string, string) error
+		}); ok {
+			sendErr = sender.SendHTMLText(sub.Email, notification.Subject, body, textBody)
+		} else {
+			sendErr = s.sender.SendHTML(sub.Email, notification.Subject, body)
+		}
+		if sendErr != nil {
+			errMsg := sendErr.Error()
 			delivery.Status = models.DeliveryStatusFailed
 			delivery.ErrorMessage = &errMsg
 			_ = s.notifications.UpdateDelivery(delivery)
@@ -238,10 +292,7 @@ func (s *notificationService) sendSubscriberWelcome(sub *models.Subscriber) {
 	if s.sender == nil {
 		return
 	}
-	unsubscribeURL := ""
-	if strings.TrimSpace(s.branding.PublicURL) != "" {
-		unsubscribeURL = strings.TrimRight(s.branding.PublicURL, "/") + "/api/v1/notifications/unsubscribe?email=" + url.QueryEscape(sub.Email)
-	}
+	unsubscribeURL := s.unsubscribeURL(sub.Email)
 	name := ""
 	if sub.Name != nil {
 		name = *sub.Name

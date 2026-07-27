@@ -2,8 +2,9 @@ package repository
 
 import (
 	"errors"
+	"strings"
 
-	// "gorm.io/gorm"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
@@ -17,6 +18,7 @@ type EmailTemplateRepository interface {
 	GetActiveByOwner(ownerType, ownerID string) (*models.EmailTemplate, error)
 	GetActiveByKey(templateKey string) (*models.EmailTemplate, error)
 	DeactivateOthers(ownerType, ownerID, templateKey, keepID string) error
+	ActivateExclusive(tpl *models.EmailTemplate) error
 	NextVersion(templateKey string) (int, error)
 }
 
@@ -114,6 +116,51 @@ func (r *emailTemplateRepository) DeactivateOthers(ownerType, ownerID, templateK
 		"is_active": false,
 		"status":    models.EmailTemplateDraft,
 	}).Error
+}
+
+// ActivateExclusive atomically activates tpl and deactivates every competing
+// template in the same owner/key scope. The transaction prevents two active
+// versions or a partially-applied activation when either write fails.
+func (r *emailTemplateRepository) ActivateExclusive(tpl *models.EmailTemplate) error {
+	if tpl == nil {
+		return errors.New("template is required")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize activations for the same logical scope. A transaction alone is
+		// insufficient under READ COMMITTED: two concurrent transactions could
+		// otherwise both deactivate the old row and then activate themselves.
+		lockScope := "template-key:" + tpl.TemplateKey
+		if derefRepositoryString(tpl.OwnerType) != "" && derefRepositoryString(tpl.OwnerID) != "" {
+			lockScope = "template-owner:" + *tpl.OwnerType + ":" + *tpl.OwnerID
+		}
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockScope).Error; err != nil {
+			return err
+		}
+
+		q := tx.Model(&models.EmailTemplate{}).Where("id <> ?", tpl.ID)
+		if derefRepositoryString(tpl.OwnerType) != "" && derefRepositoryString(tpl.OwnerID) != "" {
+			q = q.Where("owner_type = ? AND owner_id = ?", *tpl.OwnerType, *tpl.OwnerID)
+		} else {
+			q = q.Where("template_key = ?", tpl.TemplateKey)
+		}
+		if err := q.Updates(map[string]any{
+			"is_active": false,
+			"status":    models.EmailTemplateDraft,
+		}).Error; err != nil {
+			return err
+		}
+
+		tpl.IsActive = true
+		tpl.Status = models.EmailTemplateActive
+		return tx.Save(tpl).Error
+	})
+}
+
+func derefRepositoryString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func (r *emailTemplateRepository) NextVersion(templateKey string) (int, error) {

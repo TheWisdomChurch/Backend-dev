@@ -409,13 +409,18 @@ func main() {
 		publicBaseURL,
 	)
 
-	notificationService := service.NewNotificationService(
+	notificationService, err := service.NewNotificationService(
 		subscriberRepo,
 		notificationRepo,
 		eventRepo,
 		emailSender,
 		branding,
+		cfg.Auth.SecretKey,
 	)
+	if err != nil {
+		logger.Error("failed to initialize notification service", "error", err)
+		os.Exit(1)
+	}
 	storeService := service.NewStoreService(storeRepo)
 	sermonService := service.NewSermonService()
 	emailTemplateService := service.NewEmailTemplateService(emailSender, branding)
@@ -433,7 +438,11 @@ func main() {
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
 	cellGroupService := service.NewCellGroupService(cellGroupRepo)
-	prayerRequestService := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	prayerRequestService, err := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	if err != nil {
+		logger.Error("failed to initialize prayer request service", "error", err)
+		os.Exit(1)
+	}
 	ministryService := service.NewMinistryService(ministryRepo)
 
 	// -------------------------------------------------------------------------

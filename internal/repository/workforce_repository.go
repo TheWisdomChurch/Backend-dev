@@ -104,50 +104,60 @@ func (r *workforceRepository) Stats() (*models.WorkforceStatsResponse, error) {
 
 	byStatus := map[string]int64{}
 	var statusRows []row
-	_ = r.db.DB.Model(&models.WorkforceMember{}).
+	if err := r.db.DB.Model(&models.WorkforceMember{}).
 		Select("status as key, COUNT(*) as count").
 		Group("status").
-		Scan(&statusRows).Error
+		Scan(&statusRows).Error; err != nil {
+		return nil, err
+	}
 	for _, r := range statusRows {
 		byStatus[r.Key] = r.Count
 	}
 
 	byDepartment := map[string]int64{}
 	var deptRows []row
-	_ = r.db.DB.Model(&models.WorkforceMember{}).
+	if err := r.db.DB.Model(&models.WorkforceMember{}).
 		Select("department as key, COUNT(*) as count").
 		Group("department").
-		Scan(&deptRows).Error
+		Scan(&deptRows).Error; err != nil {
+		return nil, err
+	}
 	for _, r := range deptRows {
 		byDepartment[r.Key] = r.Count
 	}
 
 	bySource := map[string]int64{}
 	var sourceRows []row
-	_ = r.db.DB.Model(&models.WorkforceMember{}).
+	if err := r.db.DB.Model(&models.WorkforceMember{}).
 		Select("source_channel as key, COUNT(*) as count").
 		Group("source_channel").
-		Scan(&sourceRows).Error
+		Scan(&sourceRows).Error; err != nil {
+		return nil, err
+	}
 	for _, r := range sourceRows {
 		bySource[r.Key] = r.Count
 	}
 
 	frontendByDepartment := map[string]int64{}
 	var frontendDeptRows []row
-	_ = r.db.DB.Model(&models.WorkforceMember{}).
+	if err := r.db.DB.Model(&models.WorkforceMember{}).
 		Where("source_channel LIKE ?", "frontend:%").
 		Select("department as key, COUNT(*) as count").
 		Group("department").
-		Scan(&frontendDeptRows).Error
+		Scan(&frontendDeptRows).Error; err != nil {
+		return nil, err
+	}
 	for _, r := range frontendDeptRows {
 		frontendByDepartment[r.Key] = r.Count
 	}
 
 	var buckets []models.WorkforceBucket
-	_ = r.db.DB.Model(&models.WorkforceMember{}).
+	if err := r.db.DB.Model(&models.WorkforceMember{}).
 		Select("department, status, COUNT(*) as count").
 		Group("department, status").
-		Scan(&buckets).Error
+		Scan(&buckets).Error; err != nil {
+		return nil, err
+	}
 
 	return &models.WorkforceStatsResponse{
 		Total:                total,
