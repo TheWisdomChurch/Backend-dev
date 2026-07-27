@@ -33,7 +33,7 @@ Keep handlers thin — validation and response shaping only; all business logic 
 ## Authentication & security model
 
 - JWT access tokens (RS256 with HS256 fallback), delivered as HttpOnly cookies — never exposed to
-  client-side JS/localStorage (enforced by `scripts/check_no_browser_storage.sh`).
+  client-side JavaScript or browser-managed storage (enforced by `scripts/check_no_browser_storage.sh`).
 - Refresh tokens with rotation and device/family tracking; a Redis-backed JTI blocklist supports real
   logout/revocation, not just stateless expiry.
 - Role-based access control for admin and super-admin routes, enforced at the route-group level.

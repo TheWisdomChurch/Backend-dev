@@ -3,13 +3,18 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/metrics"
+	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 	"wisdomHouse-backend/internal/service"
@@ -21,6 +26,8 @@ type AnalyticsHandler struct {
 	decisionEngine service.DecisionSupportService
 }
 
+var analyticsIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$`)
+
 func NewAnalyticsHandler(db *database.Database, redisCache *cache.RedisClient) *AnalyticsHandler {
 	repo := repository.NewAnalyticsRepository(db)
 	return &AnalyticsHandler{
@@ -30,19 +37,22 @@ func NewAnalyticsHandler(db *database.Database, redisCache *cache.RedisClient) *
 }
 
 func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
 	result, err := h.svc.GetAdminAnalytics(ctx)
 	if err != nil {
+		metrics.RecordAnalyticsQuery("admin", "error", time.Since(started))
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
 		return
 	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Analytics retrieved successfully", result)
+	metrics.RecordAnalyticsQuery("admin", "success", time.Since(started))
+	utils.OKMsg(c, "Analytics retrieved successfully", result)
 }
 
 func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
+	started := time.Now()
 	if h.decisionEngine == nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Decision insights engine is unavailable")
 		return
@@ -53,11 +63,12 @@ func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
 
 	insights, err := h.decisionEngine.GetInsights(ctx)
 	if err != nil {
+		metrics.RecordAnalyticsQuery("insights", "error", time.Since(started))
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute decision insights")
 		return
 	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Decision insights retrieved successfully", insights)
+	metrics.RecordAnalyticsQuery("insights", "success", time.Since(started))
+	utils.OKMsg(c, "Decision insights retrieved successfully", insights)
 }
 
 func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
@@ -81,21 +92,62 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid analytics payload")
 		return
 	}
-	if req.BatchID == "" || len(req.Events) == 0 || req.Session.SessionID == "" {
+	req.BatchID = strings.TrimSpace(req.BatchID)
+	req.Session.SessionID = strings.TrimSpace(req.Session.SessionID)
+	if !analyticsIdentifierPattern.MatchString(req.BatchID) || !analyticsIdentifierPattern.MatchString(req.Session.SessionID) || len(req.Events) == 0 {
 		utils.ErrorResponse(c, http.StatusBadRequest, "batchId, session.sessionId and events are required")
+		metrics.RecordAnalyticsIngest("rejected", 0)
+		return
+	}
+	if len(req.Events) > 100 {
+		utils.ErrorResponse(c, http.StatusRequestEntityTooLarge, "at most 100 analytics events are allowed per batch")
+		metrics.RecordAnalyticsIngest("rejected", 0)
 		return
 	}
 
-	userID := req.UserProfile.UserID
-	if userID == "" {
-		userID = req.Session.UserID
-	}
+	// Never trust a client-asserted user ID. Auth middleware is optional on this
+	// public collection endpoint, so identity is attached only when verified.
+	userID, _ := middleware.GetUserIDFromContext(c)
 	var userIDPtr *string
 	if userID != "" {
 		userIDPtr = &userID
 	}
 
-	rawPayload, err := json.Marshal(req)
+	now := time.Now().UTC()
+	normalized := make([]models.AnalyticsEvent, 0, len(req.Events))
+	for _, item := range req.Events {
+		category := strings.ToLower(strings.TrimSpace(item.Category))
+		action := strings.ToLower(strings.TrimSpace(item.Action))
+		if !analyticsIdentifierPattern.MatchString(category) || len(category) > 80 || !analyticsIdentifierPattern.MatchString(action) || len(action) > 80 {
+			utils.ErrorResponse(c, http.StatusBadRequest, "analytics category and action must be valid identifiers")
+			metrics.RecordAnalyticsIngest("rejected", 0)
+			return
+		}
+		occurredAt := time.Unix(item.Timestamp, 0).UTC()
+		if item.Timestamp > 1_000_000_000_000 {
+			occurredAt = time.UnixMilli(item.Timestamp).UTC()
+		}
+		if occurredAt.Before(now.AddDate(0, 0, -7)) || occurredAt.After(now.Add(5*time.Minute)) {
+			utils.ErrorResponse(c, http.StatusBadRequest, "analytics event timestamp is outside the accepted window")
+			metrics.RecordAnalyticsIngest("rejected", 0)
+			return
+		}
+		var clientEventID *string
+		if id := strings.TrimSpace(item.ID); id != "" {
+			if !analyticsIdentifierPattern.MatchString(id) {
+				utils.ErrorResponse(c, http.StatusBadRequest, "analytics event id is invalid")
+				metrics.RecordAnalyticsIngest("rejected", 0)
+				return
+			}
+			clientEventID = &id
+		}
+		normalized = append(normalized, models.AnalyticsEvent{
+			BatchID: req.BatchID, SessionID: req.Session.SessionID, UserID: userIDPtr,
+			ClientEventID: clientEventID, Category: category, Action: action, OccurredAt: occurredAt,
+		})
+	}
+
+	rawPayload, err := json.Marshal(gin.H{"batchId": req.BatchID, "sessionId": req.Session.SessionID, "events": normalized})
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to serialize analytics payload")
 		return
@@ -112,12 +164,21 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
 
-	if err := h.svc.IngestBatch(ctx, batch); err != nil {
+	if err := h.svc.IngestBatch(ctx, batch, normalized); err != nil {
+		if errors.Is(err, repository.ErrDuplicateAnalyticsBatch) {
+			metrics.RecordAnalyticsIngest("duplicate", 0)
+			utils.OKMsg(c, "Analytics batch already ingested", gin.H{
+				"batchId": req.BatchID, "eventsProcessed": 0, "duplicate": true,
+			})
+			return
+		}
+		metrics.RecordAnalyticsIngest("failed", 0)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to persist analytics events")
 		return
 	}
+	metrics.RecordAnalyticsIngest("accepted", len(normalized))
 
-	utils.SuccessResponse(c, http.StatusOK, "Analytics events ingested", gin.H{
+	utils.OKMsg(c, "Analytics events ingested", gin.H{
 		"batchId":         req.BatchID,
 		"eventsProcessed": len(req.Events),
 	})

@@ -195,6 +195,7 @@ func main() {
 	workforceRepo := repository.NewWorkforceRepository(db)
 	leadershipRepo := repository.NewLeadershipRepository(db)
 	memberRepo := repository.NewMemberRepository(db)
+	newMemberWorkflowRepo := repository.NewNewMemberWorkflowRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 	storeRepo := repository.NewStoreRepository(db)
@@ -280,6 +281,12 @@ func main() {
 	} else {
 		emailSender = initEmailSender(cfg)
 		emailSender = observedEmailSender{inner: emailSender}
+	}
+	if strings.TrimSpace(cfg.App.PrayerNotificationEmail) == "" {
+		logger.Warn("prayer request email notifications are disabled; set PRAYER_NOTIFICATION_EMAIL")
+	} else if disableEmail {
+		logger.Error("PRAYER_NOTIFICATION_EMAIL is configured but outbound email is disabled")
+		os.Exit(1)
 	}
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
@@ -390,6 +397,7 @@ func main() {
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
 	leadershipService := service.NewLeadershipService(leadershipRepo, formRepo, adminNotificationService, approvalService, emailSender, branding)
 	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding, cfg.Auth.SecretKey)
+	newMemberWorkflowService := service.NewNewMemberWorkflowService(newMemberWorkflowRepo, formRepo, adminNotificationService)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	formService := service.NewFormService(
@@ -438,7 +446,13 @@ func main() {
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
 	cellGroupService := service.NewCellGroupService(cellGroupRepo)
-	prayerRequestService, err := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	prayerRequestService, err := service.NewPrayerRequestService(
+		prayerRequestRepo,
+		cfg.Auth.SecretKey,
+		emailSender,
+		branding,
+		cfg.App.PrayerNotificationEmail,
+	)
 	if err != nil {
 		logger.Error("failed to initialize prayer request service", "error", err)
 		os.Exit(1)
@@ -547,6 +561,7 @@ func main() {
 	)
 	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader, userRepo)
 	memberHandler := handlers.NewMemberHandler(memberService)
+	newMemberWorkflowHandler := handlers.NewNewMemberWorkflowHandler(newMemberWorkflowService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
 	sermonHandler := handlers.NewSermonHandler(sermonService)
@@ -575,7 +590,9 @@ func main() {
 
 	go sseHub.Start(cleanupCtx)
 	go startFormCleanup(cleanupCtx, formService, cfg.App.FormCleanupInterval)
+	go startAnalyticsRawCleanup(cleanupCtx, newRedisLock(cfg.Redis.URL), db, 24*time.Hour)
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
+	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {
@@ -647,6 +664,7 @@ func main() {
 		workforceHandler,
 		leadershipHandler,
 		memberHandler,
+		newMemberWorkflowHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
 		sermonHandler,
