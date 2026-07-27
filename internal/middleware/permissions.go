@@ -32,6 +32,9 @@ const (
 	PermissionMembersManage       Permission = "admin:members:manage"
 	PermissionStoreManage         Permission = "admin:store:manage"
 	PermissionLeadershipManage    Permission = "admin:leadership:manage"
+	// Sensitive pastoral content is denied to ordinary admins by default.
+	// Super-admins inherit every permission through HasPermission.
+	PermissionPrayerRequestsManage Permission = "admin:prayer-requests:manage"
 )
 
 var rolePermissions = map[string]map[Permission]struct{}{

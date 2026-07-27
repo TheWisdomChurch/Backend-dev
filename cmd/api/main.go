@@ -281,6 +281,12 @@ func main() {
 		emailSender = initEmailSender(cfg)
 		emailSender = observedEmailSender{inner: emailSender}
 	}
+	if strings.TrimSpace(cfg.App.PrayerNotificationEmail) == "" {
+		logger.Warn("prayer request email notifications are disabled; set PRAYER_NOTIFICATION_EMAIL")
+	} else if disableEmail {
+		logger.Error("PRAYER_NOTIFICATION_EMAIL is configured but outbound email is disabled")
+		os.Exit(1)
+	}
 
 	templateAssetBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.EmailTemplateAssetBaseURL), "/")
 	if templateAssetBaseURL == "" {
@@ -438,7 +444,13 @@ func main() {
 	givingService := service.NewGivingService(givingRepo, paymentProviders)
 	attendanceService := service.NewAttendanceService(attendanceRepo)
 	cellGroupService := service.NewCellGroupService(cellGroupRepo)
-	prayerRequestService, err := service.NewPrayerRequestService(prayerRequestRepo, cfg.Auth.SecretKey)
+	prayerRequestService, err := service.NewPrayerRequestService(
+		prayerRequestRepo,
+		cfg.Auth.SecretKey,
+		emailSender,
+		branding,
+		cfg.App.PrayerNotificationEmail,
+	)
 	if err != nil {
 		logger.Error("failed to initialize prayer request service", "error", err)
 		os.Exit(1)

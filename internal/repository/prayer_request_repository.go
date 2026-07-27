@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 
+	"gorm.io/gorm"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 )
@@ -10,7 +12,7 @@ import (
 type PrayerRequestRepository interface {
 	Create(ctx context.Context, r *models.PrayerRequest) error
 	FindByID(ctx context.Context, id string) (*models.PrayerRequest, error)
-	List(ctx context.Context, status, category string, limit, offset int) ([]models.PrayerRequest, int64, error)
+	List(ctx context.Context, status, category string, limit, offset int) ([]models.PrayerRequestSummary, int64, error)
 	UpdateStatus(ctx context.Context, id, status string) error
 	AssignTo(ctx context.Context, id, userID string) error
 	AddNotes(ctx context.Context, id string, notesEnc string) error
@@ -40,7 +42,7 @@ func (r *prayerRequestRepository) FindByID(ctx context.Context, id string) (*mod
 	return &req, nil
 }
 
-func (r *prayerRequestRepository) List(ctx context.Context, status, category string, limit, offset int) ([]models.PrayerRequest, int64, error) {
+func (r *prayerRequestRepository) List(ctx context.Context, status, category string, limit, offset int) ([]models.PrayerRequestSummary, int64, error) {
 	q := r.db.DB.WithContext(ctx).Model(&models.PrayerRequest{}).Where("deleted_at IS NULL")
 	if status != "" {
 		q = q.Where("status = ?", status)
@@ -52,32 +54,46 @@ func (r *prayerRequestRepository) List(ctx context.Context, status, category str
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var rows []models.PrayerRequest
-	err := q.Order("created_at DESC").Limit(limit).Offset(offset).Find(&rows).Error
+	var rows []models.PrayerRequestSummary
+	err := q.Select("id, category, is_anonymous, status, assigned_to, created_at, updated_at").
+		Order("created_at DESC").Limit(limit).Offset(offset).Scan(&rows).Error
 	return rows, total, err
 }
 
 func (r *prayerRequestRepository) UpdateStatus(ctx context.Context, id, status string) error {
-	return r.db.DB.WithContext(ctx).
+	result := r.db.DB.WithContext(ctx).
 		Model(&models.PrayerRequest{}).
-		Where("id = ?", id).
-		Update("status", status).Error
+		Where("id = ? AND deleted_at IS NULL", id).
+		Update("status", status)
+	return prayerMutationError(result)
 }
 
 func (r *prayerRequestRepository) AssignTo(ctx context.Context, id, userID string) error {
-	return r.db.DB.WithContext(ctx).
+	result := r.db.DB.WithContext(ctx).
 		Model(&models.PrayerRequest{}).
-		Where("id = ?", id).
-		Update("assigned_to", userID).Error
+		Where("id = ? AND deleted_at IS NULL", id).
+		Update("assigned_to", userID)
+	return prayerMutationError(result)
 }
 
 func (r *prayerRequestRepository) AddNotes(ctx context.Context, id, notesEnc string) error {
-	return r.db.DB.WithContext(ctx).
+	result := r.db.DB.WithContext(ctx).
 		Model(&models.PrayerRequest{}).
-		Where("id = ?", id).
-		Update("notes_enc", notesEnc).Error
+		Where("id = ? AND deleted_at IS NULL", id).
+		Update("notes_enc", notesEnc)
+	return prayerMutationError(result)
 }
 
 func (r *prayerRequestRepository) Delete(ctx context.Context, id string) error {
-	return r.db.DB.WithContext(ctx).Delete(&models.PrayerRequest{}, "id = ?", id).Error
+	return prayerMutationError(r.db.DB.WithContext(ctx).Delete(&models.PrayerRequest{}, "id = ?", id))
+}
+
+func prayerMutationError(result *gorm.DB) error {
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("prayer request not found")
+	}
+	return nil
 }
