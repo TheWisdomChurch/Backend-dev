@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,7 @@ type ApprovalService interface {
 	CompleteRequest(t models.ApprovalRequestType, entityID string, status models.ApprovalRequestStatus, approver *models.User) (*models.ApprovalRequest, error)
 	CompleteRequestByID(id string, status models.ApprovalRequestStatus, approver *models.User) (*models.ApprovalRequest, error)
 	ListRequests(types []models.ApprovalRequestType, statuses []models.ApprovalRequestStatus, start, end *time.Time, limit int) ([]models.ApprovalRequest, error)
+	CountRequests(ctx context.Context, statuses []models.ApprovalRequestStatus) (int64, error)
 }
 
 type CreateApprovalRequest struct {
@@ -181,6 +183,13 @@ func (s *approvalService) ListRequests(
 		limit = 200
 	}
 	return s.repo.List(types, statuses, start, end, limit)
+}
+
+func (s *approvalService) CountRequests(ctx context.Context, statuses []models.ApprovalRequestStatus) (int64, error) {
+	if s == nil || s.repo == nil {
+		return 0, errors.New("approval repository is not configured")
+	}
+	return s.repo.Count(ctx, statuses)
 }
 
 func (s *approvalService) ticketPrefix(t models.ApprovalRequestType, now time.Time) string {

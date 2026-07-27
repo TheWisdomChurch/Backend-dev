@@ -2,11 +2,16 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 )
+
+var ErrDuplicateAnalyticsBatch = errors.New("analytics batch already ingested")
 
 // MonthlyEventStat is one month's event count, oldest first.
 type MonthlyEventStat struct {
@@ -16,12 +21,28 @@ type MonthlyEventStat struct {
 
 // AnalyticsRepository handles raw analytics data persistence and aggregation.
 type AnalyticsRepository interface {
-	CountAllEvents(ctx context.Context) (int64, error)
-	CountUpcomingEvents(ctx context.Context) (int64, error)
-	SumAttendees(ctx context.Context) (int64, error)
+	EventSummary(ctx context.Context) (*EventSummary, error)
 	CountEventsByCategory(ctx context.Context) (map[string]int64, error)
 	EventsByMonth(ctx context.Context, months int) ([]MonthlyEventStat, error)
-	IngestBatch(ctx context.Context, batch *models.AnalyticsBatch) error
+	OperationalSummary(ctx context.Context) (*OperationalSummary, error)
+	IngestBatch(ctx context.Context, batch *models.AnalyticsBatch, events []models.AnalyticsEvent) error
+}
+
+type EventSummary struct {
+	Total    int64
+	Upcoming int64
+}
+
+type OperationalSummary struct {
+	TotalMembers     int64 `json:"totalMembers"`
+	ActiveMembers    int64 `json:"activeMembers"`
+	TotalWorkforce   int64 `json:"totalWorkforce"`
+	ServingWorkforce int64 `json:"servingWorkforce"`
+	TotalSubmissions int64 `json:"totalSubmissions"`
+	Submissions30d   int64 `json:"submissions30d"`
+	TotalAttendance  int64 `json:"totalAttendance"`
+	Attendance30d    int64 `json:"attendance30d"`
+	ClientEvents30d  int64 `json:"clientEvents30d"`
 }
 
 type analyticsRepository struct {
@@ -32,27 +53,12 @@ func NewAnalyticsRepository(db *database.Database) AnalyticsRepository {
 	return &analyticsRepository{db: db}
 }
 
-func (r *analyticsRepository) CountAllEvents(ctx context.Context) (int64, error) {
-	var n int64
-	err := r.db.WithContext(ctx).Model(&models.Event{}).Count(&n).Error
-	return n, err
-}
-
-func (r *analyticsRepository) CountUpcomingEvents(ctx context.Context) (int64, error) {
-	var n int64
+func (r *analyticsRepository) EventSummary(ctx context.Context) (*EventSummary, error) {
+	var out EventSummary
 	err := r.db.WithContext(ctx).Model(&models.Event{}).
-		Where("status = ?", models.EventStatusUpcoming).
-		Count(&n).Error
-	return n, err
-}
-
-func (r *analyticsRepository) SumAttendees(ctx context.Context) (int64, error) {
-	type row struct{ Sum int64 }
-	var r2 row
-	err := r.db.WithContext(ctx).Model(&models.Event{}).
-		Select("COALESCE(SUM(attendees),0) as sum").
-		Scan(&r2).Error
-	return r2.Sum, err
+		Select("COUNT(*) AS total, COUNT(*) FILTER (WHERE event_date >= CURRENT_DATE) AS upcoming").
+		Scan(&out).Error
+	return &out, err
 }
 
 func (r *analyticsRepository) CountEventsByCategory(ctx context.Context) (map[string]int64, error) {
@@ -93,9 +99,9 @@ func (r *analyticsRepository) EventsByMonth(ctx context.Context, months int) ([]
 	// cut short by a day-precise "N months back from today" boundary.
 	var rows []row
 	err := r.db.WithContext(ctx).Model(&models.Event{}).
-		Select("to_char(date::date, 'YYYY-MM') as month, COUNT(*) as count").
-		Where("date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'").
-		Where("date::date >= (date_trunc('month', CURRENT_DATE) - (? * INTERVAL '1 month'))", months-1).
+		Select("to_char(event_date, 'YYYY-MM') as month, COUNT(*) as count").
+		Where("event_date IS NOT NULL").
+		Where("event_date >= (date_trunc('month', CURRENT_DATE) - (? * INTERVAL '1 month'))", months-1).
 		Group("month").
 		Order("month ASC").
 		Scan(&rows).Error
@@ -119,6 +125,41 @@ func (r *analyticsRepository) EventsByMonth(ctx context.Context, months int) ([]
 	return out, nil
 }
 
-func (r *analyticsRepository) IngestBatch(ctx context.Context, batch *models.AnalyticsBatch) error {
-	return r.db.WithContext(ctx).Create(batch).Error
+func (r *analyticsRepository) OperationalSummary(ctx context.Context) (*OperationalSummary, error) {
+	var out OperationalSummary
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL) AS total_members,
+			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL AND is_active = TRUE) AS active_members,
+			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL) AS total_workforce,
+			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL AND status = ?) AS serving_workforce,
+			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL) AS total_submissions,
+			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= NOW() - INTERVAL '30 days') AS submissions30d,
+			(SELECT COALESCE(SUM(GREATEST(s.head_count, COALESCE(rc.record_count, 0))), 0)
+			 FROM attendance_sessions s
+			 LEFT JOIN (SELECT session_id, COUNT(*) AS record_count FROM attendance_records WHERE deleted_at IS NULL GROUP BY session_id) rc ON rc.session_id = s.id
+			 WHERE s.deleted_at IS NULL) AS total_attendance,
+			(SELECT COALESCE(SUM(GREATEST(s.head_count, COALESCE(rc.record_count, 0))), 0)
+			 FROM attendance_sessions s
+			 LEFT JOIN (SELECT session_id, COUNT(*) AS record_count FROM attendance_records WHERE deleted_at IS NULL GROUP BY session_id) rc ON rc.session_id = s.id
+			 WHERE s.deleted_at IS NULL AND s.date >= NOW() - INTERVAL '30 days') AS attendance30d,
+			(SELECT COUNT(*) FROM analytics_events WHERE occurred_at >= NOW() - INTERVAL '30 days') AS client_events30d
+	`, models.WorkforceStatusServing).Scan(&out).Error
+	return &out, err
+}
+
+func (r *analyticsRepository) IngestBatch(ctx context.Context, batch *models.AnalyticsBatch, events []models.AnalyticsEvent) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "batch_id"}}, DoNothing: true}).Create(batch)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrDuplicateAnalyticsBatch
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		return tx.CreateInBatches(events, 100).Error
+	})
 }

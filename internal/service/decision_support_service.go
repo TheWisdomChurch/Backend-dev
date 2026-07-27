@@ -2,12 +2,13 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/database"
+	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/models"
 )
 
@@ -32,63 +33,39 @@ func (s *decisionSupportService) GetInsights(ctx context.Context) (*models.Decis
 	if s.cache != nil {
 		var cached models.DecisionInsights
 		if err := s.cache.GetJSON(ctx, cacheKey, &cached); err == nil {
+			metrics.RecordAnalyticsCache("hit")
 			return &cached, nil
 		}
+		metrics.RecordAnalyticsCache("miss")
 	}
 
 	now := time.Now().UTC()
 	currentStart := now.AddDate(0, 0, -30)
 	previousStart := currentStart.AddDate(0, 0, -30)
 
-	var totalEvents int64
-	if err := s.db.WithContext(ctx).Model(&models.Event{}).Count(&totalEvents).Error; err != nil {
+	type insightCounts struct {
+		TotalEvents, UpcomingEvents, TotalMembers, ActiveMembers int64
+		WorkforceTotal, WorkforceServing                         int64
+		SubmissionsCurrent30d, SubmissionsPrevious30d            int64
+	}
+	var counts insightCounts
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT
+			(SELECT COUNT(*) FROM events) AS total_events,
+			(SELECT COUNT(*) FROM events WHERE event_date >= CURRENT_DATE) AS upcoming_events,
+			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL) AS total_members,
+			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL AND is_active = TRUE) AS active_members,
+			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL) AS workforce_total,
+			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL AND status = ?) AS workforce_serving,
+			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?) AS submissions_current30d,
+			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?) AS submissions_previous30d
+	`, models.WorkforceStatusServing, currentStart, now, previousStart, currentStart).Scan(&counts).Error; err != nil {
 		return nil, err
 	}
-
-	var upcomingEvents int64
-	if err := s.db.WithContext(ctx).Model(&models.Event{}).
-		Where("status = ?", models.EventStatusUpcoming).
-		Count(&upcomingEvents).Error; err != nil {
-		return nil, err
-	}
-
-	var totalMembers int64
-	if err := s.db.WithContext(ctx).Model(&models.Member{}).Count(&totalMembers).Error; err != nil {
-		return nil, err
-	}
-
-	var activeMembers int64
-	if err := s.db.WithContext(ctx).Model(&models.Member{}).
-		Where("is_active = ?", true).
-		Count(&activeMembers).Error; err != nil {
-		return nil, err
-	}
-
-	var workforceTotal int64
-	if err := s.db.WithContext(ctx).Model(&models.WorkforceMember{}).Count(&workforceTotal).Error; err != nil {
-		return nil, err
-	}
-
-	var workforceServing int64
-	if err := s.db.WithContext(ctx).Model(&models.WorkforceMember{}).
-		Where("status = ?", models.WorkforceStatusServing).
-		Count(&workforceServing).Error; err != nil {
-		return nil, err
-	}
-
-	var submissionsCurrent30d int64
-	if err := s.db.WithContext(ctx).Model(&models.FormSubmission{}).
-		Where("created_at >= ? AND created_at < ?", currentStart, now).
-		Count(&submissionsCurrent30d).Error; err != nil {
-		return nil, err
-	}
-
-	var submissionsPrevious30d int64
-	if err := s.db.WithContext(ctx).Model(&models.FormSubmission{}).
-		Where("created_at >= ? AND created_at < ?", previousStart, currentStart).
-		Count(&submissionsPrevious30d).Error; err != nil {
-		return nil, err
-	}
+	totalEvents, upcomingEvents := counts.TotalEvents, counts.UpcomingEvents
+	totalMembers, activeMembers := counts.TotalMembers, counts.ActiveMembers
+	workforceTotal, workforceServing := counts.WorkforceTotal, counts.WorkforceServing
+	submissionsCurrent30d, submissionsPrevious30d := counts.SubmissionsCurrent30d, counts.SubmissionsPrevious30d
 
 	var submissionsDeltaPercent float64
 	switch {
@@ -158,7 +135,10 @@ func (s *decisionSupportService) GetInsights(ctx context.Context) (*models.Decis
 
 	if s.cache != nil {
 		if err := s.cache.SetJSON(ctx, cacheKey, out, 5*time.Minute); err != nil {
-			return out, fmt.Errorf("computed insights but failed to cache: %w", err)
+			metrics.RecordAnalyticsCache("write_error")
+			slog.Warn("decision insights cache write failed", "error", err)
+		} else {
+			metrics.RecordAnalyticsCache("write_success")
 		}
 	}
 

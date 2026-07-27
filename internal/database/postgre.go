@@ -235,6 +235,7 @@ func allMigrationModels() []any {
 		&models.SecurityEvent{},
 		&models.TrustedDevice{},
 		&models.AnalyticsBatch{},
+		&models.AnalyticsEvent{},
 		&models.StoreProduct{},
 		&models.StoreOrder{},
 		&models.StoreOrderItem{},

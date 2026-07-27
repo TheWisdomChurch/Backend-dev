@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"time"
 
 	"wisdomHouse-backend/internal/database"
@@ -9,6 +10,16 @@ import (
 
 type ApprovalRequestRepository struct {
 	db *database.Database
+}
+
+func (r *ApprovalRequestRepository) Count(ctx context.Context, statuses []models.ApprovalRequestStatus) (int64, error) {
+	var count int64
+	q := r.db.WithContext(ctx).Model(&models.ApprovalRequest{})
+	if len(statuses) > 0 {
+		q = q.Where("status IN ?", statuses)
+	}
+	err := q.Count(&count).Error
+	return count, err
 }
 
 func NewApprovalRequestRepository(db *database.Database) *ApprovalRequestRepository {
