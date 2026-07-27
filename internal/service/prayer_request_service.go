@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -35,9 +36,15 @@ type prayerRequestService struct {
 	protector *authutil.Protector
 }
 
-func NewPrayerRequestService(repo repository.PrayerRequestRepository, authSecret string) PrayerRequestService {
-	p, _ := authutil.NewProtector(authSecret)
-	return &prayerRequestService{repo: repo, protector: p}
+func NewPrayerRequestService(repo repository.PrayerRequestRepository, authSecret string) (PrayerRequestService, error) {
+	if repo == nil {
+		return nil, errors.New("prayer request repository is required")
+	}
+	p, err := authutil.NewProtector(authSecret)
+	if err != nil {
+		return nil, fmt.Errorf("configure prayer request encryption: %w", err)
+	}
+	return &prayerRequestService{repo: repo, protector: p}, nil
 }
 
 func (s *prayerRequestService) Submit(ctx context.Context, req SubmitPrayerRequest) (*models.PrayerRequest, error) {
