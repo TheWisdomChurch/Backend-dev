@@ -26,7 +26,7 @@ func NewAdminHandler(svc service.AdminService) *AdminHandler {
 }
 
 func (h *AdminHandler) GetDashboardStats(c *gin.Context) {
-	stats, err := h.svc.GetDashboardStats()
+	stats, err := h.svc.GetDashboardStats(c.Request.Context())
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load dashboard stats")
 		return
