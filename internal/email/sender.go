@@ -35,6 +35,12 @@ type Sender struct {
 	http     *http.Client
 }
 
+// MessageOptions contains standards-based metadata for consent-based bulk mail.
+// It must not be applied to transactional messages such as OTPs or receipts.
+type MessageOptions struct {
+	UnsubscribeURL string
+}
+
 func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (*Sender, error) {
 	h := strings.TrimSpace(host)
 	if h == "" {
@@ -148,6 +154,10 @@ func (s *Sender) SendHTML(to, subject, body string) error {
 
 // SendHTMLText sends a multipart email with text and HTML alternatives.
 func (s *Sender) SendHTMLText(to, subject, htmlBody, textBody string) error {
+	return s.SendHTMLTextWithOptions(to, subject, htmlBody, textBody, MessageOptions{})
+}
+
+func (s *Sender) SendHTMLTextWithOptions(to, subject, htmlBody, textBody string, opts MessageOptions) error {
 	htmlBody = strings.TrimSpace(htmlBody)
 	textBody = strings.TrimSpace(textBody)
 	if htmlBody == "" {
@@ -161,8 +171,18 @@ func (s *Sender) SendHTMLText(to, subject, htmlBody, textBody string) error {
 	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
 		msg.SetBodyString(gomail.TypeTextPlain, textBody)
 		msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+		applyMessageOptions(msg, opts)
 		return nil
 	})
+}
+
+func applyMessageOptions(msg *gomail.Msg, opts MessageOptions) {
+	unsubscribeURL := strings.TrimSpace(opts.UnsubscribeURL)
+	if unsubscribeURL == "" {
+		return
+	}
+	msg.SetGenHeader(gomail.Header("List-Unsubscribe"), "<"+unsubscribeURL+">")
+	msg.SetGenHeader(gomail.Header("List-Unsubscribe-Post"), "List-Unsubscribe=One-Click")
 }
 
 // SendHTMLWithAttachment sends an HTML email with a single attachment (e.g. PDF).
