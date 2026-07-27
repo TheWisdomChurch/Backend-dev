@@ -195,6 +195,7 @@ func main() {
 	workforceRepo := repository.NewWorkforceRepository(db)
 	leadershipRepo := repository.NewLeadershipRepository(db)
 	memberRepo := repository.NewMemberRepository(db)
+	newMemberWorkflowRepo := repository.NewNewMemberWorkflowRepository(db)
 	securityEventRepo := repository.NewSecurityEventRepository(db)
 	trustedDeviceRepo := repository.NewTrustedDeviceRepository(db)
 	storeRepo := repository.NewStoreRepository(db)
@@ -396,6 +397,7 @@ func main() {
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
 	leadershipService := service.NewLeadershipService(leadershipRepo, formRepo, adminNotificationService, approvalService, emailSender, branding)
 	memberService := service.NewMemberService(memberRepo, formRepo, eventRepo, emailSender, branding, cfg.Auth.SecretKey)
+	newMemberWorkflowService := service.NewNewMemberWorkflowService(newMemberWorkflowRepo, formRepo, adminNotificationService)
 
 	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.App.PublicURL), "/")
 	formService := service.NewFormService(
@@ -559,6 +561,7 @@ func main() {
 	)
 	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader, userRepo)
 	memberHandler := handlers.NewMemberHandler(memberService)
+	newMemberWorkflowHandler := handlers.NewNewMemberWorkflowHandler(newMemberWorkflowService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
 	sermonHandler := handlers.NewSermonHandler(sermonService)
@@ -589,6 +592,7 @@ func main() {
 	go startFormCleanup(cleanupCtx, formService, cfg.App.FormCleanupInterval)
 	go startAnalyticsRawCleanup(cleanupCtx, newRedisLock(cfg.Redis.URL), db, 24*time.Hour)
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
+	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {
@@ -660,6 +664,7 @@ func main() {
 		workforceHandler,
 		leadershipHandler,
 		memberHandler,
+		newMemberWorkflowHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
 		sermonHandler,
