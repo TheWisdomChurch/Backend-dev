@@ -28,6 +28,34 @@ type WorkforceConfirmationTemplateData struct {
 	StatusLabel   string
 }
 
+type PrayerRequestNotificationTemplateData struct {
+	Branding     Branding
+	ReferenceID  string
+	Category     string
+	SubmittedAt  string
+	AdminViewURL string
+}
+
+// RenderPrayerRequestNotificationEmail intentionally excludes the prayer body
+// and submitter PII. Email is a notification channel, not the pastoral record.
+func RenderPrayerRequestNotificationEmail(data PrayerRequestNotificationTemplateData) string {
+	b := normalizeBranding(data.Branding)
+	action := ""
+	if strings.TrimSpace(data.AdminViewURL) != "" {
+		action = renderActionRow(renderButton("Review securely", data.AdminViewURL, "", ""))
+	}
+	body := renderBodyOpen() +
+		renderHeading("New prayer request received") +
+		renderParagraph("A new confidential prayer request is ready for review in the protected admin portal.") +
+		renderBodyClose() +
+		renderInfoGrid([]infoItem{
+			{Label: "Reference", Value: strings.TrimSpace(data.ReferenceID)},
+			{Label: "Category", Value: strings.TrimSpace(data.Category)},
+			{Label: "Submitted", Value: strings.TrimSpace(data.SubmittedAt)},
+		}) + action
+	return renderEmailShell(b, "", body)
+}
+
 func RenderPastoralCareConfirmationEmail(data PastoralCareConfirmationTemplateData) string {
 	b := normalizeBranding(data.Branding)
 	name := safeName(data.RecipientName)

@@ -32,6 +32,18 @@ type PrayerRequest struct {
 	Notes   *string `gorm:"-" json:"notes,omitempty"`
 }
 
+// PrayerRequestSummary is the only shape returned by list/dashboard APIs.
+// It deliberately excludes names, email, encrypted columns, body, and notes.
+type PrayerRequestSummary struct {
+	ID          string    `json:"id"`
+	Category    string    `json:"category,omitempty"`
+	IsAnonymous bool      `json:"is_anonymous"`
+	Status      string    `json:"status"`
+	AssignedTo  *string   `json:"assigned_to,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 func (p *PrayerRequest) BeforeCreate(_ *gorm.DB) error {
 	if p.ID == "" {
 		p.ID = uuid.NewString()
