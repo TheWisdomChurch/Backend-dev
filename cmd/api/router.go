@@ -45,6 +45,7 @@ func setupRouter(
 	workforceHandler *handlers.WorkforceHandler,
 	leadershipHandler *handlers.LeadershipHandler,
 	memberHandler *handlers.MemberHandler,
+	newMemberWorkflowHandler *handlers.NewMemberWorkflowHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
 	sermonHandler *handlers.SermonHandler,
@@ -474,6 +475,11 @@ func setupRouter(
 	admin.DELETE("/members/:id", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Delete)
 	admin.GET("/new-members/dashboard", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.NewMemberDashboard)
 	admin.GET("/new-members/submissions", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.ListNewMemberSubmissions)
+	admin.GET("/new-members/workflows", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.List)
+	admin.POST("/new-members/workflows/reconcile", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Reconcile)
+	admin.GET("/new-members/workflows/:id", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Get)
+	admin.PATCH("/new-members/workflows/:id", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Update)
+	admin.POST("/new-members/workflows/:id/contacts", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.AddContact)
 	admin.GET("/members/birthdays/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdayStats)
 	admin.GET("/members/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysToday)
