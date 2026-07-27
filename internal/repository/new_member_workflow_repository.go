@@ -72,7 +72,9 @@ func (r *newMemberWorkflowRepository) Get(ctx context.Context, id string) (*mode
 		Where("new_member_workflows.id = ?", id).Scan(&row).Error; err != nil {
 		return nil, err
 	}
-	if row.ID == "" { return nil, gorm.ErrRecordNotFound }
+	if row.ID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
 	return &row, nil
 }
 
