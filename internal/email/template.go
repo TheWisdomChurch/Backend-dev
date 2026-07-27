@@ -8,11 +8,12 @@ import (
 )
 
 type NotificationTemplateData struct {
-	Branding      Branding
-	Title         string
-	Message       string
-	Event         *models.Event
-	RecipientName *string
+	Branding       Branding
+	Title          string
+	Message        string
+	Event          *models.Event
+	RecipientName  *string
+	UnsubscribeURL string
 }
 
 func RenderNotificationEmail(data NotificationTemplateData) string {
@@ -50,8 +51,35 @@ func RenderNotificationEmail(data NotificationTemplateData) string {
 		renderHeading(title) +
 		renderParagraph(safeMessage) +
 		eventBlock +
-		"<p style=\"margin:24px 0 0;font-size:13px;color:" + colorFaint + ";\">You are receiving this email because you subscribed to " + html.EscapeString(b.AppName) + " updates.</p>" +
+		renderSubscriptionFooter(b.AppName, data.UnsubscribeURL) +
 		renderBodyClose()
 
 	return renderEmailShell(b, "", body)
+}
+
+func RenderNotificationText(data NotificationTemplateData) string {
+	var out strings.Builder
+	if data.RecipientName != nil && strings.TrimSpace(*data.RecipientName) != "" {
+		out.WriteString("Hello " + strings.TrimSpace(*data.RecipientName) + ",\n\n")
+	} else {
+		out.WriteString("Hello,\n\n")
+	}
+	out.WriteString(strings.TrimSpace(data.Title) + "\n\n")
+	out.WriteString(strings.TrimSpace(data.Message))
+	if data.Event != nil {
+		out.WriteString("\n\nEvent: " + data.Event.Title + "\nDate: " + data.Event.Date + "\nTime: " + data.Event.Time + "\nLocation: " + data.Event.Location)
+	}
+	out.WriteString("\n\nYou received this because you subscribed to updates.")
+	if url := strings.TrimSpace(data.UnsubscribeURL); url != "" {
+		out.WriteString("\nUnsubscribe: " + url)
+	}
+	return out.String()
+}
+
+func renderSubscriptionFooter(appName, unsubscribeURL string) string {
+	footer := "<p style=\"margin:24px 0 0;font-size:12px;line-height:1.6;color:" + colorFaint + ";\">You received this because you subscribed to " + html.EscapeString(appName) + " updates."
+	if url := strings.TrimSpace(unsubscribeURL); url != "" {
+		footer += " <a href=\"" + html.EscapeString(url) + "\" style=\"color:" + colorMuted + ";text-decoration:underline;\">Unsubscribe</a>."
+	}
+	return footer + "</p>"
 }

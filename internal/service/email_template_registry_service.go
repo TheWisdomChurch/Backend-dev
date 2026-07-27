@@ -53,10 +53,12 @@ func (s *emailTemplateRegistryService) Create(req *models.CreateEmailTemplateReq
 	version := 1
 	if req.Version != nil && *req.Version > 0 {
 		version = *req.Version
-	} else if s.repo != nil {
-		if next, err := s.repo.NextVersion(key); err == nil {
-			version = next
+	} else {
+		next, err := s.repo.NextVersion(key)
+		if err != nil {
+			return nil, err
 		}
+		version = next
 	}
 
 	tpl := &models.EmailTemplate{
@@ -75,15 +77,12 @@ func (s *emailTemplateRegistryService) Create(req *models.CreateEmailTemplateReq
 		return nil, errors.New("htmlBody is required")
 	}
 
-	if err := s.repo.Create(tpl); err != nil {
-		return nil, err
-	}
-
 	if req.Activate {
-		_ = s.repo.DeactivateOthers(deref(ownerType), deref(ownerID), key, tpl.ID)
-		tpl.Status = models.EmailTemplateActive
-		tpl.IsActive = true
-		_ = s.repo.Update(tpl)
+		if err := s.repo.ActivateExclusive(tpl); err != nil {
+			return nil, err
+		}
+	} else if err := s.repo.Create(tpl); err != nil {
+		return nil, err
 	}
 
 	return tpl, nil
@@ -149,12 +148,15 @@ func (s *emailTemplateRegistryService) Update(id string, req *models.UpdateEmail
 		tpl.Version = *req.Version
 	}
 
-	if err := s.repo.Update(tpl); err != nil {
-		return nil, err
+	if req.Activate != nil && *req.Activate {
+		if err := s.repo.ActivateExclusive(tpl); err != nil {
+			return nil, err
+		}
+		return tpl, nil
 	}
 
-	if req.Activate != nil && *req.Activate {
-		_, _ = s.Activate(tpl.ID)
+	if err := s.repo.Update(tpl); err != nil {
+		return nil, err
 	}
 
 	return tpl, nil
@@ -184,14 +186,9 @@ func (s *emailTemplateRegistryService) Activate(id string) (*models.EmailTemplat
 		return nil, err
 	}
 
-	tpl.IsActive = true
-	tpl.Status = models.EmailTemplateActive
-
-	if err := s.repo.Update(tpl); err != nil {
+	if err := s.repo.ActivateExclusive(tpl); err != nil {
 		return nil, err
 	}
-
-	_ = s.repo.DeactivateOthers(deref(tpl.OwnerType), deref(tpl.OwnerID), tpl.TemplateKey, tpl.ID)
 	return tpl, nil
 }
 

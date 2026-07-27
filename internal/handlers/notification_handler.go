@@ -38,6 +38,14 @@ func (h *NotificationHandler) Subscribe(c *gin.Context) {
 }
 
 func (h *NotificationHandler) Unsubscribe(c *gin.Context) {
+	if token := strings.TrimSpace(c.Query("token")); token != "" {
+		if err := h.svc.UnsubscribeByToken(token); err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, "Invalid unsubscribe link")
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Unsubscribed successfully", nil)
+		return
+	}
 	var req models.UnsubscribeRequest
 	if !validation.BindJSON(c, &req) {
 		return
@@ -56,18 +64,18 @@ func (h *NotificationHandler) Unsubscribe(c *gin.Context) {
 }
 
 func (h *NotificationHandler) UnsubscribeByLink(c *gin.Context) {
-	emailAddr := c.Query("email")
-	if emailAddr == "" {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Email is required")
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid unsubscribe link")
 		return
 	}
 
-	if err := h.svc.Unsubscribe(emailAddr); err != nil {
+	if err := h.svc.UnsubscribeByToken(token); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.ErrorResponse(c, http.StatusNotFound, "Subscriber not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid unsubscribe link")
 		return
 	}
 
