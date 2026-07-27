@@ -1,9 +1,11 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/lib/pq"
+	"gorm.io/gorm"
 )
 
 type EventStatus string
@@ -30,9 +32,12 @@ type Event struct {
 	ShortDescription string `gorm:"type:varchar(255);not null" json:"shortDescription" binding:"required"`
 	Description      string `gorm:"type:text;not null" json:"description" binding:"required"`
 
-	Date     string `gorm:"type:varchar(20);not null" json:"date" binding:"required,date_ymd"`
-	Time     string `gorm:"type:varchar(50);not null" json:"time" binding:"required"`
-	Location string `gorm:"type:varchar(255);not null" json:"location" binding:"required"`
+	Date string `gorm:"type:varchar(20);not null" json:"date" binding:"required,date_ymd"`
+	// EventDate is the native, indexed date used by analytics. Date remains in
+	// the API temporarily for backward compatibility.
+	EventDate *time.Time `gorm:"type:date;index" json:"-"`
+	Time      string     `gorm:"type:varchar(50);not null" json:"time" binding:"required"`
+	Location  string     `gorm:"type:varchar(255);not null" json:"location" binding:"required"`
 
 	Category   EventCategory `gorm:"type:varchar(30);not null" json:"category" binding:"required,oneof=Outreach Conference Workshop Prayer Revival Summit"`
 	Status     EventStatus   `gorm:"type:varchar(20);not null" json:"status" binding:"omitempty,oneof=upcoming happening past"`
@@ -61,4 +66,13 @@ type Event struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func (e *Event) BeforeSave(_ *gorm.DB) error {
+	parsed, err := time.Parse("2006-01-02", e.Date)
+	if err != nil {
+		return fmt.Errorf("invalid event date: %w", err)
+	}
+	e.EventDate = &parsed
+	return nil
 }

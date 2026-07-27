@@ -172,6 +172,7 @@ type AppConfig struct {
 	AdminPortalURL            string        `json:"admin_portal_url" env:"APP_ADMIN_PORTAL_URL"`
 	FormCleanupInterval       time.Duration `json:"form_cleanup_interval" env:"APP_FORM_CLEANUP_INTERVAL"`
 	EmailTemplateAssetBaseURL string        `json:"email_template_asset_base_url" env:"APP_EMAIL_TEMPLATE_ASSET_BASE_URL"`
+	PrayerNotificationEmail   string        `json:"prayer_notification_email" env:"PRAYER_NOTIFICATION_EMAIL"`
 
 	// Social links shown in email footers. Any left unset are simply omitted
 	// from the footer rather than linking somewhere wrong.
@@ -361,6 +362,7 @@ func Load() (*Config, error) {
 			AdminPortalURL:            getEnv("APP_ADMIN_PORTAL_URL", ""),
 			FormCleanupInterval:       getEnvAsDuration("APP_FORM_CLEANUP_INTERVAL", 1*time.Hour),
 			EmailTemplateAssetBaseURL: strings.TrimRight(getEnv("APP_EMAIL_TEMPLATE_ASSET_BASE_URL", ""), "/"),
+			PrayerNotificationEmail:   strings.ToLower(strings.TrimSpace(getEnv("PRAYER_NOTIFICATION_EMAIL", ""))),
 			SocialYouTubeURL:          getEnv("APP_SOCIAL_YOUTUBE_URL", ""),
 			SocialInstagramURL:        getEnv("APP_SOCIAL_INSTAGRAM_URL", ""),
 			SocialXURL:                getEnv("APP_SOCIAL_X_URL", ""),

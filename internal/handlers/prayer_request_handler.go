@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"wisdomHouse-backend/internal/service"
+	"wisdomHouse-backend/internal/validation"
 	"wisdomHouse-backend/pkg/utils"
 )
 
@@ -22,8 +22,7 @@ func NewPrayerRequestHandler(svc service.PrayerRequestService) *PrayerRequestHan
 // Submit accepts a public prayer request (no auth required).
 func (h *PrayerRequestHandler) Submit(c *gin.Context) {
 	var req service.SubmitPrayerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+	if !validation.BindJSON(c, &req) {
 		return
 	}
 	pr, err := h.svc.Submit(c.Request.Context(), req)
@@ -69,8 +68,7 @@ func (h *PrayerRequestHandler) UpdateStatus(c *gin.Context) {
 	var body struct {
 		Status string `json:"status" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+	if !validation.BindJSON(c, &body) {
 		return
 	}
 	if err := h.svc.UpdateStatus(c.Request.Context(), id, body.Status); err != nil {
@@ -86,8 +84,7 @@ func (h *PrayerRequestHandler) Assign(c *gin.Context) {
 	var body struct {
 		UserID string `json:"user_id" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+	if !validation.BindJSON(c, &body) {
 		return
 	}
 	if err := h.svc.AssignTo(c.Request.Context(), id, body.UserID); err != nil {
@@ -103,8 +100,7 @@ func (h *PrayerRequestHandler) AddNotes(c *gin.Context) {
 	var body struct {
 		Notes string `json:"notes" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+	if !validation.BindJSON(c, &body) {
 		return
 	}
 	if err := h.svc.AddNotes(c.Request.Context(), id, body.Notes); err != nil {

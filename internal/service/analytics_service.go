@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -9,17 +10,19 @@ import (
 
 // AdminAnalyticsResult is the strongly-typed response for GetAdminAnalytics.
 type AdminAnalyticsResult struct {
-	TotalEvents      int64                         `json:"totalEvents"`
-	UpcomingEvents   int64                         `json:"upcomingEvents"`
-	TotalAttendees   int64                         `json:"totalAttendees"`
-	EventsByCategory map[string]int64              `json:"eventsByCategory"`
-	MonthlyStats     []repository.MonthlyEventStat `json:"monthlyStats"`
+	TotalEvents      int64                          `json:"totalEvents"`
+	UpcomingEvents   int64                          `json:"upcomingEvents"`
+	TotalAttendees   int64                          `json:"totalAttendees"`
+	EventsByCategory map[string]int64               `json:"eventsByCategory"`
+	MonthlyStats     []repository.MonthlyEventStat  `json:"monthlyStats"`
+	Operations       *repository.OperationalSummary `json:"operations"`
+	GeneratedAt      time.Time                      `json:"generatedAt"`
 }
 
 // AnalyticsService exposes aggregated analytics queries.
 type AnalyticsService interface {
 	GetAdminAnalytics(ctx context.Context) (*AdminAnalyticsResult, error)
-	IngestBatch(ctx context.Context, batch *models.AnalyticsBatch) error
+	IngestBatch(ctx context.Context, batch *models.AnalyticsBatch, events []models.AnalyticsEvent) error
 }
 
 type analyticsService struct {
@@ -31,15 +34,7 @@ func NewAnalyticsService(repo repository.AnalyticsRepository) AnalyticsService {
 }
 
 func (s *analyticsService) GetAdminAnalytics(ctx context.Context) (*AdminAnalyticsResult, error) {
-	total, err := s.repo.CountAllEvents(ctx)
-	if err != nil {
-		return nil, err
-	}
-	upcoming, err := s.repo.CountUpcomingEvents(ctx)
-	if err != nil {
-		return nil, err
-	}
-	attendees, err := s.repo.SumAttendees(ctx)
+	events, err := s.repo.EventSummary(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -51,15 +46,21 @@ func (s *analyticsService) GetAdminAnalytics(ctx context.Context) (*AdminAnalyti
 	if err != nil {
 		return nil, err
 	}
+	operations, err := s.repo.OperationalSummary(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &AdminAnalyticsResult{
-		TotalEvents:      total,
-		UpcomingEvents:   upcoming,
-		TotalAttendees:   attendees,
+		TotalEvents:      events.Total,
+		UpcomingEvents:   events.Upcoming,
+		TotalAttendees:   operations.TotalAttendance,
 		EventsByCategory: byCategory,
 		MonthlyStats:     monthly,
+		Operations:       operations,
+		GeneratedAt:      time.Now().UTC(),
 	}, nil
 }
 
-func (s *analyticsService) IngestBatch(ctx context.Context, batch *models.AnalyticsBatch) error {
-	return s.repo.IngestBatch(ctx, batch)
+func (s *analyticsService) IngestBatch(ctx context.Context, batch *models.AnalyticsBatch, events []models.AnalyticsEvent) error {
+	return s.repo.IngestBatch(ctx, batch, events)
 }

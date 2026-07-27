@@ -130,7 +130,7 @@ func (h *EngagementHandler) CreatePastoralCareRequest(c *gin.Context) {
 	}
 	h.sendPastoralConfirmation(row)
 
-	utils.SuccessResponse(c, http.StatusCreated, "Pastoral care request submitted", row)
+	utils.SuccessResponse(c, http.StatusCreated, "Pastoral care request submitted", gin.H{"id": row.ID})
 }
 
 func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
@@ -181,7 +181,7 @@ func (h *EngagementHandler) CreateGivingIntent(c *gin.Context) {
 	}
 	h.sendGivingConfirmation(row)
 
-	utils.SuccessResponse(c, http.StatusCreated, "Giving intent captured", row)
+	utils.SuccessResponse(c, http.StatusCreated, "Giving intent captured", gin.H{"id": row.ID})
 }
 
 func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
@@ -229,7 +229,7 @@ func (h *EngagementHandler) CreateContactMessage(c *gin.Context) {
 		})
 	}
 
-	utils.SuccessResponse(c, http.StatusCreated, "Contact message submitted", row)
+	utils.SuccessResponse(c, http.StatusCreated, "Contact message submitted", gin.H{"id": row.ID})
 }
 
 func (h *EngagementHandler) ListPastoralCareRequests(c *gin.Context) {

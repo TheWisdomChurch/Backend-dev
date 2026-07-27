@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -44,6 +45,7 @@ func setupRouter(
 	workforceHandler *handlers.WorkforceHandler,
 	leadershipHandler *handlers.LeadershipHandler,
 	memberHandler *handlers.MemberHandler,
+	newMemberWorkflowHandler *handlers.NewMemberWorkflowHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
 	sermonHandler *handlers.SermonHandler,
@@ -188,7 +190,15 @@ func setupRouter(
 	api.GET("/events/:id", eventHandler.Get)
 	api.GET("/reels", reelHandler.List)
 	api.GET("/sermons", sermonHandler.List)
-	api.POST("/analytics/events", analyticsHandler.IngestEvents)
+	analyticsIngestLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: 30,
+		Burst:             10,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:analytics-ingest",
+		Message:           "Too many analytics batches. Please retry later.",
+	})
+	api.POST("/analytics/events", analyticsIngestLimiter, analyticsHandler.IngestEvents)
 
 	// Notifications (newsletter-style)
 	api.POST("/notifications/subscribe", notificationHandler.Subscribe)
@@ -331,47 +341,48 @@ func setupRouter(
 	admin.GET("/giving/summary", middleware.RequirePermission(middleware.PermissionEngagementRead), givingPaymentsHandler.MonthlySummary)
 
 	// ATTENDANCE
-	admin.GET("/attendance/service-types", attendanceHandler.ListServiceTypes)
+	admin.GET("/attendance/service-types", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.ListServiceTypes)
 	admin.POST("/attendance/service-types", middleware.RequirePermission(middleware.PermissionAdminWrite), attendanceHandler.CreateServiceType)
-	admin.POST("/attendance/sessions", attendanceHandler.CreateSession)
-	admin.GET("/attendance/sessions", attendanceHandler.ListSessions)
-	admin.GET("/attendance/sessions/:id", attendanceHandler.GetSession)
-	admin.PATCH("/attendance/sessions/:id", attendanceHandler.UpdateSession)
-	admin.GET("/attendance/sessions/:id/records", attendanceHandler.ListRecords)
-	admin.POST("/attendance/checkin", attendanceHandler.CheckIn)
-	admin.GET("/attendance/members/:member_id/history", attendanceHandler.MemberHistory)
+	admin.POST("/attendance/sessions", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.CreateSession)
+	admin.GET("/attendance/sessions", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.ListSessions)
+	admin.GET("/attendance/sessions/:id", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.GetSession)
+	admin.PATCH("/attendance/sessions/:id", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.UpdateSession)
+	admin.GET("/attendance/sessions/:id/records", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.ListRecords)
+	admin.POST("/attendance/checkin", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.CheckIn)
+	admin.GET("/attendance/members/:member_id/history", middleware.RequirePermission(middleware.PermissionMembersManage), attendanceHandler.MemberHistory)
 
 	// CELL GROUPS
-	admin.POST("/cell-groups", cellGroupHandler.Create)
-	admin.GET("/cell-groups", cellGroupHandler.List)
-	admin.GET("/cell-groups/:id", cellGroupHandler.Get)
-	admin.PATCH("/cell-groups/:id", cellGroupHandler.Update)
-	admin.DELETE("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), cellGroupHandler.Delete)
-	admin.POST("/cell-groups/:id/members", cellGroupHandler.AddMember)
-	admin.GET("/cell-groups/:id/members", cellGroupHandler.ListMembers)
-	admin.DELETE("/cell-groups/:id/members/:member_id", cellGroupHandler.RemoveMember)
-	admin.POST("/cell-groups/:id/meetings", cellGroupHandler.CreateMeeting)
-	admin.GET("/cell-groups/:id/meetings", cellGroupHandler.ListMeetings)
-	admin.GET("/members/:member_id/cell-groups", cellGroupHandler.MemberGroups)
+	admin.POST("/cell-groups", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.Create)
+	admin.GET("/cell-groups", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.List)
+	admin.GET("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.Get)
+	admin.PATCH("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.Update)
+	admin.DELETE("/cell-groups/:id", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.Delete)
+	admin.POST("/cell-groups/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.AddMember)
+	admin.GET("/cell-groups/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.ListMembers)
+	admin.DELETE("/cell-groups/:id/members/:member_id", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.RemoveMember)
+	admin.POST("/cell-groups/:id/meetings", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.CreateMeeting)
+	admin.GET("/cell-groups/:id/meetings", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.ListMeetings)
+	admin.GET("/members/:member_id/cell-groups", middleware.RequirePermission(middleware.PermissionMembersManage), cellGroupHandler.MemberGroups)
 
 	// PRAYER REQUESTS — admin management (every read is sensitive pastoral data)
-	admin.GET("/prayer-requests", prayerRequestHandler.List)
-	admin.GET("/prayer-requests/:id", prayerRequestHandler.Get)
-	admin.PATCH("/prayer-requests/:id/status", prayerRequestHandler.UpdateStatus)
-	admin.PATCH("/prayer-requests/:id/assign", prayerRequestHandler.Assign)
-	admin.POST("/prayer-requests/:id/notes", prayerRequestHandler.AddNotes)
-	admin.DELETE("/prayer-requests/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), prayerRequestHandler.Delete)
+	prayerAccess := middleware.RequirePermission(middleware.PermissionPrayerRequestsManage)
+	admin.GET("/prayer-requests", prayerAccess, prayerRequestHandler.List)
+	admin.GET("/prayer-requests/:id", prayerAccess, prayerRequestHandler.Get)
+	admin.PATCH("/prayer-requests/:id/status", prayerAccess, prayerRequestHandler.UpdateStatus)
+	admin.PATCH("/prayer-requests/:id/assign", prayerAccess, prayerRequestHandler.Assign)
+	admin.POST("/prayer-requests/:id/notes", prayerAccess, prayerRequestHandler.AddNotes)
+	admin.DELETE("/prayer-requests/:id", prayerAccess, prayerRequestHandler.Delete)
 
 	// MINISTRIES
-	admin.POST("/ministries", ministryHandler.Create)
-	admin.GET("/ministries", ministryHandler.List)
-	admin.GET("/ministries/:id", ministryHandler.Get)
-	admin.PATCH("/ministries/:id", ministryHandler.Update)
-	admin.DELETE("/ministries/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), ministryHandler.Delete)
-	admin.POST("/ministries/:id/members", ministryHandler.AddMember)
-	admin.GET("/ministries/:id/members", ministryHandler.ListMembers)
-	admin.DELETE("/ministries/:id/members/:member_id", ministryHandler.RemoveMember)
-	admin.GET("/members/:member_id/ministries", ministryHandler.MemberMinistries)
+	admin.POST("/ministries", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.Create)
+	admin.GET("/ministries", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.List)
+	admin.GET("/ministries/:id", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.Get)
+	admin.PATCH("/ministries/:id", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.Update)
+	admin.DELETE("/ministries/:id", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.Delete)
+	admin.POST("/ministries/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.AddMember)
+	admin.GET("/ministries/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.ListMembers)
+	admin.DELETE("/ministries/:id/members/:member_id", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.RemoveMember)
+	admin.GET("/members/:member_id/ministries", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.MemberMinistries)
 
 	// SSE — real-time event stream (requires auth, no CSRF needed for GET)
 	admin.GET("/events/stream", sseHandler.Stream)
@@ -465,6 +476,11 @@ func setupRouter(
 	admin.DELETE("/members/:id", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.Delete)
 	admin.GET("/new-members/dashboard", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.NewMemberDashboard)
 	admin.GET("/new-members/submissions", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.ListNewMemberSubmissions)
+	admin.GET("/new-members/workflows", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.List)
+	admin.POST("/new-members/workflows/reconcile", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Reconcile)
+	admin.GET("/new-members/workflows/:id", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Get)
+	admin.PATCH("/new-members/workflows/:id", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.Update)
+	admin.POST("/new-members/workflows/:id/contacts", middleware.RequirePermission(middleware.PermissionMembersManage), newMemberWorkflowHandler.AddContact)
 	admin.GET("/members/birthdays/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdayStats)
 	admin.GET("/members/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysToday)
