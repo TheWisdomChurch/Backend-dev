@@ -1,6 +1,11 @@
 package repository
 
 import (
+	"errors"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 )
@@ -52,7 +57,12 @@ func (r *workforceRepository) List(offset, limit int, department, status string)
 }
 
 func (r *workforceRepository) Create(member *models.WorkforceMember) error {
-	return r.db.DB.Create(member).Error
+	return r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(member).Error; err != nil {
+			return err
+		}
+		return syncWorkforceDepartment(tx, member.ID, member.Department)
+	})
 }
 
 func (r *workforceRepository) GetByID(id string) (*models.WorkforceMember, error) {
@@ -72,17 +82,51 @@ func (r *workforceRepository) GetByEmail(email string) (*models.WorkforceMember,
 }
 
 func (r *workforceRepository) Update(id string, updates map[string]interface{}) (*models.WorkforceMember, error) {
-	if err := r.db.DB.Model(&models.WorkforceMember{}).
-		Where("id = ?", id).
-		Updates(updates).Error; err != nil {
-		return nil, err
-	}
-
 	var member models.WorkforceMember
-	if err := r.db.DB.First(&member, "id = ?", id).Error; err != nil {
+	if err := r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.WorkforceMember{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&member, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if _, changed := updates["department"]; changed {
+			return syncWorkforceDepartment(tx, member.ID, member.Department)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return &member, nil
+}
+
+func syncWorkforceDepartment(tx *gorm.DB, workforceMemberID, department string) error {
+	department = strings.TrimSpace(department)
+	if department == "" {
+		return errors.New("department is required")
+	}
+	var ministry models.Ministry
+	err := tx.Where("deleted_at IS NULL AND lower(trim(name)) = lower(?)", department).First(&ministry).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		ministry = models.Ministry{Name: department, Description: "Created from workforce department assignment.", Category: "department", IsActive: true}
+		if err := tx.Create(&ministry).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	if err := tx.Where("workforce_member_id = ? AND source = ? AND ministry_id <> ?", workforceMemberID, "department_sync", ministry.ID).Delete(&models.MinistryWorkforceMember{}).Error; err != nil {
+		return err
+	}
+	var existing models.MinistryWorkforceMember
+	err = tx.Unscoped().Where("ministry_id = ? AND workforce_member_id = ?", ministry.ID, workforceMemberID).First(&existing).Error
+	if err == nil {
+		return tx.Unscoped().Model(&existing).Updates(map[string]interface{}{"deleted_at": nil, "updated_at": time.Now().UTC()}).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return tx.Create(&models.MinistryWorkforceMember{MinistryID: ministry.ID, WorkforceMemberID: workforceMemberID, Role: models.MinistryRoleMember, Source: "department_sync"}).Error
 }
 
 func (r *workforceRepository) Delete(id string) error {
