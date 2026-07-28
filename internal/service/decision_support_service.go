@@ -49,14 +49,16 @@ func (s *decisionSupportService) GetInsights(ctx context.Context) (*models.Decis
 		SubmissionsCurrent30d, SubmissionsPrevious30d            int64
 	}
 	var counts insightCounts
+	// members and workforce_members are hard-delete tables (no deleted_at
+	// column) — only form_submissions is soft-deletable.
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			(SELECT COUNT(*) FROM events) AS total_events,
 			(SELECT COUNT(*) FROM events WHERE event_date >= CURRENT_DATE) AS upcoming_events,
-			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL) AS total_members,
-			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL AND is_active = TRUE) AS active_members,
-			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL) AS workforce_total,
-			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL AND status = ?) AS workforce_serving,
+			(SELECT COUNT(*) FROM members) AS total_members,
+			(SELECT COUNT(*) FROM members WHERE is_active = TRUE) AS active_members,
+			(SELECT COUNT(*) FROM workforce_members) AS workforce_total,
+			(SELECT COUNT(*) FROM workforce_members WHERE status = ?) AS workforce_serving,
 			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?) AS submissions_current30d,
 			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= ? AND created_at < ?) AS submissions_previous30d
 	`, models.WorkforceStatusServing, currentStart, now, previousStart, currentStart).Scan(&counts).Error; err != nil {
