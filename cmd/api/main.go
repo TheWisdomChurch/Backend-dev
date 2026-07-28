@@ -457,7 +457,7 @@ func main() {
 		logger.Error("failed to initialize prayer request service", "error", err)
 		os.Exit(1)
 	}
-	ministryService := service.NewMinistryService(ministryRepo)
+	ministryService := service.NewMinistryService(ministryRepo, workforceRepo)
 
 	// -------------------------------------------------------------------------
 	// Handlers
