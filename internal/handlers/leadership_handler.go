@@ -234,7 +234,8 @@ func (h *LeadershipHandler) Decline(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Leadership request declined", member)
 }
 
-// Admin: request leadership deletion. Super admin approval performs the actual delete.
+// Delete removes a leadership member. Super admins delete immediately;
+// other admins have their request routed to super admin approval.
 func (h *LeadershipHandler) Delete(c *gin.Context) {
 	id, ok := parseUUIDParam(c, "id", "leadership member id")
 	if !ok {
@@ -248,7 +249,19 @@ func (h *LeadershipHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	req, err := h.svc.RequestDelete(id, body.Reason, h.currentUser(c))
+	actor := h.currentUser(c)
+	if actor != nil && actor.Role == "super_admin" {
+		if err := h.svc.Delete(id, body.Reason, actor); err != nil {
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Leadership member deleted", gin.H{
+			"deleted": true,
+		})
+		return
+	}
+
+	req, err := h.svc.RequestDelete(id, body.Reason, actor)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
