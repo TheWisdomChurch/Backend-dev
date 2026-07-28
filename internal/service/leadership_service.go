@@ -25,7 +25,7 @@ type LeadershipService interface {
 	Decline(id string) (*models.LeadershipMember, error)
 	RequestDelete(id, reason string, requestedBy *models.User) (*models.ApprovalRequest, error)
 	ApproveDelete(id string, approver *models.User) error
-	Delete(id string) error
+	Delete(id, reason string, actor *models.User) error
 
 	BirthdayStats() (*models.BirthdayStatsResponse, error)
 	BirthdaysByMonth(month int) ([]models.LeadershipMember, error)
@@ -299,7 +299,10 @@ func (s *leadershipService) ApproveDelete(id string, approver *models.User) erro
 	return nil
 }
 
-func (s *leadershipService) Delete(id string) error {
+// Delete performs an immediate, unconditional removal — reserved for
+// super admins, who don't need to route deletions through the
+// request/approve workflow that other admins go through.
+func (s *leadershipService) Delete(id, reason string, actor *models.User) error {
 	member, err := s.repo.GetByID(id)
 	if err != nil {
 		return err
@@ -308,6 +311,7 @@ func (s *leadershipService) Delete(id string) error {
 		return err
 	}
 	s.retireLeadershipIntakeSubmissions(member.Email)
+	s.notifyLeadershipDeleted(member, reason, actor)
 	return nil
 }
 
@@ -665,6 +669,36 @@ func (s *leadershipService) notifyLeadershipDeleteRequest(member *models.Leaders
 	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
 		Type:       "leadership_delete_request",
 		Title:      title,
+		Message:    message,
+		EntityType: &entityType,
+		EntityID:   &entityID,
+		Roles:      []string{"super_admin"},
+	})
+}
+
+func (s *leadershipService) notifyLeadershipDeleted(member *models.LeadershipMember, reason string, actor *models.User) {
+	if s.notifySvc == nil || member == nil {
+		return
+	}
+	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	if fullName == "" {
+		fullName = "Leadership profile"
+	}
+	actorName := "A super admin"
+	if actor != nil {
+		if name := strings.TrimSpace(strings.Join([]string{actor.FirstName, actor.LastName}, " ")); name != "" {
+			actorName = name
+		}
+	}
+	message := fmt.Sprintf("%s deleted %s.", actorName, fullName)
+	if strings.TrimSpace(reason) != "" {
+		message = fmt.Sprintf("%s Reason: %s", message, strings.TrimSpace(reason))
+	}
+	entityType := "leadership_delete"
+	entityID := member.ID
+	_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+		Type:       "leadership_deleted",
+		Title:      "Leadership profile deleted",
 		Message:    message,
 		EntityType: &entityType,
 		EntityID:   &entityID,
