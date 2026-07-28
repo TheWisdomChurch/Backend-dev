@@ -127,12 +127,14 @@ func (r *analyticsRepository) EventsByMonth(ctx context.Context, months int) ([]
 
 func (r *analyticsRepository) OperationalSummary(ctx context.Context) (*OperationalSummary, error) {
 	var out OperationalSummary
+	// members and workforce_members are hard-delete tables (no deleted_at
+	// column) — only form_submissions and attendance_* are soft-deletable.
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
-			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL) AS total_members,
-			(SELECT COUNT(*) FROM members WHERE deleted_at IS NULL AND is_active = TRUE) AS active_members,
-			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL) AS total_workforce,
-			(SELECT COUNT(*) FROM workforce_members WHERE deleted_at IS NULL AND status = ?) AS serving_workforce,
+			(SELECT COUNT(*) FROM members) AS total_members,
+			(SELECT COUNT(*) FROM members WHERE is_active = TRUE) AS active_members,
+			(SELECT COUNT(*) FROM workforce_members) AS total_workforce,
+			(SELECT COUNT(*) FROM workforce_members WHERE status = ?) AS serving_workforce,
 			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL) AS total_submissions,
 			(SELECT COUNT(*) FROM form_submissions WHERE deleted_at IS NULL AND created_at >= NOW() - INTERVAL '30 days') AS submissions30d,
 			(SELECT COALESCE(SUM(GREATEST(s.head_count, COALESCE(rc.record_count, 0))), 0)

@@ -13,6 +13,7 @@ import (
 
 	"wisdomHouse-backend/internal/cache"
 	"wisdomHouse-backend/internal/database"
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/metrics"
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
@@ -43,6 +44,7 @@ func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
 
 	result, err := h.svc.GetAdminAnalytics(ctx)
 	if err != nil {
+		applog.L().Error("admin analytics query failed", "error", err)
 		metrics.RecordAnalyticsQuery("admin", "error", time.Since(started))
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute analytics")
 		return
@@ -63,6 +65,7 @@ func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
 
 	insights, err := h.decisionEngine.GetInsights(ctx)
 	if err != nil {
+		applog.L().Error("decision insights query failed", "error", err)
 		metrics.RecordAnalyticsQuery("insights", "error", time.Since(started))
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute decision insights")
 		return
