@@ -25,14 +25,20 @@ CREATE INDEX IF NOT EXISTS idx_ministry_workforce_member
 -- Materialize ministries for real workforce departments that do not already
 -- have a case-insensitive ministry record. The workforce record remains the
 -- authoritative person source; this only establishes organization structure.
+WITH normalized_departments AS (
+    SELECT
+        lower(trim(w.department)) AS normalized_name,
+        min(trim(w.department)) AS display_name
+    FROM workforce_members w
+    WHERE trim(COALESCE(w.department, '')) <> ''
+    GROUP BY lower(trim(w.department))
+)
 INSERT INTO ministries (id, name, description, category, is_active, created_at, updated_at)
-SELECT gen_random_uuid(), trim(w.department), 'Created from existing workforce department assignments.', 'department', true, now(), now()
-FROM workforce_members w
-WHERE trim(COALESCE(w.department, '')) <> ''
-GROUP BY trim(w.department)
-HAVING NOT EXISTS (
+SELECT gen_random_uuid(), d.display_name, 'Created from existing workforce department assignments.', 'department', true, now(), now()
+FROM normalized_departments d
+WHERE NOT EXISTS (
     SELECT 1 FROM ministries m
-    WHERE m.deleted_at IS NULL AND lower(trim(m.name)) = lower(trim(w.department))
+    WHERE m.deleted_at IS NULL AND lower(trim(m.name)) = d.normalized_name
 );
 
 -- Backfill every workforce record into its matching ministry. Re-running is safe.
