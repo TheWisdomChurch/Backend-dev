@@ -12,7 +12,7 @@ type Ministry struct {
 	Name        string         `gorm:"not null;size:150" json:"name"`
 	Description string         `gorm:"type:text" json:"description,omitempty"`
 	CampusID    *string        `gorm:"type:uuid;index" json:"campus_id,omitempty"`
-	LeaderID    *string        `gorm:"type:uuid;index" json:"leader_id,omitempty"`
+	LeaderID    *string        `gorm:"type:uuid;index" json:"-"`                 // legacy only; normalized heads live in ministry_workforce_members
 	Category    string         `gorm:"size:100;index" json:"category,omitempty"` // worship, children, media, ushering, etc.
 	IsActive    bool           `gorm:"default:true;not null" json:"is_active"`
 	CreatedAt   time.Time      `json:"created_at"`

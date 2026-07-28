@@ -43,6 +43,16 @@ JOIN ministries m ON m.deleted_at IS NULL AND lower(trim(m.name)) = lower(trim(w
 WHERE trim(COALESCE(w.department, '')) <> ''
 ON CONFLICT DO NOTHING;
 
+-- Preserve the legacy ministries.leader_id only when it can be matched to an
+-- actual workforce profile by verified email; never infer by name.
+INSERT INTO ministry_workforce_members (ministry_id, workforce_member_id, role, source, joined_at)
+SELECT m.id, w.id, 'head', 'manual', now()
+FROM ministries m
+JOIN members mem ON mem.id = m.leader_id AND mem.deleted_at IS NULL
+JOIN workforce_members w ON lower(trim(w.email)) = lower(trim(mem.email))
+WHERE m.deleted_at IS NULL AND m.leader_id IS NOT NULL AND trim(COALESCE(mem.email, '')) <> ''
+ON CONFLICT DO NOTHING;
+
 -- Preserve legacy ministry membership where the member and workforce records
 -- can be deterministically matched by normalized email. Ambiguous/no-email
 -- records are intentionally not guessed.
