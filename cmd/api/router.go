@@ -28,6 +28,7 @@ func setupRouter(
 	rsaPublicKey *rsa.PublicKey,
 	tokenBlocklist *authutil.TokenBlocklist,
 	healthHandler *handlers.HealthHandler,
+	navigationHandler *handlers.NavigationHandler,
 	testimonialHandler *handlers.TestimonialHandler,
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
@@ -106,6 +107,18 @@ func setupRouter(
 	router.GET("/reports/forms/:slug/export.pdf", formHandler.ExportPublicFormReportPDF)
 
 	api := router.Group("/api/v1")
+
+	// Public route previews are deliberately isolated behind a stricter,
+	// Redis-backed limit because each request incurs an external provider cost.
+	navigationRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: cfg.Navigation.RequestsPerMinute,
+		Burst:             cfg.Navigation.Burst,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:navigation-preview",
+		Message:           "Too many route calculations. Please wait before trying again.",
+	})
+	api.POST("/navigation/routes/preview", middleware.NoStore(), navigationRateLimiter, navigationHandler.PreviewRoute)
 
 	authGuard := middleware.AuthMiddleware(middleware.AuthMiddlewareOptions{
 		JWTSecret:    cfg.JWT.Secret,
