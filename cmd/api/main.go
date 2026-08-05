@@ -458,6 +458,11 @@ func main() {
 		os.Exit(1)
 	}
 	ministryService := service.NewMinistryService(ministryRepo, workforceRepo)
+	navigationService := service.NewNavigationService(
+		cfg.Navigation.GoogleRoutesAPIKey,
+		cfg.Navigation.ChurchPlaceID,
+		cfg.Navigation.ProviderTimeout,
+	)
 
 	// -------------------------------------------------------------------------
 	// Handlers
@@ -572,6 +577,7 @@ func main() {
 	cellGroupHandler := handlers.NewCellGroupHandler(cellGroupService)
 	prayerRequestHandler := handlers.NewPrayerRequestHandler(prayerRequestService)
 	ministryHandler := handlers.NewMinistryHandler(ministryService)
+	navigationHandler := handlers.NewNavigationHandler(navigationService)
 	sseHandler := handlers.NewSSEHandler(sseHub)
 	siteContentHandler := handlers.NewSiteContentHandler(db)
 	engagementHandler := handlers.NewEngagementHandler(
@@ -647,6 +653,7 @@ func main() {
 		rsaPubKey,
 		tokenBlocklist,
 		healthHandler,
+		navigationHandler,
 		testimonialHandler,
 		authHandler,
 		adminHandler,

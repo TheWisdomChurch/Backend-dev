@@ -13,17 +13,27 @@ import (
 )
 
 type Config struct {
-	Database  DatabaseConfig  `json:"database"`
-	Server    ServerConfig    `json:"server"`
-	Redis     RedisConfig     `json:"redis"`
-	RateLimit RateLimitConfig `json:"rate_limit"`
-	SMTP      SMTPConfig      `json:"smtp"`
-	CORS      CORSConfig      `json:"cors"`
-	JWT       JWTConfig       `json:"jwt"`
-	Auth      AuthConfig      `json:"auth"`
-	App       AppConfig       `json:"app"`
-	Telemetry TelemetryConfig `json:"telemetry"`
-	Payment   PaymentConfig   `json:"payment"`
+	Database   DatabaseConfig   `json:"database"`
+	Server     ServerConfig     `json:"server"`
+	Redis      RedisConfig      `json:"redis"`
+	RateLimit  RateLimitConfig  `json:"rate_limit"`
+	SMTP       SMTPConfig       `json:"smtp"`
+	CORS       CORSConfig       `json:"cors"`
+	JWT        JWTConfig        `json:"jwt"`
+	Auth       AuthConfig       `json:"auth"`
+	App        AppConfig        `json:"app"`
+	Telemetry  TelemetryConfig  `json:"telemetry"`
+	Payment    PaymentConfig    `json:"payment"`
+	Navigation NavigationConfig `json:"navigation"`
+}
+
+type NavigationConfig struct {
+	Enabled            bool          `json:"enabled" env:"NAVIGATION_ENABLED"`
+	GoogleRoutesAPIKey string        `json:"-" env:"GOOGLE_MAPS_ROUTES_API_KEY"`
+	ChurchPlaceID      string        `json:"church_place_id" env:"GOOGLE_CHURCH_PLACE_ID"`
+	ProviderTimeout    time.Duration `json:"provider_timeout" env:"NAVIGATION_PROVIDER_TIMEOUT"`
+	RequestsPerMinute  int           `json:"requests_per_minute" env:"NAVIGATION_RATE_LIMIT_RPM"`
+	Burst              int           `json:"burst" env:"NAVIGATION_RATE_LIMIT_BURST"`
 }
 
 type PaymentConfig struct {
@@ -380,6 +390,14 @@ func Load() (*Config, error) {
 			StripeSecretKey:       getEnv("STRIPE_SECRET_KEY", ""),
 			StripeWebhookSecret:   getEnv("STRIPE_WEBHOOK_SECRET", ""),
 		},
+		Navigation: NavigationConfig{
+			Enabled:            getEnvAsBool("NAVIGATION_ENABLED", false),
+			GoogleRoutesAPIKey: strings.TrimSpace(getEnv("GOOGLE_MAPS_ROUTES_API_KEY", "")),
+			ChurchPlaceID:      strings.TrimSpace(getEnv("GOOGLE_CHURCH_PLACE_ID", "")),
+			ProviderTimeout:    getEnvAsDuration("NAVIGATION_PROVIDER_TIMEOUT", 12*time.Second),
+			RequestsPerMinute:  getEnvAsInt("NAVIGATION_RATE_LIMIT_RPM", 10),
+			Burst:              getEnvAsInt("NAVIGATION_RATE_LIMIT_BURST", 3),
+		},
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -458,6 +476,20 @@ func validateConfig(cfg *Config) error {
 	}
 	if strings.TrimSpace(cfg.Auth.MFAIssuer) == "" {
 		return fmt.Errorf("AUTH_MFA_ISSUER is required")
+	}
+	if cfg.Navigation.Enabled {
+		if cfg.Navigation.GoogleRoutesAPIKey == "" {
+			return fmt.Errorf("GOOGLE_MAPS_ROUTES_API_KEY is required when NAVIGATION_ENABLED=true")
+		}
+		if cfg.Navigation.ChurchPlaceID == "" {
+			return fmt.Errorf("GOOGLE_CHURCH_PLACE_ID is required when NAVIGATION_ENABLED=true")
+		}
+		if cfg.Navigation.ProviderTimeout <= 0 {
+			return fmt.Errorf("NAVIGATION_PROVIDER_TIMEOUT must be greater than 0")
+		}
+		if cfg.Navigation.RequestsPerMinute <= 0 || cfg.Navigation.Burst <= 0 {
+			return fmt.Errorf("navigation rate limits must be greater than 0")
+		}
 	}
 
 	googleFields := []string{
