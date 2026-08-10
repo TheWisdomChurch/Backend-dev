@@ -15,6 +15,10 @@ type Testimonial struct {
 	ImageURL        *string        `json:"imageUrl,omitempty" gorm:"column:image_url;type:varchar(500)"` // Pointer for NULL
 	Testimony       string         `json:"testimony" gorm:"column:testimony;type:text;not null" binding:"required"`
 	IsAnonymous     bool           `json:"isAnonymous" gorm:"column:is_anonymous;default:false"`
+	// Contact fields are admin-only follow-up info — deliberately json:"-" since
+	// the public testimonials endpoints serialize this struct directly.
+	ContactEmail *string `json:"-" gorm:"column:contact_email;type:varchar(255)"`
+	ContactPhone *string `json:"-" gorm:"column:contact_phone;type:varchar(64)"`
 	IsApproved      bool           `json:"isApproved" gorm:"column:is_approved;default:false"`
 	ApprovedByID    *string        `json:"approvedById,omitempty" gorm:"column:approved_by_id;type:uuid"`
 	ApprovedByName  *string        `json:"approvedByName,omitempty" gorm:"column:approved_by_name;type:varchar(120)"`
@@ -32,6 +36,8 @@ type CreateTestimonialRequest struct {
 	ImageAssetID *string `json:"imageAssetId,omitempty"`
 	Testimony    string  `json:"testimony" binding:"required"`
 	IsAnonymous  bool    `json:"isAnonymous"`
+	Email        string  `json:"email,omitempty" binding:"omitempty,email"`
+	Phone        string  `json:"phone,omitempty"`
 }
 
 type UpdateTestimonialRequest struct {

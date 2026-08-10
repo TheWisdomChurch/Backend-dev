@@ -585,6 +585,8 @@ func buildTestimonialRequest(values map[string]any) (*models.CreateTestimonialRe
 		LastName:    strings.TrimSpace(last),
 		Testimony:   testimony,
 		IsAnonymous: isAnonymous,
+		Email:       strings.TrimSpace(valueAsString(values, "email", "contactEmail", "contact_email")),
+		Phone:       strings.TrimSpace(valueAsString(values, "phone", "phoneNumber", "phone_number", "contactPhone", "contact_phone")),
 	}
 	if imageURL != "" {
 		req.ImageURL = &imageURL
@@ -655,6 +657,8 @@ func buildLenientTestimonialRequest(values map[string]any) *models.CreateTestimo
 		LastName:    last,
 		Testimony:   testimony,
 		IsAnonymous: isAnonymous,
+		Email:       strings.TrimSpace(valueAsString(values, "email", "contactEmail", "contact_email")),
+		Phone:       strings.TrimSpace(valueAsString(values, "phone", "phoneNumber", "phone_number", "contactPhone", "contact_phone")),
 	}
 
 	imageURL := strings.TrimSpace(valueAsString(values, "imageUrl", "image", "profileImage", "profile_image", "photo"))

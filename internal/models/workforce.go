@@ -22,12 +22,16 @@ type WorkforceMember struct {
 	Status        WorkforceStatus `gorm:"size:20;not null;default:'pending';index:idx_workforce_members_status" json:"status"`
 	Notes         *string         `gorm:"type:text" json:"notes,omitempty"`
 
-	// Birthday/anniversary are stored as month/day components so yearly
-	// greeting automation works without storing a birth/wedding year.
-	BirthdayMonth    *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
-	BirthdayDay      *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
-	AnniversaryMonth *int `gorm:"type:smallint" json:"anniversaryMonth,omitempty"`
-	AnniversaryDay   *int `gorm:"type:smallint" json:"anniversaryDay,omitempty"`
+	// Birthday is stored as month/day components so yearly birthday automation works without storing a birth year.
+	BirthdayMonth *int `gorm:"type:smallint" json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int `gorm:"type:smallint" json:"birthdayDay,omitempty"`
+
+	Occupation       *string `gorm:"size:150" json:"occupation,omitempty"`
+	MaritalStatus    *string `gorm:"size:10" json:"maritalStatus,omitempty"` // "married" | "single"
+	SpouseName       *string `gorm:"size:150" json:"spouseName,omitempty"`
+	AnniversaryMonth *int    `gorm:"type:smallint" json:"anniversaryMonth,omitempty"`
+	AnniversaryDay   *int    `gorm:"type:smallint" json:"anniversaryDay,omitempty"`
+	About            *string `gorm:"type:text" json:"about,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -35,17 +39,6 @@ type WorkforceMember struct {
 
 func (WorkforceMember) TableName() string {
 	return "workforce_members"
-}
-
-// WorkforceLookupResult is the minimal, PII-conscious payload returned by the
-// public email-lookup endpoint — deliberately excludes ID, Notes, and other
-// internal fields since the caller only proves they know the email address,
-// not that they own the record.
-type WorkforceLookupResult struct {
-	FirstName  string `json:"firstName"`
-	LastName   string `json:"lastName"`
-	Phone      string `json:"phone,omitempty"`
-	Department string `json:"department"`
 }
 
 type CreateWorkforceRequest struct {
@@ -58,12 +51,17 @@ type CreateWorkforceRequest struct {
 	Status        WorkforceStatus `json:"status" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes         *string         `json:"notes,omitempty"`
 
-	BirthdayMonth    *int    `json:"birthdayMonth,omitempty"`
-	BirthdayDay      *int    `json:"birthdayDay,omitempty"`
-	Birthday         *string `json:"birthday,omitempty"` // DD/MM
+	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
+
+	Occupation       string  `json:"occupation"`
+	Married          string  `json:"married" binding:"omitempty,oneof=yes no"`
+	Spouse           string  `json:"spouse"`
 	AnniversaryMonth *int    `json:"anniversaryMonth,omitempty"`
 	AnniversaryDay   *int    `json:"anniversaryDay,omitempty"`
 	Anniversary      *string `json:"anniversary,omitempty"` // DD/MM
+	About            string  `json:"about"`
 }
 
 type UpdateWorkforceRequest struct {
@@ -75,12 +73,17 @@ type UpdateWorkforceRequest struct {
 	Status     *WorkforceStatus `json:"status,omitempty" binding:"omitempty,oneof=pending new serving not_serving"`
 	Notes      *string          `json:"notes,omitempty"`
 
-	BirthdayMonth    *int    `json:"birthdayMonth,omitempty"`
-	BirthdayDay      *int    `json:"birthdayDay,omitempty"`
-	Birthday         *string `json:"birthday,omitempty"` // DD/MM
+	BirthdayMonth *int    `json:"birthdayMonth,omitempty"`
+	BirthdayDay   *int    `json:"birthdayDay,omitempty"`
+	Birthday      *string `json:"birthday,omitempty"` // DD/MM
+
+	Occupation       *string `json:"occupation,omitempty"`
+	Married          *string `json:"married,omitempty" binding:"omitempty,oneof=yes no"`
+	Spouse           *string `json:"spouse,omitempty"`
 	AnniversaryMonth *int    `json:"anniversaryMonth,omitempty"`
 	AnniversaryDay   *int    `json:"anniversaryDay,omitempty"`
 	Anniversary      *string `json:"anniversary,omitempty"` // DD/MM
+	About            *string `json:"about,omitempty"`
 }
 
 type WorkforceStatsResponse struct {

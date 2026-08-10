@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/email"
 	applog "wisdomHouse-backend/internal/logger"
@@ -108,26 +109,6 @@ func (h *WorkforceHandler) Create(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusCreated, "Member created", member)
 }
 
-// LookupByEmail is public: it lets the "already serving" registration flow
-// pre-fill a form for someone who already has a workforce record, matching
-// only on the email address the caller supplies. Response is intentionally
-// minimal (no ID, no notes) since knowing an email is not proof of ownership.
-func (h *WorkforceHandler) LookupByEmail(c *gin.Context) {
-	email := strings.TrimSpace(c.Query("email"))
-	if email == "" || !strings.Contains(email, "@") {
-		utils.ErrorResponse(c, http.StatusBadRequest, "a valid email is required")
-		return
-	}
-
-	result, err := h.svc.LookupByEmail(email)
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "no matching workforce record found")
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Workforce member found", result)
-}
-
 func (h *WorkforceHandler) Apply(c *gin.Context) {
 	var req models.CreateWorkforceRequest
 	if !validation.BindJSON(c, &req) {
@@ -196,6 +177,43 @@ func (h *WorkforceHandler) ApplyServing(c *gin.Context) {
 	h.sendWorkforceConfirmation(*member, "workforce_serving_confirmation", "Serving")
 
 	utils.SuccessResponse(c, http.StatusCreated, "Workforce profile submitted", member)
+}
+
+// LookupByEmail is a public, rate-limited endpoint used by the "existing member"
+// self-service form to pre-fill known details. It intentionally returns only
+// non-sensitive profile fields (name/phone/department) — never marital status,
+// notes, or other pastoral-care-adjacent data — to limit exposure if the lookup
+// is abused for email enumeration.
+func (h *WorkforceHandler) LookupByEmail(c *gin.Context) {
+	email := strings.TrimSpace(c.Query("email"))
+	if email == "" || !strings.Contains(email, "@") || len(email) > 254 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "A valid email is required")
+		return
+	}
+
+	member, err := h.svc.LookupByEmail(email)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "No profile found for this email")
+			return
+		}
+		applog.L().Warn("workforce lookup failed", "email", email, "error", err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to look up profile")
+		return
+	}
+
+	phone := ""
+	if member.Phone != nil {
+		phone = strings.TrimSpace(*member.Phone)
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Profile found", gin.H{
+		"firstName":  member.FirstName,
+		"lastName":   member.LastName,
+		"fullName":   strings.TrimSpace(member.FirstName + " " + member.LastName),
+		"phone":      phone,
+		"department": member.Department,
+	})
 }
 
 func (h *WorkforceHandler) Update(c *gin.Context) {

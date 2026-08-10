@@ -211,5 +211,6 @@ func mapOrderResponse(order *models.StoreOrder) gin.H {
 			"customerAccountName": order.CustomerAccountName,
 			"customerBankName":    order.CustomerBankName,
 		},
+		"paymentSlipUrl": order.PaymentSlipURL,
 	}
 }
