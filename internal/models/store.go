@@ -49,7 +49,6 @@ type StoreOrder struct {
 
 	CustomerAccountName *string `gorm:"size:180" json:"-"`
 	CustomerBankName    *string `gorm:"size:180" json:"-"`
-	PaymentSlipURL      *string `gorm:"type:text" json:"-"`
 
 	Items []StoreOrderItem `gorm:"foreignKey:StoreOrderID;constraint:OnDelete:CASCADE" json:"items"`
 

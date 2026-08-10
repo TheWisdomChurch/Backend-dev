@@ -90,12 +90,6 @@ func (s *testimonialService) CreateTestimonial(req *models.CreateTestimonialRequ
 		IsAnonymous: req.IsAnonymous,
 		IsApproved:  false,
 	}
-	if email := strings.TrimSpace(req.Email); email != "" {
-		testimonial.ContactEmail = &email
-	}
-	if phone := strings.TrimSpace(req.Phone); phone != "" {
-		testimonial.ContactPhone = &phone
-	}
 
 	if err := s.repo.Create(testimonial); err != nil {
 		return nil, err
