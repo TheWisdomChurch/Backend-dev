@@ -50,17 +50,19 @@ every time it boots.
 There are only two migration units, on purpose:
 
 - `schema.up.sql` / `schema.down.sql` — the original baseline schema.
-- `001_consolidated_incremental_schema.up.sql` / `.down.sql` — every incremental change made since the
+- `011_consolidated_incremental_schema.up.sql` / `.down.sql` — every incremental change made since the
   baseline (account lockout, refresh tokens, campuses, giving, attendance, cell groups, prayer requests,
-  performance indexes, ministries, etc.), merged into one file pair.
+  performance indexes, ministries, audit logs, schema-drift reconciliation, approval requests, analytics
+  pipeline, new-member workflows, ministry/workforce normalization, etc.), merged into one file pair.
 
-This used to be 11 separate numbered migrations (`001_add_account_lockout` … `011_ministries`). They were
-consolidated into the single `001_consolidated_incremental_schema` pair because the long list was hard to
-scan for no real benefit once all of them had shipped. **This is safe only because every statement in the
-consolidated file is idempotent** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, or a guarded `ADD
-CONSTRAINT`) — so the single file converges any database to the right end state whether it previously had
-none, some, or all of the original 11 applied. If you ever need to consolidate again, keep that idempotency
-rule: it's what makes squashing migrations safe instead of a source of silent drift.
+This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
+of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
+the single `011_consolidated_incremental_schema` pair because the long list was hard to scan for no real
+benefit once all of them had shipped. **This is safe only because every statement in the consolidated file
+is idempotent** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, or a guarded `ADD CONSTRAINT`) — so the single
+file converges any database to the right end state whether it previously had none, some, or all of the ten
+former files applied. If you ever need to consolidate again, keep that idempotency rule: it's what makes
+squashing migrations safe instead of a source of silent drift.
 
 Note this is different from folding new content directly into `schema.up.sql` itself, which would **not**
 be safe — the runner tracks applied migrations by filename, and `schema.up.sql` is already recorded as
@@ -71,7 +73,7 @@ doesn't already have a record for.
 ## Adding a migration
 
 1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `001`, since the incremental history was just consolidated — the next one is `002`).
+   one (currently `011`, since the incremental history was just consolidated — the next one is `012`).
    Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
    each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
    debugging too, and safe to fold into a future consolidation.
