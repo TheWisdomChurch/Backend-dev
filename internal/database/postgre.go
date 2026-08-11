@@ -243,6 +243,7 @@ func allMigrationModels() []any {
 		&models.PastoralCareRequest{},
 		&models.GivingIntent{},
 		&models.ContactMessage{},
+		&models.VisitRequest{},
 	}
 }
 

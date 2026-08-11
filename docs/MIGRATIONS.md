@@ -47,13 +47,15 @@ every time it boots.
 
 ## File layout
 
-There are only two migration units, on purpose:
+The migration chain currently contains three units:
 
 - `schema.up.sql` / `schema.down.sql` — the original baseline schema.
 - `011_consolidated_incremental_schema.up.sql` / `.down.sql` — every incremental change made since the
   baseline (account lockout, refresh tokens, campuses, giving, attendance, cell groups, prayer requests,
   performance indexes, ministries, audit logs, schema-drift reconciliation, approval requests, analytics
   pipeline, new-member workflows, ministry/workforce normalization, etc.), merged into one file pair.
+- `012_visit_workflow.up.sql` / `.down.sql` — the durable plan-a-visit lifecycle, including scheduling,
+  ownership, reminders, check-in, and follow-up tracking.
 
 This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
 of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
@@ -73,7 +75,7 @@ doesn't already have a record for.
 ## Adding a migration
 
 1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `011`, since the incremental history was just consolidated — the next one is `012`).
+   one (currently `012`; the next one is `013`).
    Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
    each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
    debugging too, and safe to fold into a future consolidation.

@@ -599,6 +599,7 @@ func main() {
 	go startAnalyticsRawCleanup(cleanupCtx, newRedisLock(cfg.Redis.URL), db, 24*time.Hour)
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
+	go startVisitReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), engagementHandler, 15*time.Minute)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {

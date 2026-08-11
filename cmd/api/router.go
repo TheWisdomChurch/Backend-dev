@@ -234,6 +234,7 @@ func setupRouter(
 	api.POST("/giving/intents", engagementHandler.CreateGivingIntent)
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
 	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
+	api.POST("/visits", engagementHandler.CreateVisit)
 	api.GET("/content/homepage-ad", siteContentHandler.GetHomepageAd)
 	api.GET("/content/confession-popup", siteContentHandler.GetConfessionPopup)
 
@@ -400,6 +401,8 @@ func setupRouter(
 	// SSE — real-time event stream (requires auth, no CSRF needed for GET)
 	admin.GET("/events/stream", sseHandler.Stream)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
+	admin.GET("/visits", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListVisits)
+	admin.PATCH("/visits/:id", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.UpdateVisit)
 
 	// Forms
 	admin.GET("/forms", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.ListAdminForms)
