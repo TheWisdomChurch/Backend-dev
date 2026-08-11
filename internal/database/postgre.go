@@ -244,6 +244,7 @@ func allMigrationModels() []any {
 		&models.GivingIntent{},
 		&models.ContactMessage{},
 		&models.VisitRequest{},
+		&models.VisitActivity{},
 	}
 }
 

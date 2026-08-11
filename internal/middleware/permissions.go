@@ -18,6 +18,7 @@ const (
 	PermissionAnalyticsRead       Permission = "admin:analytics:read"
 	PermissionContentManage       Permission = "admin:content:manage"
 	PermissionEngagementRead      Permission = "admin:engagement:read"
+	PermissionEngagementManage    Permission = "admin:engagement:manage"
 	PermissionFormsRead           Permission = "admin:forms:read"
 	PermissionFormsManage         Permission = "admin:forms:manage"
 	PermissionFormsExport         Permission = "admin:forms:export"
@@ -47,6 +48,7 @@ var rolePermissions = map[string]map[Permission]struct{}{
 		PermissionAnalyticsRead:       {},
 		PermissionContentManage:       {},
 		PermissionEngagementRead:      {},
+		PermissionEngagementManage:    {},
 		PermissionFormsRead:           {},
 		PermissionFormsManage:         {},
 		PermissionFormsExport:         {},
@@ -71,6 +73,7 @@ var rolePermissions = map[string]map[Permission]struct{}{
 		PermissionAnalyticsRead:       {},
 		PermissionContentManage:       {},
 		PermissionEngagementRead:      {},
+		PermissionEngagementManage:    {},
 		PermissionFormsRead:           {},
 		PermissionFormsManage:         {},
 		PermissionFormsExport:         {},

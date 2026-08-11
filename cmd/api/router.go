@@ -235,6 +235,7 @@ func setupRouter(
 	api.POST("/pastoral-care/requests", engagementHandler.CreatePastoralCareRequest)
 	api.POST("/contact/messages", engagementHandler.CreateContactMessage)
 	api.POST("/visits", engagementHandler.CreateVisit)
+	api.GET("/visits/services", engagementHandler.ListVisitServices)
 	api.GET("/content/homepage-ad", siteContentHandler.GetHomepageAd)
 	api.GET("/content/confession-popup", siteContentHandler.GetConfessionPopup)
 
@@ -402,7 +403,8 @@ func setupRouter(
 	admin.GET("/events/stream", sseHandler.Stream)
 	admin.GET("/contact/messages", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListContactMessages)
 	admin.GET("/visits", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListVisits)
-	admin.PATCH("/visits/:id", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.UpdateVisit)
+	admin.GET("/visits/:id/activities", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListVisitActivities)
+	admin.PATCH("/visits/:id", middleware.RequirePermission(middleware.PermissionEngagementManage), engagementHandler.UpdateVisit)
 
 	// Forms
 	admin.GET("/forms", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.ListAdminForms)

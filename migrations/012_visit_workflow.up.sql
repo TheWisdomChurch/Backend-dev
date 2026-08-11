@@ -16,19 +16,37 @@ CREATE TABLE IF NOT EXISTS visit_requests (
     service_type VARCHAR(120) NOT NULL,
     attendance INTEGER NOT NULL DEFAULT 1 CONSTRAINT chk_visit_requests_attendance CHECK (attendance BETWEEN 1 AND 20),
     notes TEXT,
+    reminder_opt_in BOOLEAN NOT NULL DEFAULT TRUE,
     status VARCHAR(40) NOT NULL DEFAULT 'new' CONSTRAINT chk_visit_requests_status CHECK (status IN ('new','confirmed','contacted','arrived','no_show','completed','cancelled')),
     assigned_to UUID REFERENCES users(id) ON DELETE SET NULL,
     next_follow_up_at TIMESTAMPTZ,
     follow_up_notified_at TIMESTAMPTZ,
     last_contact_at TIMESTAMPTZ,
     confirmation_sent_at TIMESTAMPTZ,
+    confirmation_claimed_at TIMESTAMPTZ,
     reminder_sent_at TIMESTAMPTZ,
+    reminder_claimed_at TIMESTAMPTZ,
+    follow_up_claimed_at TIMESTAMPTZ,
     checked_in_at TIMESTAMPTZ,
     source_channel VARCHAR(120) NOT NULL DEFAULT 'frontend:web:plan-visit',
     idempotency_key VARCHAR(160) NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS visit_activities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    visit_id UUID NOT NULL REFERENCES visit_requests(id) ON DELETE CASCADE,
+    event_type VARCHAR(60) NOT NULL,
+    from_status VARCHAR(40),
+    to_status VARCHAR(40),
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_visit_activities_visit_created ON visit_activities(visit_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visit_activities_actor ON visit_activities(actor_id) WHERE actor_id IS NOT NULL;
 
 -- Case-insensitive email lookup supports idempotency/debugging without forcing
 -- callers to reproduce the stored casing.
