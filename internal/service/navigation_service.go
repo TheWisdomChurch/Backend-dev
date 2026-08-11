@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -53,6 +54,10 @@ func NewNavigationService(apiKey, placeID string, timeout time.Duration) Navigat
 }
 
 func (s *navigationService) PreviewRoute(ctx context.Context, origin Coordinates) (*RoutePreview, error) {
+	if math.IsNaN(origin.Latitude) || math.IsInf(origin.Latitude, 0) || origin.Latitude < -90 || origin.Latitude > 90 ||
+		math.IsNaN(origin.Longitude) || math.IsInf(origin.Longitude, 0) || origin.Longitude < -180 || origin.Longitude > 180 {
+		return nil, apperror.BadRequest("origin coordinates are invalid")
+	}
 	if s.apiKey == "" || s.placeID == "" {
 		return nil, apperror.ServiceUnavailable("navigation provider is not configured")
 	}

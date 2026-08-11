@@ -57,3 +57,10 @@ func TestNavigationServiceRejectsIncompleteProviderRoute(t *testing.T) {
 		t.Fatal("expected incomplete route to be rejected")
 	}
 }
+
+func TestNavigationServiceRejectsInvalidCoordinatesBeforeProviderCall(t *testing.T) {
+	svc := NewNavigationService("server-secret", "verified-place", time.Second)
+	if _, err := svc.PreviewRoute(t.Context(), Coordinates{Latitude: 91, Longitude: 3.5}); err == nil {
+		t.Fatal("expected invalid coordinates to be rejected")
+	}
+}
