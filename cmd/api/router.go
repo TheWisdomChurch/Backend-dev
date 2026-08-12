@@ -203,6 +203,7 @@ func setupRouter(
 	api.GET("/events/:id", eventHandler.Get)
 	api.GET("/reels", reelHandler.List)
 	api.GET("/sermons", sermonHandler.List)
+	api.GET("/sermons/discovery", sermonHandler.Discovery)
 	analyticsIngestLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
 		RequestsPerMinute: 30,
 		Burst:             10,
@@ -238,6 +239,7 @@ func setupRouter(
 	api.GET("/visits/services", engagementHandler.ListVisitServices)
 	api.GET("/content/homepage-ad", siteContentHandler.GetHomepageAd)
 	api.GET("/content/confession-popup", siteContentHandler.GetConfessionPopup)
+	api.GET("/content/about", siteContentHandler.GetAboutPage)
 
 	// Public forms
 	api.GET("/forms/:slug", formHandler.GetPublicForm)
@@ -350,6 +352,8 @@ func setupRouter(
 	admin.PUT("/content/homepage-ad", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminHomepageAd)
 	admin.GET("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.GetAdminConfessionPopup)
 	admin.PUT("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminConfessionPopup)
+	admin.GET("/content/about", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.GetAdminAboutPage)
+	admin.PUT("/content/about", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminAboutPage)
 	admin.GET("/pastoral-care/requests", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListPastoralCareRequests)
 	admin.GET("/giving/intents", middleware.RequirePermission(middleware.PermissionEngagementRead), engagementHandler.ListGivingIntents)
 	admin.GET("/giving", middleware.RequirePermission(middleware.PermissionEngagementRead), givingPaymentsHandler.List)
@@ -450,6 +454,13 @@ func setupRouter(
 	admin.GET("/email/marketing/audience/preview", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.PreviewAudience)
 	admin.GET("/email/compose/history", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.ListComposeHistory)
 	admin.POST("/email/compose/send", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.SendComposeEmail)
+	admin.GET("/email/schedules", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.ListSchedules)
+	admin.POST("/email/schedules", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.CreateSchedule)
+	admin.GET("/email/schedules/:id", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.GetSchedule)
+	admin.PUT("/email/schedules/:id", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.UpdateSchedule)
+	admin.PATCH("/email/schedules/:id/status", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.SetScheduleStatus)
+	admin.DELETE("/email/schedules/:id", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.DeleteSchedule)
+	admin.GET("/email/schedules/:id/runs", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.ListScheduleRuns)
 	admin.GET("/campaigns", middleware.RequirePermission(middleware.PermissionAdminRead), adminEmailHandler.ListComposeHistory)
 
 	// Uploads

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"wisdomHouse-backend/internal/models"
@@ -23,10 +24,14 @@ type SermonFilter struct {
 
 type SermonService interface {
 	List(filter SermonFilter) ([]models.SermonVideo, error)
+	Discovery() (*models.SermonDiscovery, error)
 }
 
 type sermonService struct {
 	httpClient *http.Client
+	mu         sync.RWMutex
+	cached     []models.SermonVideo
+	cachedAt   time.Time
 }
 
 func NewSermonService() SermonService {
@@ -35,7 +40,111 @@ func NewSermonService() SermonService {
 	}
 }
 
+func (s *sermonService) Discovery() (*models.SermonDiscovery, error) {
+	items, err := s.List(SermonFilter{Sort: "newest", Limit: 50})
+	if err != nil {
+		return nil, err
+	}
+	discovery := &models.SermonDiscovery{
+		Recommended: []models.SermonVideo{}, Latest: []models.SermonVideo{},
+		Collections: []models.SermonCollection{}, Topics: []string{}, GeneratedAt: time.Now().UTC(),
+	}
+	if len(items) == 0 {
+		return discovery, nil
+	}
+	discovery.Featured = &items[0]
+	discovery.Latest = append(discovery.Latest, items[:min(12, len(items))]...)
+
+	// Balance relevance and recency instead of letting old lifetime view totals
+	// permanently dominate recommendations.
+	recommended := append([]models.SermonVideo(nil), items...)
+	sort.SliceStable(recommended, func(i, j int) bool {
+		return discoveryScore(recommended[i]) > discoveryScore(recommended[j])
+	})
+	discovery.Recommended = append(discovery.Recommended, recommended[:min(8, len(recommended))]...)
+
+	bySeries := map[string][]models.SermonVideo{}
+	seriesOrder := []string{}
+	topicSet := map[string]bool{}
+	for _, item := range items {
+		series := strings.TrimSpace(item.Series)
+		if series != "" && !strings.EqualFold(series, "general") {
+			if _, exists := bySeries[series]; !exists {
+				seriesOrder = append(seriesOrder, series)
+			}
+			bySeries[series] = append(bySeries[series], item)
+		}
+		for _, tag := range item.Tags {
+			tag = strings.TrimSpace(tag)
+			if tag != "" && len(tag) <= 36 && !topicSet[strings.ToLower(tag)] {
+				topicSet[strings.ToLower(tag)] = true
+				discovery.Topics = append(discovery.Topics, tag)
+			}
+		}
+	}
+	sort.SliceStable(seriesOrder, func(i, j int) bool { return len(bySeries[seriesOrder[i]]) > len(bySeries[seriesOrder[j]]) })
+	for _, series := range seriesOrder[:min(6, len(seriesOrder))] {
+		discovery.Collections = append(discovery.Collections, models.SermonCollection{
+			ID: slugifySermonValue(series), Title: series,
+			Description: fmt.Sprintf("%d messages in this teaching series", len(bySeries[series])),
+			Items:       append([]models.SermonVideo(nil), bySeries[series][:min(8, len(bySeries[series]))]...),
+		})
+	}
+	if len(discovery.Topics) > 12 {
+		discovery.Topics = discovery.Topics[:12]
+	}
+	return discovery, nil
+}
+
+func discoveryScore(item models.SermonVideo) float64 {
+	published, _ := time.Parse(time.RFC3339, item.PublishedAt)
+	ageDays := time.Since(published).Hours() / 24
+	if ageDays < 0 {
+		ageDays = 0
+	}
+	return float64(atoi(item.ViewCount))/1000 + 30/(1+ageDays/14) + float64(atoi(valueOrZero(item.LikeCount)))/100
+}
+
+func valueOrZero(value *string) string {
+	if value == nil {
+		return "0"
+	}
+	return *value
+}
+func slugifySermonValue(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var out strings.Builder
+	lastDash := false
+	for _, ch := range value {
+		if ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' {
+			out.WriteRune(ch)
+			lastDash = false
+		} else if !lastDash {
+			out.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(out.String(), "-")
+}
+
 func (s *sermonService) List(filter SermonFilter) ([]models.SermonVideo, error) {
+	// YouTube quotas and latency should not be paid by every visitor. Keep a
+	// short-lived catalogue snapshot in-process; filtering and sorting still
+	// happen per request below. A copy is returned so callers cannot mutate the
+	// shared snapshot.
+	s.mu.RLock()
+	if len(s.cached) > 0 && time.Since(s.cachedAt) < 10*time.Minute {
+		items := append([]models.SermonVideo(nil), s.cached...)
+		s.mu.RUnlock()
+		items = filterSermons(items, filter)
+		sortSermons(items, filter.Sort)
+		if filter.Limit > 0 && len(items) > filter.Limit {
+			items = items[:filter.Limit]
+		}
+		return items, nil
+	}
+	s.mu.RUnlock()
+
 	apiKey := strings.TrimSpace(os.Getenv("YOUTUBE_API_KEY"))
 	if apiKey == "" {
 		return []models.SermonVideo{}, nil
@@ -44,16 +153,16 @@ func (s *sermonService) List(filter SermonFilter) ([]models.SermonVideo, error) 
 	if channelID == "" {
 		channelID = "UCJuXOj075x81CYK-cCuXwdg"
 	}
-	limit := filter.Limit
-	if limit <= 0 || limit > 50 {
-		limit = 50
-	}
+	// Always refresh the complete catalogue window. Request-specific limits are
+	// applied only after caching, so a small homepage request cannot poison the
+	// shared cache used by the full sermon library.
+	fetchLimit := 50
 
 	searchURL := "https://www.googleapis.com/youtube/v3/search?" + url.Values{
 		"part":       []string{"snippet"},
 		"type":       []string{"video"},
 		"channelId":  []string{channelID},
-		"maxResults": []string{fmt.Sprintf("%d", limit)},
+		"maxResults": []string{fmt.Sprintf("%d", fetchLimit)},
 		"order":      []string{"date"},
 		"key":        []string{apiKey},
 	}.Encode()
@@ -195,8 +304,16 @@ func (s *sermonService) List(filter SermonFilter) ([]models.SermonVideo, error) 
 		})
 	}
 
+	s.mu.Lock()
+	s.cached = append([]models.SermonVideo(nil), out...)
+	s.cachedAt = time.Now()
+	s.mu.Unlock()
+
 	out = filterSermons(out, filter)
 	sortSermons(out, filter.Sort)
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
 	return out, nil
 }
 

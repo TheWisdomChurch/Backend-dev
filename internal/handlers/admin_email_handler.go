@@ -14,11 +14,84 @@ import (
 )
 
 type AdminEmailHandler struct {
-	svc service.AdminEmailService
+	svc       service.AdminEmailService
+	schedules service.AdminEmailScheduleService
 }
 
-func NewAdminEmailHandler(svc service.AdminEmailService) *AdminEmailHandler {
-	return &AdminEmailHandler{svc: svc}
+func NewAdminEmailHandler(svc service.AdminEmailService, schedules service.AdminEmailScheduleService) *AdminEmailHandler {
+	return &AdminEmailHandler{svc: svc, schedules: schedules}
+}
+
+func (h *AdminEmailHandler) CreateSchedule(c *gin.Context) {
+	var req models.UpsertAdminEmailScheduleRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.schedules.Create(&req, buildAdminEmailActor(c))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusCreated, "Email schedule created", item)
+}
+func (h *AdminEmailHandler) UpdateSchedule(c *gin.Context) {
+	var req models.UpsertAdminEmailScheduleRequest
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.schedules.Update(c.Param("id"), &req)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedule updated", item)
+}
+func (h *AdminEmailHandler) GetSchedule(c *gin.Context) {
+	item, err := h.schedules.Get(c.Param("id"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusNotFound, "Email schedule not found")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedule loaded", item)
+}
+func (h *AdminEmailHandler) ListSchedules(c *gin.Context) {
+	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
+	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
+	items, total, err := h.schedules.List(page, limit, c.Query("status"))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load email schedules")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedules loaded", gin.H{"data": items, "total": total, "page": page, "limit": limit, "totalPages": (total + int64(limit) - 1) / int64(limit)})
+}
+func (h *AdminEmailHandler) SetScheduleStatus(c *gin.Context) {
+	var req struct {
+		Status models.AdminEmailScheduleStatus `json:"status" binding:"required"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.schedules.SetStatus(c.Param("id"), req.Status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedule status updated", item)
+}
+func (h *AdminEmailHandler) DeleteSchedule(c *gin.Context) {
+	if err := h.schedules.Delete(c.Param("id")); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Only inactive schedules can be deleted")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedule deleted", gin.H{"id": c.Param("id")})
+}
+func (h *AdminEmailHandler) ListScheduleRuns(c *gin.Context) {
+	items, err := h.schedules.ListRuns(c.Param("id"), parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100))
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load schedule runs")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Email schedule runs loaded", items)
 }
 
 func (h *AdminEmailHandler) SendComposeEmail(c *gin.Context) {

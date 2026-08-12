@@ -17,6 +17,7 @@ import (
 const (
 	siteContentHomepageAdKey = "homepage_ad"
 	siteContentConfessionKey = "confession_popup"
+	siteContentAboutKey      = "about_page"
 )
 
 type SiteContentHandler struct {
@@ -49,6 +50,22 @@ type ConfessionPopupPayload struct {
 	Motto          string `json:"motto"`
 }
 
+type AboutPillarPayload struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type AboutPagePayload struct {
+	Eyebrow      string               `json:"eyebrow"`
+	Title        string               `json:"title"`
+	Subtitle     string               `json:"subtitle"`
+	StoryTitle   string               `json:"storyTitle"`
+	StoryBody    string               `json:"storyBody"`
+	StoryImage   string               `json:"storyImage"`
+	CultureTitle string               `json:"cultureTitle"`
+	Pillars      []AboutPillarPayload `json:"pillars"`
+}
+
 var defaultHomepageAd = HomepageAdPayload{
 	ID:          "wpc-2026",
 	Title:       "Wisdom Power Conference 2026",
@@ -71,6 +88,19 @@ var defaultConfession = ConfessionPopupPayload{
 	Motto:          "We begin to prosper, we continue to prosper, until we become very prosperous.",
 }
 
+var defaultAboutPage = AboutPagePayload{
+	Eyebrow: "About Wisdom Church", Title: "Raising complete believers.",
+	Subtitle:   "A Spirit-filled community built on Word, worship, and intentional discipleship.",
+	StoryTitle: "A church where people grow in Christ.",
+	StoryBody:  "The Wisdom Church is a trans-generational community in Lagos, committed to forming complete believers through sound teaching, worshipful community, and faithful pastoral care.",
+	Pillars: []AboutPillarPayload{
+		{Title: "Presence-driven worship", Body: "We gather to host the presence of God with reverence, expectation, and joy."},
+		{Title: "Word-shaped discipleship", Body: "Teaching is practical and biblical, aimed at forming complete believers."},
+		{Title: "People-first community", Body: "Hospitality, accountability, and care are central to how we build family."},
+		{Title: "Excellence with integrity", Body: "We steward people and service moments with clarity, order, and consistency."},
+	},
+}
+
 func (h *SiteContentHandler) GetHomepageAd(c *gin.Context) {
 	var payload HomepageAdPayload
 	if err := h.loadContent(c, siteContentHomepageAdKey, &payload); err != nil {
@@ -85,6 +115,35 @@ func (h *SiteContentHandler) GetConfessionPopup(c *gin.Context) {
 		payload = defaultConfession
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Confession popup content loaded", payload)
+}
+
+func (h *SiteContentHandler) GetAboutPage(c *gin.Context) {
+	payload := defaultAboutPage
+	if err := h.loadContent(c, siteContentAboutKey, &payload); err != nil {
+		payload = defaultAboutPage
+	}
+	utils.SuccessResponse(c, http.StatusOK, "About page content loaded", payload)
+}
+
+func (h *SiteContentHandler) GetAdminAboutPage(c *gin.Context) {
+	h.GetAboutPage(c)
+}
+
+func (h *SiteContentHandler) UpdateAdminAboutPage(c *gin.Context) {
+	var payload AboutPagePayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid about page payload")
+		return
+	}
+	if payload.Title == "" || payload.StoryTitle == "" || len(payload.Pillars) == 0 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "title, storyTitle, and pillars are required")
+		return
+	}
+	if err := h.saveContent(c, siteContentAboutKey, payload, c.GetString("email")); err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to save about page content")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "About page content updated", payload)
 }
 
 func (h *SiteContentHandler) GetAdminHomepageAd(c *gin.Context) {

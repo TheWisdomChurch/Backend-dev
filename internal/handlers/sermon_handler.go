@@ -32,3 +32,12 @@ func (h *SermonHandler) List(c *gin.Context) {
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Sermons loaded", items)
 }
+
+func (h *SermonHandler) Discovery(c *gin.Context) {
+	result, err := h.svc.Discovery()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadGateway, "Failed to build sermon discovery")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Sermon discovery loaded", result)
+}

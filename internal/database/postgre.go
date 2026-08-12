@@ -221,6 +221,8 @@ func allMigrationModels() []any {
 		&models.FormCalendarReminder{},
 		&models.FormCampaignDelivery{},
 		&models.AdminEmailDelivery{},
+		&models.AdminEmailSchedule{},
+		&models.AdminEmailScheduleRun{},
 		&models.RegistrationSequence{},
 		&models.Asset{},
 		&models.EmailTemplate{},

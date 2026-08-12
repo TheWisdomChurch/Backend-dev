@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type AdminEmailRecipientInput struct {
 	Name  *string `json:"name,omitempty"`
 	Email string  `json:"email"`
@@ -32,6 +34,26 @@ type SendAdminComposeEmailRequest struct {
 	ManualRecipients *[]AdminEmailRecipientInput  `json:"manualRecipients,omitempty"`
 	FormIDs          *[]string                    `json:"formIds,omitempty"`
 	Attachments      *[]AdminEmailAttachmentInput `json:"attachments,omitempty"`
+}
+
+type UpsertAdminEmailScheduleRequest struct {
+	Name          string                       `json:"name" binding:"required"`
+	Description   string                       `json:"description,omitempty"`
+	Status        AdminEmailScheduleStatus     `json:"status,omitempty"`
+	Recurrence    AdminEmailRecurrence         `json:"recurrence" binding:"required"`
+	Timezone      string                       `json:"timezone" binding:"required"`
+	SendTime      string                       `json:"sendTime" binding:"required"`
+	Weekdays      []int                        `json:"weekdays,omitempty"`
+	MonthDays     []int                        `json:"monthDays,omitempty"`
+	StartAt       time.Time                    `json:"startAt" binding:"required"`
+	EndAt         *time.Time                   `json:"endAt,omitempty"`
+	AudienceLabel string                       `json:"audienceLabel,omitempty"`
+	Compose       SendAdminComposeEmailRequest `json:"compose" binding:"required"`
+}
+
+type AdminEmailScheduleDetail struct {
+	AdminEmailSchedule
+	Compose SendAdminComposeEmailRequest `json:"compose"`
 }
 
 type SendAdminComposeEmailResponse struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,40 @@ import (
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 )
+
+func startAdminEmailScheduleWorker(ctx context.Context, svc service.AdminEmailScheduleService, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	worker := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	if worker == "" {
+		worker = "email-scheduler"
+	}
+	run := func() {
+		processed, err := svc.ProcessDue(ctx, time.Now().UTC(), worker, 10)
+		if err != nil {
+			applog.L().Error("email schedule worker failed", "error", err)
+			return
+		}
+		if processed > 0 {
+			applog.L().Info("email schedules processed", "count", processed)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}
 
 func verifyDatabaseConnection(db *database.Database) error {
 	if db == nil {

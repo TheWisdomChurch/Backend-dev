@@ -184,6 +184,7 @@ func main() {
 	formCalendarReminderRepo := repository.NewFormCalendarReminderRepository(db)
 	assetRepo := repository.NewAssetRepository(db)
 	adminEmailDeliveryRepo := repository.NewAdminEmailDeliveryRepository(db)
+	adminEmailScheduleRepo := repository.NewAdminEmailScheduleRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -392,6 +393,7 @@ func main() {
 
 	assetService := service.NewAssetService(assetRepo, assetUploader)
 	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, emailSender, branding)
+	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
@@ -493,7 +495,7 @@ func main() {
 		PasswordHashCost:             cfg.Auth.PasswordHashCost,
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
-	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService)
+	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService, adminEmailScheduleService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader, assetService)
 
 	// -------------------------------------------------------------------------
@@ -600,6 +602,7 @@ func main() {
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
 	go startVisitReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), engagementHandler, 15*time.Minute)
+	go startAdminEmailScheduleWorker(cleanupCtx, adminEmailScheduleService, 30*time.Second)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {
