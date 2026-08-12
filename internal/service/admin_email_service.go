@@ -27,7 +27,7 @@ type AdminEmailService interface {
 	ListDeliveries(page, limit int) ([]models.AdminEmailDeliveryHistoryItem, int64, error)
 	GetMarketingSummary() (*models.AdminEmailMarketingSummary, error)
 	ListAudienceForms(page, limit int) ([]models.AdminEmailMarketingFormItem, int64, error)
-	PreviewAudience(formIDs []string, limit int) (*models.AdminEmailAudiencePreview, error)
+	PreviewAudience(formIDs, audienceTypes []string, limit int) (*models.AdminEmailAudiencePreview, error)
 }
 
 var ErrNoDeliverableRecipients = errors.New("no deliverable recipients")
@@ -37,6 +37,7 @@ type adminEmailService struct {
 	templateRepo    repository.EmailTemplateRepository
 	deliveryRepo    repository.AdminEmailDeliveryRepository
 	subscriberRepo  *repository.SubscriberRepository
+	audienceRepo    repository.EmailAudienceRepository
 	sender          EmailSender
 	branding        email.Branding
 	tplStore        *email.TemplateStore
@@ -52,12 +53,14 @@ type adminComposeRequestView struct {
 	TemplateKey      string
 	ManualRecipients []adminComposeRecipient
 	FormIDs          []string
+	AudienceTypes    []string
 	Attachments      []models.AdminEmailAttachmentInput
 }
 
 type adminComposeRecipient struct {
 	Email string
 	Name  string
+	Sources []models.AdminEmailAudienceRecipientSource
 }
 
 type adminComposeFormAudience struct {
@@ -72,6 +75,7 @@ func NewAdminEmailService(
 	templateRepo repository.EmailTemplateRepository,
 	deliveryRepo repository.AdminEmailDeliveryRepository,
 	subscriberRepo *repository.SubscriberRepository,
+	audienceRepo repository.EmailAudienceRepository,
 	sender EmailSender,
 	branding email.Branding,
 	authSecret string,
@@ -96,6 +100,7 @@ func NewAdminEmailService(
 		templateRepo:    templateRepo,
 		deliveryRepo:    deliveryRepo,
 		subscriberRepo:  subscriberRepo,
+		audienceRepo:    audienceRepo,
 		sender:          sender,
 		branding:        branding,
 		tplStore:        tplStore,
@@ -219,14 +224,18 @@ func (s *adminEmailService) ListAudienceForms(page, limit int) ([]models.AdminEm
 	return items, total, nil
 }
 
-func (s *adminEmailService) PreviewAudience(formIDs []string, limit int) (*models.AdminEmailAudiencePreview, error) {
+func (s *adminEmailService) PreviewAudience(formIDs, rawAudienceTypes []string, limit int) (*models.AdminEmailAudiencePreview, error) {
 	if s.formRepo == nil {
 		return nil, errors.New("form repository is not configured")
 	}
 
 	normalizedFormIDs := normalizeAdminComposeFormIDs(&formIDs)
-	if len(normalizedFormIDs) == 0 {
-		return nil, errors.New("select at least one form audience")
+	audienceTypes, err := normalizeAdminAudienceTypes(&rawAudienceTypes)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalizedFormIDs) == 0 && len(audienceTypes) == 0 {
+		return nil, errors.New("select at least one audience")
 	}
 
 	if limit <= 0 {
@@ -243,7 +252,7 @@ func (s *adminEmailService) PreviewAudience(formIDs []string, limit int) (*model
 
 	type recipientAggregate struct {
 		item       models.AdminEmailAudiencePreviewRecipient
-		sourceForm map[string]struct{}
+		sources    map[string]struct{}
 	}
 
 	recipientOrder := make([]string, 0)
@@ -267,17 +276,17 @@ func (s *adminEmailService) PreviewAudience(formIDs []string, limit int) (*model
 		resp.Skipped += audience.Skipped
 
 		for _, recipient := range audience.Recipients {
+			source := models.AdminEmailAudienceRecipientSource{Type: "form", ID: form.ID, Name: strings.TrimSpace(form.Title), FormID: form.ID, FormTitle: strings.TrimSpace(form.Title)}
 			if existing, ok := recipientMap[recipient.Email]; ok {
 				if existing.item.Name == "" && recipient.Name != "" {
 					existing.item.Name = recipient.Name
 				}
-				if _, seen := existing.sourceForm[form.ID]; !seen {
-					existing.sourceForm[form.ID] = struct{}{}
-					existing.item.SourceForms = append(existing.item.SourceForms, models.AdminEmailAudienceRecipientSource{
-						FormID:    form.ID,
-						FormTitle: strings.TrimSpace(form.Title),
-					})
-					resp.Skipped++
+				if _, seen := existing.sources["form:"+form.ID]; !seen {
+					existing.sources["form:"+form.ID] = struct{}{}
+					existing.item.SourceForms = append(existing.item.SourceForms, source)
+					existing.item.Sources = append(existing.item.Sources, source)
+					existing.item.Duplicate = true
+					resp.DuplicateRecipients++
 				}
 				continue
 			}
@@ -286,20 +295,50 @@ func (s *adminEmailService) PreviewAudience(formIDs []string, limit int) (*model
 				item: models.AdminEmailAudiencePreviewRecipient{
 					Email: recipient.Email,
 					Name:  recipient.Name,
-					SourceForms: []models.AdminEmailAudienceRecipientSource{
-						{
-							FormID:    form.ID,
-							FormTitle: strings.TrimSpace(form.Title),
-						},
-					},
+					SourceForms: []models.AdminEmailAudienceRecipientSource{source},
+					Sources: []models.AdminEmailAudienceRecipientSource{source},
 				},
-				sourceForm: map[string]struct{}{form.ID: {}},
+				sources: map[string]struct{}{("form:" + form.ID): {}},
 			}
 			recipientOrder = append(recipientOrder, recipient.Email)
 		}
 	}
+	for _, audienceType := range audienceTypes {
+		if s.audienceRepo == nil {
+			return nil, errors.New("shared email audience repository is not configured")
+		}
+		contacts, listErr := s.audienceRepo.ListContacts(context.Background(), audienceType)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, contact := range contacts {
+			emailAddr := normalizeEmail(contact.Email)
+			if emailAddr == "" || !emailRe.MatchString(emailAddr) {
+				resp.InvalidRecipients++
+				continue
+			}
+			resp.ValidRecipients++
+			source := models.AdminEmailAudienceRecipientSource{Type: contact.SourceType, ID: contact.SourceID, Name: contact.SourceName}
+			key := contact.SourceType + ":" + contact.SourceID
+			if existing, ok := recipientMap[emailAddr]; ok {
+				if existing.item.Name == "" {
+					existing.item.Name = strings.TrimSpace(contact.Name)
+				}
+				if _, seen := existing.sources[key]; !seen {
+					existing.sources[key] = struct{}{}
+					existing.item.Sources = append(existing.item.Sources, source)
+					existing.item.Duplicate = true
+					resp.DuplicateRecipients++
+				}
+				continue
+			}
+			recipientMap[emailAddr] = &recipientAggregate{item: models.AdminEmailAudiencePreviewRecipient{Email: emailAddr, Name: strings.TrimSpace(contact.Name), Sources: []models.AdminEmailAudienceRecipientSource{source}}, sources: map[string]struct{}{key: {}}}
+			recipientOrder = append(recipientOrder, emailAddr)
+		}
+	}
 
 	resp.UniqueRecipients = len(recipientOrder)
+	resp.Skipped += resp.DuplicateRecipients + resp.InvalidRecipients
 	for i, emailAddr := range recipientOrder {
 		if i >= limit {
 			break
@@ -382,6 +421,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 	resolvedRecipients := make(map[string]adminComposeRecipient)
 	resp.ManualRecipients = len(normalized.ManualRecipients)
 	for _, recipient := range normalized.ManualRecipients {
+		recipient.Sources = []models.AdminEmailAudienceRecipientSource{{Type: "manual", Name: "Manual recipients"}}
 		resolvedRecipients[recipient.Email] = recipient
 	}
 
@@ -396,17 +436,49 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 		sourceForms = append(sourceForms, audience.Summary)
 
 		for _, recipient := range audience.Recipients {
+			source := models.AdminEmailAudienceRecipientSource{Type: "form", ID: formID, Name: audience.Summary.FormTitle, FormID: formID, FormTitle: audience.Summary.FormTitle}
 			if existing, exists := resolvedRecipients[recipient.Email]; exists {
 				if existing.Name == "" && recipient.Name != "" {
 					existing.Name = recipient.Name
 					resolvedRecipients[recipient.Email] = existing
 				}
-				resp.Skipped++
+				existing.Sources = append(existing.Sources, source)
+				resolvedRecipients[recipient.Email] = existing
+				resp.DuplicateRecipients++
 				continue
 			}
+			recipient.Sources = []models.AdminEmailAudienceRecipientSource{source}
 			resolvedRecipients[recipient.Email] = recipient
 		}
 	}
+	for _, audienceType := range normalized.AudienceTypes {
+		if s.audienceRepo == nil {
+			return nil, errors.New("shared email audience repository is not configured")
+		}
+		contacts, listErr := s.audienceRepo.ListContacts(context.Background(), audienceType)
+		if listErr != nil {
+			return nil, fmt.Errorf("resolve %s audience: %w", audienceType, listErr)
+		}
+		for _, contact := range contacts {
+			emailAddr := normalizeEmail(contact.Email)
+			if emailAddr == "" || !emailRe.MatchString(emailAddr) {
+				resp.InvalidRecipients++
+				continue
+			}
+			source := models.AdminEmailAudienceRecipientSource{Type: contact.SourceType, ID: contact.SourceID, Name: contact.SourceName}
+			if existing, exists := resolvedRecipients[emailAddr]; exists {
+				if existing.Name == "" {
+					existing.Name = strings.TrimSpace(contact.Name)
+				}
+				existing.Sources = append(existing.Sources, source)
+				resolvedRecipients[emailAddr] = existing
+				resp.DuplicateRecipients++
+				continue
+			}
+			resolvedRecipients[emailAddr] = adminComposeRecipient{Email: emailAddr, Name: strings.TrimSpace(contact.Name), Sources: []models.AdminEmailAudienceRecipientSource{source}}
+		}
+	}
+	resp.Skipped += resp.DuplicateRecipients + resp.InvalidRecipients
 	resp.SourceForms = sourceForms
 	resp.AudienceSource = string(deriveAdminEmailAudienceSource(resp.ManualRecipients, resp.FormRecipients))
 
@@ -426,6 +498,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			if _, exists := resolvedRecipients[normalizedAddress]; exists {
 				delete(resolvedRecipients, normalizedAddress)
 				resp.Skipped++
+				resp.UnsubscribedRecipients++
 			}
 		}
 		if len(resolvedRecipients) == 0 {
@@ -566,9 +639,13 @@ func normalizeAdminComposeRequest(req *models.SendAdminComposeEmailRequest) (*ad
 		return nil, err
 	}
 	formIDs := normalizeAdminComposeFormIDs(req.FormIDs)
+	audienceTypes, err := normalizeAdminAudienceTypes(req.AudienceTypes)
+	if err != nil {
+		return nil, err
+	}
 
-	if len(manualRecipients) == 0 && len(formIDs) == 0 {
-		return nil, errors.New("select at least one form audience or add at least one manual recipient")
+	if len(manualRecipients) == 0 && len(formIDs) == 0 && len(audienceTypes) == 0 {
+		return nil, errors.New("select at least one audience or add at least one manual recipient")
 	}
 	if templateID == "" && templateKey == "" && htmlBody == "" {
 		return nil, errors.New("htmlBody, templateId, or templateKey is required")
@@ -587,8 +664,30 @@ func normalizeAdminComposeRequest(req *models.SendAdminComposeEmailRequest) (*ad
 		TemplateKey:      templateKey,
 		ManualRecipients: manualRecipients,
 		FormIDs:          formIDs,
+		AudienceTypes:    audienceTypes,
 		Attachments:      attachments,
 	}, nil
+}
+
+func normalizeAdminAudienceTypes(values *[]string) ([]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+	allowed := map[string]struct{}{"members": {}, "workforce": {}, "leadership": {}, "subscribers": {}}
+	result := make([]string, 0, len(*values))
+	seen := make(map[string]struct{}, len(*values))
+	for _, raw := range *values {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if _, ok := allowed[value]; !ok {
+			return nil, fmt.Errorf("unsupported audience type %q", raw)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
 }
 
 const maxAdminComposeAttachments = 10

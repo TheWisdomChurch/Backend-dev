@@ -187,8 +187,9 @@ func (h *AdminEmailHandler) ListAudienceForms(c *gin.Context) {
 func (h *AdminEmailHandler) PreviewAudience(c *gin.Context) {
 	limit := parseIntClamp(c.DefaultQuery("limit", "25"), 1, 200)
 	formIDs := parseAdminEmailFormIDsQuery(c)
+	audienceTypes := c.QueryArray("audienceTypes")
 
-	resp, err := h.svc.PreviewAudience(formIDs, limit)
+	resp, err := h.svc.PreviewAudience(formIDs, audienceTypes, limit)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return

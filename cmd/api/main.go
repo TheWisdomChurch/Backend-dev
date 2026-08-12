@@ -184,6 +184,7 @@ func main() {
 	formCalendarReminderRepo := repository.NewFormCalendarReminderRepository(db)
 	assetRepo := repository.NewAssetRepository(db)
 	adminEmailDeliveryRepo := repository.NewAdminEmailDeliveryRepository(db)
+	emailAudienceRepo := repository.NewEmailAudienceRepository(db)
 	adminEmailScheduleRepo := repository.NewAdminEmailScheduleRepository(db)
 	celebrationAutomationRepo := repository.NewCelebrationAutomationRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
@@ -393,7 +394,7 @@ func main() {
 	)
 
 	assetService := service.NewAssetService(assetRepo, assetUploader)
-	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
+	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailAudienceRepo, emailSender, branding, cfg.Auth.SecretKey)
 	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
 	celebrationAutomationService := service.NewCelebrationAutomationService(celebrationAutomationRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)

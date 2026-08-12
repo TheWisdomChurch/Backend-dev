@@ -33,6 +33,7 @@ type SendAdminComposeEmailRequest struct {
 	TemplateKey      *string                      `json:"templateKey,omitempty"`
 	ManualRecipients *[]AdminEmailRecipientInput  `json:"manualRecipients,omitempty"`
 	FormIDs          *[]string                    `json:"formIds,omitempty"`
+	AudienceTypes    *[]string                    `json:"audienceTypes,omitempty"`
 	Attachments      *[]AdminEmailAttachmentInput `json:"attachments,omitempty"`
 }
 
@@ -70,6 +71,9 @@ type SendAdminComposeEmailResponse struct {
 	Targeted         int                             `json:"targeted"`
 	Sent             int                             `json:"sent"`
 	Skipped          int                             `json:"skipped"`
+	DuplicateRecipients int                          `json:"duplicateRecipients"`
+	UnsubscribedRecipients int                       `json:"unsubscribedRecipients"`
+	InvalidRecipients int                            `json:"invalidRecipients"`
 	Failed           int                             `json:"failed"`
 	FailedRecipients []string                        `json:"failedRecipients,omitempty"`
 	StartedAt        string                          `json:"startedAt"`
@@ -129,14 +133,19 @@ type AdminEmailMarketingSummary struct {
 }
 
 type AdminEmailAudienceRecipientSource struct {
-	FormID    string `json:"formId"`
-	FormTitle string `json:"formTitle"`
+	Type      string `json:"type"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	FormID    string `json:"formId,omitempty"`
+	FormTitle string `json:"formTitle,omitempty"`
 }
 
 type AdminEmailAudiencePreviewRecipient struct {
 	Email       string                              `json:"email"`
 	Name        string                              `json:"name,omitempty"`
 	SourceForms []AdminEmailAudienceRecipientSource `json:"sourceForms,omitempty"`
+	Sources     []AdminEmailAudienceRecipientSource `json:"sources,omitempty"`
+	Duplicate  bool                                 `json:"duplicate"`
 }
 
 type AdminEmailAudiencePreview struct {
@@ -146,6 +155,8 @@ type AdminEmailAudiencePreview struct {
 	ValidRecipients  int                                  `json:"validRecipients"`
 	UniqueRecipients int                                  `json:"uniqueRecipients"`
 	Skipped          int                                  `json:"skipped"`
+	DuplicateRecipients int                               `json:"duplicateRecipients"`
+	InvalidRecipients int                                 `json:"invalidRecipients"`
 	PreviewCount     int                                  `json:"previewCount"`
 	Recipients       []AdminEmailAudiencePreviewRecipient `json:"recipients"`
 }

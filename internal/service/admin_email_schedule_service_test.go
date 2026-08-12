@@ -59,7 +59,7 @@ func (adminMailerStub) GetMarketingSummary() (*models.AdminEmailMarketingSummary
 func (adminMailerStub) ListAudienceForms(int, int) ([]models.AdminEmailMarketingFormItem, int64, error) {
 	return nil, 0, nil
 }
-func (adminMailerStub) PreviewAudience([]string, int) (*models.AdminEmailAudiencePreview, error) {
+func (adminMailerStub) PreviewAudience([]string, []string, int) (*models.AdminEmailAudiencePreview, error) {
 	return nil, nil
 }
 
