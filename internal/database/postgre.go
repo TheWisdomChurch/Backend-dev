@@ -216,6 +216,7 @@ func allMigrationModels() []any {
 		&models.Event{},
 		&models.Reel{},
 		&models.Form{},
+		&models.FormSlugAlias{},
 		&models.FormField{},
 		&models.FormSubmission{},
 		&models.FormCalendarReminder{},

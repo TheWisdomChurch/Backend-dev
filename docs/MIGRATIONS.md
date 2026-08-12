@@ -67,6 +67,8 @@ The migration chain currently contains three units:
   confirmation, suppression, failure, and contributing-audience history.
 - `018_form_reminder_delivery_claims.up.sql` / `.down.sql` — database claims, bounded retries,
   failure diagnostics, and provider-acceptance state for form event reminders.
+- `019_form_architecture_and_slug_aliases.up.sql` / `.down.sql` — unified current form renderer
+  marker and durable historical-link aliases for editable published URLs.
 
 This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
 of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
@@ -86,7 +88,7 @@ doesn't already have a record for.
 ## Adding a migration
 
 1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `018`; the next one is `019`).
+   one (currently `019`; the next one is `020`).
    Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
    each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
    debugging too, and safe to fold into a future consolidation.

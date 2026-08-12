@@ -77,7 +77,22 @@ type FormLegacyContentSectionDTO struct {
 	ItemSubtexts []string `json:"itemSubtexts,omitempty"`
 }
 
+type FormConsentSettingsDTO struct {
+	Enabled              *bool     `json:"enabled,omitempty"`
+	Required             *bool     `json:"required,omitempty"`
+	Title                *string   `json:"title,omitempty"`
+	Introduction         *string   `json:"introduction,omitempty"`
+	Purposes             *[]string `json:"purposes,omitempty"`
+	DataUse              *string   `json:"dataUse,omitempty"`
+	Retention            *string   `json:"retention,omitempty"`
+	Rights               *string   `json:"rights,omitempty"`
+	Contact              *string   `json:"contact,omitempty"`
+	AcknowledgementLabel *string   `json:"acknowledgementLabel,omitempty"`
+	Version              *string   `json:"version,omitempty"`
+}
+
 type FormSettingsDTO struct {
+	RendererVersion *int    `json:"rendererVersion,omitempty"`
 	Capacity        *int    `json:"capacity,omitempty"`
 	ClosesAt        *string `json:"closesAt,omitempty" binding:"omitempty,rfc3339"`  // ISO string
 	ExpiresAt       *string `json:"expiresAt,omitempty" binding:"omitempty,rfc3339"` // ISO string
@@ -125,6 +140,7 @@ type FormSettingsDTO struct {
 	SubmitButtonTextColor *string                        `json:"submitButtonTextColor,omitempty"`
 	SubmitButtonIcon      *string                        `json:"submitButtonIcon,omitempty"`
 	FormHeaderNote        *string                        `json:"formHeaderNote,omitempty"`
+	Consent               *FormConsentSettingsDTO        `json:"consent,omitempty"`
 }
 
 type CreateFormRequest struct {

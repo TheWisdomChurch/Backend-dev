@@ -24,6 +24,7 @@ func (s *formService) GetPublic(slug string) (*models.PublicFormPayload, error) 
 		return nil, err
 	}
 	form.Fields = applyImplicitFieldVisibilityDefaults(form.Fields)
+	s.attachPublicURL(form)
 
 	settings, _ := decodeSettings(form.Settings)
 	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
@@ -120,6 +121,10 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	settings, _ := decodeSettings(form.Settings)
+	consentAccepted, _ := req.Values["_consentAccepted"].(bool)
+	if settings.Consent != nil && settings.Consent.Required != nil && *settings.Consent.Required && !consentAccepted {
+		return errors.New("you must accept the consent and privacy notice before submitting")
+	}
 
 	if settings.ExpiresAt != nil && strings.TrimSpace(*settings.ExpiresAt) != "" {
 		t, parseErr := parseFlexibleTime(*settings.ExpiresAt)
@@ -161,6 +166,13 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	cleanValues, err := validateSubmission(fields, mediaSafeValues)
 	if err != nil {
 		return err
+	}
+	if consentAccepted {
+		cleanValues["_consentAccepted"] = true
+		if settings.Consent != nil && settings.Consent.Version != nil {
+			cleanValues["_consentVersion"] = strings.TrimSpace(*settings.Consent.Version)
+		}
+		cleanValues["_consentRecordedAt"] = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	if containsSubmissionDataURL(cleanValues) {

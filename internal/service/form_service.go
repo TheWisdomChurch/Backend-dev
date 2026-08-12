@@ -11,8 +11,10 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/datatypes"
 	"net/url"
 	"os"
 	"regexp"
@@ -164,6 +166,7 @@ func (s *formService) attachPublicURL(form *models.Form) {
 	if form == nil {
 		return
 	}
+	normalizeFormSettingsForRead(form)
 	if !form.IsPublished || form.Slug == nil {
 		return
 	}
@@ -175,6 +178,17 @@ func (s *formService) attachPublicURL(form *models.Form) {
 		return
 	}
 	form.PublicURL = s.buildPublicURL(slug)
+}
+
+func normalizeFormSettingsForRead(form *models.Form) {
+	settings, err := decodeSettings(form.Settings)
+	if err != nil {
+		return
+	}
+	raw, err := json.Marshal(settings)
+	if err == nil {
+		form.Settings = datatypes.JSON(raw)
+	}
 }
 
 func (s *formService) attachPublicURLs(forms []models.Form) {
@@ -378,6 +392,8 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		return nil, err
 	}
 
+	previousSlug := strings.TrimSpace(valueOrEmpty(existing.Slug))
+	slugChanged := false
 	if req.Title != nil {
 		t := strings.TrimSpace(*req.Title)
 		if t == "" {
@@ -399,9 +415,6 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 			}
 			existing.Slug = nil
 		} else {
-			if existing.Status == models.FormStatusPublished && (existing.Slug == nil || *existing.Slug != slug) {
-				return nil, errors.New("cannot change slug for a published form")
-			}
 			if existing.Slug == nil || *existing.Slug != slug {
 				exists, err := s.repo.SlugExists(slug)
 				if err != nil {
@@ -412,6 +425,7 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 				}
 			}
 			existing.Slug = &slug
+			slugChanged = previousSlug != slug
 		}
 	}
 	if req.Settings != nil {
@@ -440,7 +454,12 @@ func (s *formService) Update(id string, req *models.UpdateFormRequest) (*models.
 		}
 	}
 
-	if err := s.repo.Update(existing); err != nil {
+	if slugChanged && previousSlug != "" {
+		err = s.repo.UpdateWithSlugAlias(existing, previousSlug)
+	} else {
+		err = s.repo.Update(existing)
+	}
+	if err != nil {
 		return nil, err
 	}
 

@@ -394,6 +394,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		defaultResponseEmail := true
 		s.ResponseEmailEnabled = &defaultResponseEmail
 	}
+	applyCurrentFormArchitectureDefaults(s)
 	if s.ClosesAt != nil && strings.TrimSpace(*s.ClosesAt) != "" {
 		normalized, err := normalizeFlexibleTime(*s.ClosesAt)
 		if err != nil {
@@ -668,6 +669,48 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		}
 		s.IntroBulletSubtexts = &clean
 	}
+	if s.Consent != nil {
+		c := s.Consent
+		var err error
+		if c.Title, err = normalizeText("consent.title", c.Title, 180); err != nil {
+			return nil, err
+		}
+		if c.Introduction, err = normalizeText("consent.introduction", c.Introduction, 4000); err != nil {
+			return nil, err
+		}
+		if c.DataUse, err = normalizeText("consent.dataUse", c.DataUse, 4000); err != nil {
+			return nil, err
+		}
+		if c.Retention, err = normalizeText("consent.retention", c.Retention, 3000); err != nil {
+			return nil, err
+		}
+		if c.Rights, err = normalizeText("consent.rights", c.Rights, 3000); err != nil {
+			return nil, err
+		}
+		if c.Contact, err = normalizeText("consent.contact", c.Contact, 1000); err != nil {
+			return nil, err
+		}
+		if c.AcknowledgementLabel, err = normalizeText("consent.acknowledgementLabel", c.AcknowledgementLabel, 1000); err != nil {
+			return nil, err
+		}
+		if c.Version, err = normalizeText("consent.version", c.Version, 80); err != nil {
+			return nil, err
+		}
+		if c.Purposes != nil {
+			clean := make([]string, 0, len(*c.Purposes))
+			for _, purpose := range *c.Purposes {
+				purpose = strings.TrimSpace(purpose)
+				if purpose == "" {
+					continue
+				}
+				if utf8.RuneCountInString(purpose) > 500 {
+					return nil, errors.New("consent purpose is too long")
+				}
+				clean = append(clean, purpose)
+			}
+			c.Purposes = &clean
+		}
+	}
 	if err := normalizeFormContentSections(s.Sections); err != nil {
 		return nil, err
 	}
@@ -833,7 +876,9 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 
 func decodeSettings(j datatypes.JSON) (*models.FormSettingsDTO, error) {
 	if len(j) == 0 || string(j) == "null" {
-		return &models.FormSettingsDTO{}, nil
+		s := &models.FormSettingsDTO{}
+		applyCurrentFormArchitectureDefaults(s)
+		return s, nil
 	}
 	var s models.FormSettingsDTO
 	if err := json.Unmarshal(j, &s); err != nil {
@@ -847,7 +892,47 @@ func decodeSettings(j datatypes.JSON) (*models.FormSettingsDTO, error) {
 		converted := convertLegacyToExtendedSections(*s.ContentSections)
 		s.Sections = &converted
 	}
+	applyCurrentFormArchitectureDefaults(&s)
 	return &s, nil
+}
+
+func applyCurrentFormArchitectureDefaults(s *models.FormSettingsDTO) {
+	if s == nil {
+		return
+	}
+	version := 2
+	s.RendererVersion = &version
+	if s.LayoutMode == nil {
+		layout := "split"
+		s.LayoutMode = &layout
+	}
+	if s.SubmitButtonText == nil {
+		label := "Submit securely"
+		s.SubmitButtonText = &label
+	}
+	if s.Consent == nil {
+		s.Consent = &models.FormConsentSettingsDTO{}
+	}
+	enabled, required := true, true
+	s.Consent.Enabled, s.Consent.Required = &enabled, &required
+	set := func(target **string, value string) {
+		if *target == nil || strings.TrimSpace(**target) == "" {
+			copy := value
+			*target = &copy
+		}
+	}
+	set(&s.Consent.Title, "Consent, privacy and responsible use of your information")
+	set(&s.Consent.Introduction, "Please review this consent notice carefully before submitting. The information you provide will be collected by The Wisdom Church for the legitimate administration of this form, pastoral or ministry follow-up, event or programme coordination, safeguarding, communication, record management, and any other purpose clearly connected with the form you are completing. We ask only for information reasonably required to process your response and support the relevant church activity.")
+	if s.Consent.Purposes == nil || len(*s.Consent.Purposes) == 0 {
+		items := []string{"Process and administer your submission, registration, application, enquiry, or request.", "Contact you about this submission and provide relevant operational, pastoral, programme, or event information.", "Maintain accurate organisational records, prevent duplicate processing, protect the integrity of church systems, and meet appropriate safeguarding or accountability obligations.", "Share information only with authorised personnel or carefully selected service providers who require it to perform the relevant activity, subject to appropriate confidentiality and security controls."}
+		s.Consent.Purposes = &items
+	}
+	set(&s.Consent.DataUse, "Your information will not be sold. Access should be limited to authorised people with a genuine operational need. Where a form routes information into another church workflow—such as membership, workforce, leadership, pastoral care, testimony, event registration, or communications—the information may be used within that workflow consistently with the purpose explained on this form.")
+	set(&s.Consent.Retention, "Records will be retained only for as long as reasonably necessary for the stated purpose, legitimate administration, safeguarding, dispute resolution, or applicable record-keeping requirements. Retention periods may differ according to the nature of the form and the continuing relationship created by your submission.")
+	set(&s.Consent.Rights, "You may request access to or correction of your personal information and may ask questions about its use. Where processing depends on consent, you may withdraw that consent for future processing, although this will not invalidate processing already carried out and may limit our ability to complete the service or activity you requested.")
+	set(&s.Consent.Contact, "For privacy questions, corrections, or consent requests, contact the church through its published administrative or privacy contact channel and identify the form you submitted.")
+	set(&s.Consent.AcknowledgementLabel, "I confirm that I have read and understood this consent and privacy notice, that the information I am submitting is accurate to the best of my knowledge, and that I consent to its collection and use for the purposes described above.")
+	set(&s.Consent.Version, "2026.1")
 }
 
 func mergeFormSettings(base *models.FormSettingsDTO, incoming *models.FormSettingsDTO) (*models.FormSettingsDTO, error) {
