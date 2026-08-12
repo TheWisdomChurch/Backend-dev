@@ -47,6 +47,7 @@ type Form struct {
 	// Computed/derived fields (not persisted)
 	PublicURL       *string `gorm:"-" json:"publicUrl,omitempty"`
 	SubmissionCount int64   `gorm:"-" json:"submissionCount"`
+	ArchivedAt      *time.Time `gorm:"-" json:"archivedAt,omitempty"`
 }
 
 type FormSlugAlias struct {

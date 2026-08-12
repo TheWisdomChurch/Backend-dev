@@ -60,12 +60,12 @@ func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
 	var items []models.Form
 	var total int64
 
-	q := r.db.DB.Model(&models.Form{})
+	q := r.db.DB.Unscoped().Model(&models.Form{})
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := r.db.DB.
+	err := r.db.DB.Unscoped().
 		Preload("Fields", func(db *gorm.DB) *gorm.DB {
 			// Keep ordering stable for the UI
 			return db.Order(`"order" ASC`)
@@ -76,6 +76,7 @@ func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
 		Find(&items).Error
 
 	if err == nil {
+		for i := range items { if items[i].DeletedAt.Valid { at := items[i].DeletedAt.Time; items[i].ArchivedAt = &at } }
 		err = r.attachSubmissionCounts(items)
 	}
 
@@ -84,7 +85,7 @@ func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
 
 func (r *formRepository) GetByID(id string) (*models.Form, error) {
 	var f models.Form
-	err := r.db.DB.Preload("Fields", "deleted_at IS NULL").First(&f, "id = ?", id).Error
+	err := r.db.DB.Unscoped().Preload("Fields", "deleted_at IS NULL").First(&f, "id = ?", id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +94,7 @@ func (r *formRepository) GetByID(id string) (*models.Form, error) {
 		return nil, err
 	}
 	f.SubmissionCount = count
+	if f.DeletedAt.Valid { at := f.DeletedAt.Time; f.ArchivedAt = &at }
 	return &f, nil
 }
 
@@ -151,7 +153,7 @@ func (r *formRepository) UpdateWithSlugAlias(form *models.Form, previousSlug str
 				return err
 			}
 		}
-		return tx.Save(form).Error
+		return tx.Unscoped().Save(form).Error
 	})
 }
 
@@ -175,7 +177,7 @@ func (r *formRepository) Create(form *models.Form) error {
 }
 
 func (r *formRepository) Update(form *models.Form) error {
-	return r.db.DB.Save(form).Error
+	return r.db.DB.Unscoped().Save(form).Error
 }
 
 func (r *formRepository) Delete(id string) error {
@@ -207,7 +209,6 @@ func (r *formRepository) DeleteExpired(now time.Time) (int64, error) {
 	updates := map[string]any{
 		"status":       models.FormStatusInvalid,
 		"is_published": false,
-		"slug":         nil,
 		"deleted_at":   now,
 	}
 

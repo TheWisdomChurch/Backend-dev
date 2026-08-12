@@ -37,10 +37,12 @@ func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
 		topRuleColor = colorAccent
 	}
 
+	bodyHTML = addResponsiveContentClasses(bodyHTML)
+	responsiveCSS := "<style>body{margin:0!important;padding:0!important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}.wc-frame{width:100%!important;max-width:680px!important}.wc-content-pad{}.wc-button a{box-sizing:border-box}.wc-fluid-image{max-width:100%!important;height:auto!important}@media only screen and (max-width:700px){.wc-outer{padding:24px 14px!important}.wc-frame{max-width:100%!important}.wc-header{padding:30px 32px 24px!important}.wc-divider{padding-left:32px!important;padding-right:32px!important}.wc-content-pad,.wc-footer{padding-left:32px!important;padding-right:32px!important}}@media only screen and (max-width:480px){.wc-outer{padding:10px 8px!important}.wc-frame{border-radius:14px!important}.wc-header{padding:24px 20px 20px!important}.wc-divider{padding-left:20px!important;padding-right:20px!important}.wc-content-pad,.wc-footer{padding-left:20px!important;padding-right:20px!important}.wc-button,.wc-button tbody,.wc-button tr,.wc-button td{display:block!important;width:100%!important}.wc-button a{display:block!important;width:100%!important;text-align:center!important;padding:15px 18px!important}.wc-info-cell{display:block!important;width:100%!important;border-right:0!important;border-bottom:1px solid " + colorLine + "!important;padding:14px 0!important}.wc-social a{display:inline-block!important;margin:0 10px 8px 0!important}.wc-social-separator{display:none!important}h1{font-size:25px!important;line-height:1.25!important}} </style>"
 	return "<!DOCTYPE html>" +
-		"<html><body style=\"margin:0;padding:0;background:" + colorGround + ";font-family:" + fontStack + ";\">" +
-		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:" + colorGround + ";\"><tr><td align=\"center\" style=\"padding:40px 16px;\">" +
-		"<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;max-width:600px;background:" + colorPaper + ";border:1px solid " + colorLine + ";\">" +
+		"<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"x-apple-disable-message-reformatting\">" + responsiveCSS + "</head><body style=\"margin:0;padding:0;background:" + colorGround + ";font-family:" + fontStack + ";\">" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;background:" + colorGround + ";\"><tr><td class=\"wc-outer\" align=\"center\" style=\"padding:32px 20px;\">" +
+		"<table class=\"wc-frame\" role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:680px;background:" + colorPaper + ";border:1px solid " + colorLine + ";border-radius:20px;overflow:hidden;\">" +
 		"<tr><td style=\"height:3px;line-height:3px;font-size:0;background:" + topRuleColor + ";\">&nbsp;</td></tr>" +
 		renderHeaderBlock(b) +
 		bodyHTML +
@@ -48,6 +50,13 @@ func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
 		"</table>" +
 		"</td></tr></table>" +
 		"</body></html>"
+}
+
+func addResponsiveContentClasses(body string) string {
+	for _, vertical := range []string{"0", "8px", "14px", "16px", "20px", "24px", "28px", "32px", "36px"} {
+		body = strings.ReplaceAll(body, "<td style=\"padding:"+vertical+" 40px", "<td class=\"wc-content-pad\" style=\"padding:"+vertical+" 40px")
+	}
+	return body
 }
 
 // renderHeaderBlock renders the brand lockup: logo on the left, a vertical
@@ -65,7 +74,7 @@ func renderHeaderBlock(b Branding) string {
 
 	tagline := strings.TrimSpace(b.Tagline())
 
-	return "<tr><td style=\"padding:36px 40px 28px;\">" +
+	return "<tr><td class=\"wc-header\" style=\"padding:38px 48px 30px;\">" +
 		"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
 		"<td style=\"width:56px;vertical-align:middle;\">" + logoCell + "</td>" +
 		"<td style=\"width:1px;padding:0 10px;\">" +
@@ -78,7 +87,7 @@ func renderHeaderBlock(b Branding) string {
 		"</td>" +
 		"</tr></table>" +
 		"</td></tr>" +
-		"<tr><td style=\"padding:0 40px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>"
+		"<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>"
 }
 
 func conditionalTagline(tagline string) string {
@@ -104,8 +113,8 @@ func renderFooterBlock(b Branding) string {
 		contactLine = "<p style=\"margin:0 0 14px;font-size:12px;color:" + colorFaint + ";\">Need help? Contact <a href=\"mailto:" + html.EscapeString(b.SupportEmail) + "\" style=\"color:" + colorAccent + ";text-decoration:none;\">" + html.EscapeString(b.SupportEmail) + "</a></p>"
 	}
 
-	return "<tr><td style=\"padding:0 40px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>" +
-		"<tr><td style=\"padding:24px 40px 32px;font-family:" + fontStack + ";\">" +
+	return "<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>" +
+		"<tr><td class=\"wc-footer\" style=\"padding:26px 48px 36px;font-family:" + fontStack + ";\">" +
 		"<p style=\"margin:0 0 4px;font-size:12px;color:" + colorFaint + ";\">" + html.EscapeString(b.AppName) + "</p>" +
 		contactLine +
 		renderSocialLinksRow(b.Social) +
@@ -141,8 +150,8 @@ func renderSocialLinksRow(s SocialLinks) string {
 		return ""
 	}
 
-	separator := "<span style=\"color:" + colorLine + ";padding:0 7px;\">&middot;</span>"
-	return "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-family:" + fontStack + ";font-size:11px;letter-spacing:.04em;\">" +
+	separator := "<span class=\"wc-social-separator\" style=\"color:" + colorLine + ";padding:0 7px;\">&middot;</span>"
+	return "<table class=\"wc-social\" role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-family:" + fontStack + ";font-size:11px;letter-spacing:.04em;\">" +
 		strings.Join(parts, separator) +
 		"</td></tr></table>"
 }
@@ -160,7 +169,7 @@ func renderButton(label, url, bg, fg string) string {
 	if strings.TrimSpace(fg) == "" {
 		fg = colorPaper
 	}
-	return "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
+	return "<table class=\"wc-button\" role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
 		"<td style=\"background:" + bg + ";\">" +
 		"<a href=\"" + html.EscapeString(url) + "\" style=\"display:block;padding:14px 26px;font-family:" + fontStack + ";font-size:14px;font-weight:600;letter-spacing:.01em;color:" + fg + ";text-decoration:none;\">" + html.EscapeString(label) + "</a>" +
 		"</td></tr></table>"
@@ -173,7 +182,7 @@ func renderOutlineButton(label, url string) string {
 	if url == "" {
 		return ""
 	}
-	return "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
+	return "<table class=\"wc-button\" role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
 		"<td style=\"border:1px solid " + colorLine + ";\">" +
 		"<a href=\"" + html.EscapeString(url) + "\" style=\"display:block;padding:13px 25px;font-family:" + fontStack + ";font-size:14px;font-weight:600;letter-spacing:.01em;color:" + colorInk + ";text-decoration:none;\">" + html.EscapeString(label) + "</a>" +
 		"</td></tr></table>"
@@ -235,13 +244,13 @@ func renderInfoGrid(items []infoItem) string {
 			borderRight = ""
 			padRight = "0"
 		}
-		tds.WriteString("<td style=\"width:" + strconv.FormatFloat(width, 'f', 2, 64) + "%;padding:18px " + padRight + " 18px " + padLeft + ";font-family:" + fontStack + ";" + borderRight + "\">")
+		tds.WriteString("<td class=\"wc-info-cell\" style=\"width:" + strconv.FormatFloat(width, 'f', 2, 64) + "%;padding:18px " + padRight + " 18px " + padLeft + ";font-family:" + fontStack + ";" + borderRight + "\">")
 		tds.WriteString("<div style=\"font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:" + colorFaint + ";margin-bottom:6px;\">" + html.EscapeString(it.Label) + "</div>")
 		tds.WriteString("<div style=\"font-size:14px;color:" + colorInk + ";\">" + html.EscapeString(it.Value) + "</div>")
 		tds.WriteString("</td>")
 	}
 
-	return "<tr><td style=\"padding:16px 40px 0;\">" +
+	return "<tr><td class=\"wc-content-pad\" style=\"padding:16px 48px 0;\">" +
 		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid " + colorLine + ";\"><tr>" +
 		tds.String() +
 		"</tr></table>" +
@@ -285,7 +294,7 @@ func renderHeading(text string) string {
 
 // renderBodyOpen/renderBodyClose wrap the main content cell inside the shell.
 func renderBodyOpen() string {
-	return "<tr><td style=\"padding:36px 40px 8px;font-family:" + fontStack + ";\">"
+	return "<tr><td class=\"wc-content-pad\" style=\"padding:38px 48px 10px;font-family:" + fontStack + ";\">"
 }
 
 func renderBodyClose() string {
@@ -297,5 +306,5 @@ func renderActionRow(buttonsHTML string) string {
 	if strings.TrimSpace(buttonsHTML) == "" {
 		return ""
 	}
-	return "<tr><td style=\"padding:28px 40px 40px;\">" + buttonsHTML + "</td></tr>"
+	return "<tr><td class=\"wc-content-pad\" style=\"padding:30px 48px 44px;\">" + buttonsHTML + "</td></tr>"
 }

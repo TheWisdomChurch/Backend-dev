@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 	"net/url"
 	"os"
 	"regexp"
@@ -542,6 +543,7 @@ func (s *formService) Publish(id string) (string, *string, error) {
 	now := time.Now().UTC()
 	form.IsPublished = true
 	form.Status = models.FormStatusPublished
+	form.DeletedAt = gorm.DeletedAt{}
 	form.Slug = &slug
 	if form.PublishedAt == nil || prevStatus != models.FormStatusPublished {
 		form.PublishedAt = &now
