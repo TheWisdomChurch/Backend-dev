@@ -61,32 +61,6 @@ func buildInitials(value string) string {
 	return b.String()
 }
 
-func (s *formService) sendRegistrationCodeEmail(form *models.Form, emailAddr string, name *string, code string) {
-	if strings.TrimSpace(emailAddr) == "" || s.sender == nil {
-		return
-	}
-	recipient := "there"
-	if name != nil && strings.TrimSpace(*name) != "" {
-		recipient = strings.TrimSpace(*name)
-	}
-	eventName := ""
-	if form != nil {
-		eventName = strings.TrimSpace(form.Title)
-	}
-	subject := "Your registration code"
-	message := fmt.Sprintf("Your registration code for %s is %s.", eventName, code)
-	body := email.RenderRegistrationCodeEmail(email.RegistrationCodeTemplateData{
-		Branding:      s.branding,
-		RecipientName: recipient,
-		EventName:     eventName,
-		Code:          code,
-		Message:       message,
-	})
-	if err := s.sender.SendHTML(emailAddr, subject, body); err != nil {
-		applog.L().Warn("failed to send registration code email", "to", emailAddr, "error", err)
-	}
-}
-
 func (s *formService) sendResponseEmail(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, name *string, emailAddr string, regCode *string, submissionID string) {
 	if s.sender == nil {
 		return

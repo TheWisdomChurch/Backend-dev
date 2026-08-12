@@ -108,28 +108,13 @@ func NewS3UploaderFromEnv() (*S3Uploader, error) {
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	}
 
-	resolver := aws.EndpointResolverWithOptionsFunc(
-		func(service, resolverRegion string, options ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID {
-				return aws.Endpoint{
-					URL:               endpoint,
-					HostnameImmutable: true,
-					SigningRegion:     region,
-				}, nil
-			}
-
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-		},
-	)
-
-	loadOpts = append(loadOpts, config.WithEndpointResolverWithOptions(resolver))
-
 	cfg, err := config.LoadDefaultConfig(context.Background(), loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("s3 config load failed: %w", err)
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = forcePathStyle
 	})
 

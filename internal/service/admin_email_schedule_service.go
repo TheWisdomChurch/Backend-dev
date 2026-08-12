@@ -428,6 +428,8 @@ func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.
 		if err == nil && result.Sent == 0 && result.Failed > 0 {
 			err = errors.New("all recipient deliveries failed")
 		}
+	} else if err == nil {
+		err = errors.New("email delivery returned an empty result")
 	}
 	completed := time.Now().UTC()
 	run.CompletedAt = &completed
@@ -437,8 +439,16 @@ func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.
 		row.RunCount++
 		row.PendingOccurrenceAt, row.LastError, row.NextRunAt = nil, nil, nil
 		row.ConsecutiveErrors = 0
-		next, nextErr := nextScheduleRun(row, scheduledFor)
-		if nextErr != nil { message:=nextErr.Error(); row.Status=models.AdminEmailScheduleFailed; row.LastError=&message; if completeErr:=s.repo.CompleteRun(run,row);completeErr!=nil{return fmt.Errorf("complete empty-audience run after recurrence error: %w",completeErr)}; return fmt.Errorf("calculate next empty-audience occurrence: %w",nextErr) }
+		next, nextErr := nextRunAfterExecution(row, scheduledFor, completed)
+		if nextErr != nil {
+			message := nextErr.Error()
+			row.Status = models.AdminEmailScheduleFailed
+			row.LastError = &message
+			if completeErr := s.repo.CompleteRun(run, row); completeErr != nil {
+				return fmt.Errorf("complete empty-audience run after recurrence error: %w", completeErr)
+			}
+			return fmt.Errorf("calculate next empty-audience occurrence: %w", nextErr)
+		}
 		row.NextRunAt = next
 		if next == nil {
 			row.Status = models.AdminEmailScheduleCompleted
@@ -449,7 +459,7 @@ func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.
 		run.Error = &message
 		row.LastError = &message
 		row.ConsecutiveErrors++
-		// Three consecutive permanent failures pause the schedule to prevent an unbounded retry storm.
+		// Three consecutive failed attempts suspend the schedule to prevent an unbounded retry storm.
 		row.PendingOccurrenceAt = &scheduledFor
 		if row.ConsecutiveErrors >= 3 {
 			row.Status = models.AdminEmailScheduleFailed
@@ -471,7 +481,7 @@ func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.
 		}
 		row.ConsecutiveErrors = 0
 		row.PendingOccurrenceAt = nil
-		next, nextErr := nextScheduleRun(row, scheduledFor)
+		next, nextErr := nextRunAfterExecution(row, scheduledFor, completed)
 		if nextErr != nil {
 			message := nextErr.Error()
 			row.Status = models.AdminEmailScheduleFailed
@@ -491,4 +501,15 @@ func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.
 		return fmt.Errorf("complete schedule run: %w", err)
 	}
 	return nil
+}
+
+func nextRunAfterExecution(row *models.AdminEmailSchedule, scheduledFor, completedAt time.Time) (*time.Time, error) {
+	after := scheduledFor
+	// Recurring campaigns use a skip-missed-runs policy. After an outage we
+	// deliver the oldest claimed occurrence once, then jump to the next future
+	// slot instead of blasting every historical weekly/monthly occurrence.
+	if row != nil && row.Recurrence != models.AdminEmailRecurrenceOnce && completedAt.After(after) {
+		after = completedAt
+	}
+	return nextScheduleRun(row, after)
 }

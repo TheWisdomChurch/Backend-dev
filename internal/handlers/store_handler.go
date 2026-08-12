@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -135,7 +137,21 @@ func (h *StoreHandler) GetOrder(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusNotFound, "Order not found")
 		return
 	}
+	// This endpoint is intentionally public so customers can revisit their
+	// confirmation, but an order ID alone must not disclose contact/address PII.
+	// Require the email used at checkout as a second capability factor and use
+	// one indistinguishable not-found response for both failure modes.
+	if !orderLookupAuthorized(c.Query("email"), order.CustomerEmail) {
+		utils.ErrorResponse(c, http.StatusNotFound, "Order not found")
+		return
+	}
 	utils.SuccessResponse(c, http.StatusOK, "Order loaded", mapOrderResponse(order))
+}
+
+func orderLookupAuthorized(providedEmail, storedEmail string) bool {
+	provided := strings.ToLower(strings.TrimSpace(providedEmail))
+	stored := strings.ToLower(strings.TrimSpace(storedEmail))
+	return provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(stored)) == 1
 }
 
 func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {

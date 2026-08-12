@@ -33,6 +33,7 @@ func setupRouter(
 	authHandler *handlers.AuthHandler,
 	adminHandler *handlers.AdminHandler,
 	adminEmailHandler *handlers.AdminEmailHandler,
+	celebrationAutomationHandler *handlers.CelebrationAutomationHandler,
 	uploadHandler *handlers.UploadHandler,
 	assetHandler *handlers.AssetHandler,
 	eventHandler *handlers.EventHandler,
@@ -202,8 +203,16 @@ func setupRouter(
 	api.GET("/events", eventHandler.List)
 	api.GET("/events/:id", eventHandler.Get)
 	api.GET("/reels", reelHandler.List)
-	api.GET("/sermons", sermonHandler.List)
-	api.GET("/sermons/discovery", sermonHandler.Discovery)
+	sermonRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: 60,
+		Burst:             20,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:sermons",
+		Message:           "Too many sermon requests. Please wait a moment and try again.",
+	})
+	api.GET("/sermons", sermonRateLimiter, sermonHandler.List)
+	api.GET("/sermons/discovery", sermonRateLimiter, sermonHandler.Discovery)
 	analyticsIngestLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
 		RequestsPerMinute: 30,
 		Burst:             10,
@@ -222,8 +231,16 @@ func setupRouter(
 
 	// Public store APIs (backend-driven)
 	api.GET("/store/products", storeHandler.ListProducts)
-	api.POST("/store/orders", storeHandler.CreateOrder)
-	api.GET("/store/orders/:orderId", storeHandler.GetOrder)
+	storeOrderRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: 10,
+		Burst:             5,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:store-orders",
+		Message:           "Too many order requests. Please wait before trying again.",
+	})
+	api.POST("/store/orders", middleware.NoStore(), storeOrderRateLimiter, storeHandler.CreateOrder)
+	api.GET("/store/orders/:orderId", middleware.NoStore(), storeOrderRateLimiter, storeHandler.GetOrder)
 	// PRAYER REQUESTS — public submission (aggressive rate limit applied at infra level)
 	api.POST("/prayer-requests", prayerRequestHandler.Submit)
 
@@ -270,9 +287,17 @@ func setupRouter(
 	api.POST("/leadership/upload", leadershipHandler.UploadImage)
 
 	// Universal public uploads
-	api.POST("/uploads", uploadHandler.UploadFile)
-	api.POST("/uploads/files", uploadHandler.UploadFile)
-	api.POST("/uploads/images", uploadHandler.UploadImage)
+	uploadRateLimiter := middleware.RateLimiter(middleware.RateLimiterOptions{
+		RequestsPerMinute: 10,
+		Burst:             5,
+		Window:            time.Minute,
+		RedisURL:          cfg.Redis.URL,
+		Prefix:            "rl:public-uploads",
+		Message:           "Too many uploads. Please wait before trying again.",
+	})
+	api.POST("/uploads", uploadRateLimiter, uploadHandler.UploadFile)
+	api.POST("/uploads/files", uploadRateLimiter, uploadHandler.UploadFile)
+	api.POST("/uploads/images", uploadRateLimiter, uploadHandler.UploadImage)
 
 	// ADMIN
 	admin := api.Group("/admin")
@@ -462,6 +487,11 @@ func setupRouter(
 	admin.DELETE("/email/schedules/:id", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.DeleteSchedule)
 	admin.GET("/email/schedules/:id/runs", middleware.RequirePermission(middleware.PermissionEmailManage), adminEmailHandler.ListScheduleRuns)
 	admin.GET("/campaigns", middleware.RequirePermission(middleware.PermissionAdminRead), adminEmailHandler.ListComposeHistory)
+	admin.GET("/automations/celebrations", middleware.RequirePermission(middleware.PermissionEmailManage), celebrationAutomationHandler.GetStatus)
+	admin.PUT("/automations/celebrations", middleware.RequirePermission(middleware.PermissionEmailManage), celebrationAutomationHandler.UpdateConfig)
+	admin.POST("/automations/celebrations/run", middleware.RequirePermission(middleware.PermissionEmailManage), celebrationAutomationHandler.RunNow)
+	admin.GET("/automations/celebrations/runs", middleware.RequirePermission(middleware.PermissionEmailManage), celebrationAutomationHandler.ListRuns)
+	admin.GET("/automations/celebrations/runs/:id/deliveries", middleware.RequirePermission(middleware.PermissionEmailManage), celebrationAutomationHandler.ListDeliveries)
 
 	// Uploads
 	admin.POST("/uploads/images", middleware.RequirePermission(middleware.PermissionUploadsManage), uploadHandler.UploadImage)
@@ -495,7 +525,6 @@ func setupRouter(
 	admin.GET("/workforce/birthdays/stats", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.BirthdayStats)
 	admin.GET("/workforce/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.BirthdaysByMonth)
 	admin.GET("/workforce/birthdays/today", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.BirthdaysToday)
-	admin.POST("/workforce/birthdays/send-today", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.SendBirthdaysToday)
 
 	// Members admin
 	admin.GET("/members", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.List)
@@ -513,7 +542,6 @@ func setupRouter(
 	admin.GET("/members/birthdays/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdayStats)
 	admin.GET("/members/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysToday)
-	admin.POST("/members/birthdays/send-today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.SendBirthdaysToday)
 
 	// Store admin
 	admin.GET("/store/products", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.ListProductsAdmin)
@@ -534,11 +562,9 @@ func setupRouter(
 	admin.GET("/leadership/birthdays/stats", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.BirthdayStats)
 	admin.GET("/leadership/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.BirthdaysByMonth)
 	admin.GET("/leadership/birthdays/today", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.BirthdaysToday)
-	admin.POST("/leadership/birthdays/send-today", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.SendBirthdaysToday)
 	admin.GET("/leadership/anniversaries/stats", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.AnniversaryStats)
 	admin.GET("/leadership/anniversaries/month/:month", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.AnniversariesByMonth)
 	admin.GET("/leadership/anniversaries/today", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.AnniversariesToday)
-	admin.POST("/leadership/anniversaries/send-today", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.SendAnniversariesToday)
 
 	// Super-admin
 	superAdmin := admin.Group("")

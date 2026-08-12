@@ -224,7 +224,3 @@ func (h *SiteContentHandler) saveContent(c *gin.Context, key string, payload int
 		UpdatedBy: updatedByPtr,
 	})
 }
-
-func contextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 5*time.Second)
-}

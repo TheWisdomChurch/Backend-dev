@@ -402,7 +402,7 @@ func safeAttachmentHTTPClient(timeout time.Duration) *http.Client {
 		}
 		for _, resolved := range ips {
 			ip := resolved.IP
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			if isUnsafeAttachmentIP(ip) {
 				continue
 			}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
@@ -415,6 +415,10 @@ func safeAttachmentHTTPClient(timeout time.Duration) *http.Client {
 		}
 		return nil
 	}}
+}
+
+func isUnsafeAttachmentIP(ip net.IP) bool {
+	return ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
 }
 
 // SendTemplateReceiptWithPDF fetches templates from S3, enforces size limits (in TemplateStore),

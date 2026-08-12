@@ -145,7 +145,7 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 	}
 
 	formURL := ""
-	if form != nil && form.Slug != nil {
+	if form.Slug != nil {
 		if u := s.buildPublicURL(*form.Slug); u != nil {
 			formURL = *u
 		}

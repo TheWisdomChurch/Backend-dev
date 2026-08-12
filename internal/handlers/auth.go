@@ -169,15 +169,6 @@ func isAdminAccessRole(role string) bool {
 	}
 }
 
-func isSuperAdminAccessRole(role string) bool {
-	switch normalizeAccessRole(role) {
-	case "super_admin", "superadmin":
-		return true
-	default:
-		return false
-	}
-}
-
 func isAccountDeactivatedError(err error) bool {
 	if err == nil {
 		return false
@@ -359,14 +350,6 @@ func hashRefreshToken(raw string) string {
 
 ============================================================================ */
 
-func (h *AuthHandler) cookieSameSite() http.SameSite {
-	return h.cookies.SameSite()
-}
-
-func (h *AuthHandler) cookieSecure() bool {
-	return h.cookies.Secure
-}
-
 func configuredCSRFCookieName() string {
 	name := strings.TrimSpace(os.Getenv("AUTH_CSRF_COOKIE_NAME"))
 	if name == "" {
@@ -385,10 +368,6 @@ func latestCookieValue(c *gin.Context, name string) (string, error) {
 		return "", http.ErrNoCookie
 	}
 	return authutil.LatestCookieValue(c.Request, name)
-}
-
-func (h *AuthHandler) clearSessionCookieVariants(c *gin.Context) {
-	h.cookies.ClearSessionVariants(c.Writer)
 }
 
 func (h *AuthHandler) setAuthCookie(c *gin.Context, token string, rememberMe bool) {

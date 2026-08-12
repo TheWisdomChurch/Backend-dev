@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -133,9 +135,6 @@ func (s *storeService) UpdateProductActive(id uint, isActive bool) (*models.Stor
 }
 
 func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOrder, error) {
-	if strings.TrimSpace(req.OrderID) == "" {
-		return nil, errors.New("orderId is required")
-	}
 	if strings.TrimSpace(req.PaymentMethod) == "" {
 		return nil, errors.New("paymentMethod is required")
 	}
@@ -150,7 +149,10 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 	}
 
 	order := &models.StoreOrder{
-		OrderID:             strings.TrimSpace(req.OrderID),
+		// The public order ID is a capability identifier and must never be
+		// caller-controlled or predictable. A client-provided orderId is ignored
+		// for backward compatibility with older frontends.
+		OrderID:             newPublicOrderID(),
 		Status:              "pending",
 		Subtotal:            req.Subtotal,
 		DeliveryFee:         req.DeliveryFee,
@@ -198,6 +200,10 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 
 func (s *storeService) GetOrder(orderID string) (*models.StoreOrder, error) {
 	return s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+}
+
+func newPublicOrderID() string {
+	return "ord_" + uuid.NewString()
 }
 
 func (s *storeService) ListOrders(page, limit int, status string) ([]models.StoreOrder, int64, error) {

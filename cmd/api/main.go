@@ -185,6 +185,7 @@ func main() {
 	assetRepo := repository.NewAssetRepository(db)
 	adminEmailDeliveryRepo := repository.NewAdminEmailDeliveryRepository(db)
 	adminEmailScheduleRepo := repository.NewAdminEmailScheduleRepository(db)
+	celebrationAutomationRepo := repository.NewCelebrationAutomationRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -394,6 +395,7 @@ func main() {
 	assetService := service.NewAssetService(assetRepo, assetUploader)
 	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
 	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
+	celebrationAutomationService := service.NewCelebrationAutomationService(celebrationAutomationRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
@@ -496,6 +498,7 @@ func main() {
 	})
 	adminHandler := handlers.NewAdminHandler(adminService)
 	adminEmailHandler := handlers.NewAdminEmailHandler(adminEmailService, adminEmailScheduleService)
+	celebrationAutomationHandler := handlers.NewCelebrationAutomationHandler(celebrationAutomationService)
 	uploadHandler := handlers.NewUploadHandler(assetUploader, assetService)
 
 	// -------------------------------------------------------------------------
@@ -603,6 +606,7 @@ func main() {
 	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
 	go startVisitReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), engagementHandler, 15*time.Minute)
 	go startAdminEmailScheduleWorker(cleanupCtx, adminEmailScheduleService, 30*time.Second)
+	go startCelebrationAutomationWorker(cleanupCtx, celebrationAutomationService, time.Minute)
 
 	// DB pool stats poller — feeds Prometheus gauges every 15s.
 	if sqlDB, serr := db.DB.DB(); serr == nil {
@@ -618,26 +622,6 @@ func main() {
 				}
 			}
 		}()
-	}
-
-	schedulerEnabled := isTrueEnv("BIRTHDAY_SCHEDULER_ENABLED")
-	if schedulerEnabled {
-		lock := newRedisLock(cfg.Redis.URL)
-		tz := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TZ"))
-		sendAt := strings.TrimSpace(os.Getenv("BIRTHDAY_SCHEDULER_TIME"))
-		go startBirthdayScheduler(cleanupCtx, lock, workforceService, memberService, leadershipService, tz, sendAt)
-	}
-	if isTrueEnv("BIRTHDAY_SCHEDULER_ONLY") {
-		if !schedulerEnabled {
-			logger.Warn("BIRTHDAY_SCHEDULER_ONLY=true but BIRTHDAY_SCHEDULER_ENABLED=false")
-		}
-		logger.Info("birthday scheduler worker mode enabled (API server disabled)")
-		quit := make(chan os.Signal, 1)
-		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-		sig := <-quit
-		logger.Info("received signal", "signal", sig.String())
-		cleanupCancel()
-		return
 	}
 
 	// -------------------------------------------------------------------------
@@ -662,6 +646,7 @@ func main() {
 		authHandler,
 		adminHandler,
 		adminEmailHandler,
+		celebrationAutomationHandler,
 		uploadHandler,
 		assetHandler,
 		eventHandler,

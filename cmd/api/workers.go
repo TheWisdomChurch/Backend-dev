@@ -405,3 +405,37 @@ func startBirthdayScheduler(
 		}
 	}
 }
+
+func startCelebrationAutomationWorker(ctx context.Context, svc service.CelebrationAutomationService, interval time.Duration) {
+	if svc == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	worker := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	if worker == "" {
+		worker = "celebration-worker"
+	}
+	run := func() {
+		result, err := svc.ProcessDue(ctx, time.Now(), worker, "scheduler")
+		if err != nil {
+			applog.L().Error("celebration automation worker failed", "error", err)
+			return
+		}
+		if result != nil {
+			applog.L().Info("celebration automation processed", "date", result.RunDate, "status", result.Status, "sent", result.Sent, "failed", result.Failed, "suppressed", result.Suppressed)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
+}

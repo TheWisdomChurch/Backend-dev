@@ -233,10 +233,3 @@ func cleanLowerPtr(v *string) *string {
 	}
 	return &s
 }
-
-func deref(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return strings.TrimSpace(*v)
-}
