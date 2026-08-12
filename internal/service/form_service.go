@@ -289,7 +289,7 @@ func (s *formService) List(page, limit int) ([]models.Form, int64, error) {
 		limit = 10
 	}
 	offset := (page - 1) * limit
-	items, total, err := s.repo.List(offset, limit)
+	items, total, err := s.repo.ListIncludingArchived(offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}

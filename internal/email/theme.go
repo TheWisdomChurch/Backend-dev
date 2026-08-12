@@ -52,6 +52,26 @@ func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
 		"</body></html>"
 }
 
+// EnsureResponsiveDocument applies the canonical responsive shell to custom,
+// database, and remote-template HTML. Native package templates already carry
+// the wc-frame marker and pass through unchanged.
+func EnsureResponsiveDocument(b Branding, bodyHTML string) string {
+	trimmed := strings.TrimSpace(bodyHTML)
+	if trimmed == "" || strings.Contains(trimmed, "class=\"wc-frame\"") {
+		return trimmed
+	}
+	lower := strings.ToLower(trimmed)
+	if start := strings.Index(lower, "<body"); start >= 0 {
+		if openEnd := strings.Index(lower[start:], ">"); openEnd >= 0 {
+			contentStart := start + openEnd + 1
+			if end := strings.LastIndex(lower, "</body>"); end > contentStart {
+				trimmed = strings.TrimSpace(trimmed[contentStart:end])
+			}
+		}
+	}
+	return renderEmailShell(b, colorAccent, renderBodyOpen()+trimmed+renderBodyClose())
+}
+
 func addResponsiveContentClasses(body string) string {
 	for _, vertical := range []string{"0", "8px", "14px", "16px", "20px", "24px", "28px", "32px", "36px"} {
 		body = strings.ReplaceAll(body, "<td style=\"padding:"+vertical+" 40px", "<td class=\"wc-content-pad\" style=\"padding:"+vertical+" 40px")

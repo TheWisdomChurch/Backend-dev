@@ -13,6 +13,7 @@ import (
 
 type FormRepository interface {
 	List(offset, limit int) ([]models.Form, int64, error)
+	ListIncludingArchived(offset, limit int) ([]models.Form, int64, error)
 	GetByID(id string) (*models.Form, error)
 	GetBySlug(slug string) (*models.Form, error)
 	GetAnyBySlug(slug string) (*models.Form, error)
@@ -57,15 +58,30 @@ func NewFormRepository(db *database.Database) FormRepository {
 }
 
 func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
+	return r.list(offset, limit, false)
+}
+
+func (r *formRepository) ListIncludingArchived(offset, limit int) ([]models.Form, int64, error) {
+	return r.list(offset, limit, true)
+}
+
+func (r *formRepository) list(offset, limit int, includeArchived bool) ([]models.Form, int64, error) {
 	var items []models.Form
 	var total int64
 
-	q := r.db.DB.Unscoped().Model(&models.Form{})
+	q := r.db.DB.Model(&models.Form{})
+	if includeArchived {
+		q = q.Unscoped()
+	}
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	err := r.db.DB.Unscoped().
+	itemsQuery := r.db.DB
+	if includeArchived {
+		itemsQuery = itemsQuery.Unscoped()
+	}
+	err := itemsQuery.
 		Preload("Fields", func(db *gorm.DB) *gorm.DB {
 			// Keep ordering stable for the UI
 			return db.Order(`"order" ASC`)
@@ -76,7 +92,12 @@ func (r *formRepository) List(offset, limit int) ([]models.Form, int64, error) {
 		Find(&items).Error
 
 	if err == nil {
-		for i := range items { if items[i].DeletedAt.Valid { at := items[i].DeletedAt.Time; items[i].ArchivedAt = &at } }
+		for i := range items {
+			if items[i].DeletedAt.Valid {
+				at := items[i].DeletedAt.Time
+				items[i].ArchivedAt = &at
+			}
+		}
 		err = r.attachSubmissionCounts(items)
 	}
 
@@ -94,7 +115,10 @@ func (r *formRepository) GetByID(id string) (*models.Form, error) {
 		return nil, err
 	}
 	f.SubmissionCount = count
-	if f.DeletedAt.Valid { at := f.DeletedAt.Time; f.ArchivedAt = &at }
+	if f.DeletedAt.Valid {
+		at := f.DeletedAt.Time
+		f.ArchivedAt = &at
+	}
 	return &f, nil
 }
 

@@ -884,6 +884,7 @@ func (s *formService) sendFormCampaignMessage(to, subject string, content *formC
 	if htmlBody == "" {
 		return errors.New("rendered campaign html body is empty")
 	}
+	htmlBody = email.EnsureResponsiveDocument(s.branding, htmlBody)
 
 	textBody := strings.TrimSpace(content.Text)
 	if sender, ok := s.sender.(interface {

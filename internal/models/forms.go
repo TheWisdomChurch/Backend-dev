@@ -45,8 +45,8 @@ type Form struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Computed/derived fields (not persisted)
-	PublicURL       *string `gorm:"-" json:"publicUrl,omitempty"`
-	SubmissionCount int64   `gorm:"-" json:"submissionCount"`
+	PublicURL       *string    `gorm:"-" json:"publicUrl,omitempty"`
+	SubmissionCount int64      `gorm:"-" json:"submissionCount"`
 	ArchivedAt      *time.Time `gorm:"-" json:"archivedAt,omitempty"`
 }
 

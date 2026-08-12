@@ -586,6 +586,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			resp.RecipientResults = append(resp.RecipientResults, models.AdminEmailRecipientResult{Email: recipient.Email, Name: recipient.Name, Status: "failed", Reason: "template_render_failed", Sources: recipient.Sources})
 			continue
 		}
+		content.HTML = email.EnsureResponsiveDocument(s.branding, content.HTML)
 
 		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content, attachments, unsubscribeURL); err != nil {
 			// sendRenderedAdminEmail's own "email is not configured"/"content is nil"/

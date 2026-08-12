@@ -235,6 +235,7 @@ func sendAdminRejectedEmail(sender EmailSender, branding email.Branding, user *m
     </table>
   </body>
 </html>`, html.EscapeString(name), html.EscapeString(appName), html.EscapeString(reason))
+	body = email.EnsureResponsiveDocument(branding, body)
 
 	_ = sender.SendHTML(user.Email, fmt.Sprintf("%s admin account request update", appName), body)
 }

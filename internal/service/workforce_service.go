@@ -661,6 +661,7 @@ func (s *workforceService) sendRejectionEmail(member *models.WorkforceMember, re
     </table>
   </body>
 </html>`, fullName, appName, reason)
+	body = email.EnsureResponsiveDocument(s.branding, body)
 
 	subject := "Update on your workforce application"
 	if err := s.sender.SendHTML(addr, subject, body); err != nil {

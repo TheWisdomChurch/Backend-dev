@@ -294,6 +294,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		})
 	}
 
+	body = email.EnsureResponsiveDocument(s.branding, body)
 	if err := s.sender.SendHTML(addr, subject, body); err != nil {
 		applog.L().Warn("failed to send form response email", "to", addr, "template_key", templateKey, "form_id", formID, "error", err)
 	}
