@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -37,6 +38,9 @@ func NewAdminEmailScheduleService(repo repository.AdminEmailScheduleRepository, 
 }
 
 func (s *adminEmailScheduleService) Create(req *models.UpsertAdminEmailScheduleRequest, actor *models.AdminEmailSendActor) (*models.AdminEmailScheduleDetail, error) {
+	if s == nil || s.repo == nil || s.mailer == nil {
+		return nil, errors.New("email scheduler is not configured")
+	}
 	row, err := buildSchedule(req, nil, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -59,6 +63,9 @@ func (s *adminEmailScheduleService) Create(req *models.UpsertAdminEmailScheduleR
 }
 
 func (s *adminEmailScheduleService) Update(id string, req *models.UpsertAdminEmailScheduleRequest) (*models.AdminEmailScheduleDetail, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("schedule id is required")
+	}
 	current, err := s.repo.Get(id)
 	if err != nil {
 		return nil, err
@@ -93,7 +100,11 @@ func (s *adminEmailScheduleService) List(page, limit int, status string) ([]mode
 	if limit > 100 {
 		limit = 100
 	}
-	return s.repo.List((page-1)*limit, limit, strings.TrimSpace(status))
+	status = strings.TrimSpace(status)
+	if status != "" && status != string(models.AdminEmailScheduleDraft) && status != string(models.AdminEmailScheduleActive) && status != string(models.AdminEmailSchedulePaused) && status != string(models.AdminEmailScheduleCompleted) && status != string(models.AdminEmailScheduleFailed) {
+		return nil, 0, errors.New("invalid schedule status filter")
+	}
+	return s.repo.List((page-1)*limit, limit, status)
 }
 func (s *adminEmailScheduleService) Delete(id string) error { return s.repo.Delete(id) }
 func (s *adminEmailScheduleService) ListRuns(id string, limit int) ([]models.AdminEmailScheduleRun, error) {
@@ -112,6 +123,7 @@ func (s *adminEmailScheduleService) SetStatus(id string, status models.AdminEmai
 	}
 	switch status {
 	case models.AdminEmailScheduleActive:
+		row.PendingOccurrenceAt = nil
 		next, calcErr := nextScheduleRun(row, time.Now().UTC().Add(-time.Second))
 		if calcErr != nil {
 			return nil, calcErr
@@ -121,7 +133,10 @@ func (s *adminEmailScheduleService) SetStatus(id string, status models.AdminEmai
 		}
 		row.NextRunAt, row.Status, row.LastError, row.ConsecutiveErrors = next, status, nil, 0
 	case models.AdminEmailSchedulePaused, models.AdminEmailScheduleDraft:
-		row.Status, row.NextRunAt, row.ClaimedAt, row.ClaimedBy = status, nil, nil, nil
+		if row.ClaimedAt != nil {
+			return nil, errors.New("schedule is currently being processed")
+		}
+		row.Status, row.NextRunAt, row.PendingOccurrenceAt = status, nil, nil
 	default:
 		return nil, errors.New("status must be active, paused, or draft")
 	}
@@ -137,20 +152,40 @@ func buildSchedule(req *models.UpsertAdminEmailScheduleRequest, current *models.
 	}
 	name := strings.TrimSpace(req.Name)
 	description := strings.TrimSpace(req.Description)
+	timezone := strings.TrimSpace(req.Timezone)
+	sendTime := strings.TrimSpace(req.SendTime)
+	startDate := strings.TrimSpace(req.StartDate)
 	if name == "" || utf8.RuneCountInString(name) > 160 {
 		return nil, errors.New("name is required and must be 160 characters or fewer")
 	}
 	if utf8.RuneCountInString(description) > 500 {
 		return nil, errors.New("description must be 500 characters or fewer")
 	}
-	if _, err := time.LoadLocation(strings.TrimSpace(req.Timezone)); err != nil {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
 		return nil, errors.New("timezone must be a valid IANA timezone")
 	}
-	if _, err := time.Parse("15:04", req.SendTime); err != nil {
+	if _, err := time.Parse("15:04", sendTime); err != nil {
 		return nil, errors.New("sendTime must use HH:mm (24-hour) format")
 	}
-	if req.EndAt != nil && !req.EndAt.After(req.StartAt) {
-		return nil, errors.New("endAt must be after startAt")
+	startLocal, err := parseScheduleDate(startDate, loc)
+	if err != nil {
+		return nil, errors.New("startDate must use YYYY-MM-DD format")
+	}
+	var endDate *string
+	var endAt *time.Time
+	if req.EndDate != nil && strings.TrimSpace(*req.EndDate) != "" {
+		value := strings.TrimSpace(*req.EndDate)
+		parsedEnd, parseErr := parseScheduleDate(value, loc)
+		if parseErr != nil {
+			return nil, errors.New("endDate must use YYYY-MM-DD format")
+		}
+		if parsedEnd.Before(startLocal) {
+			return nil, errors.New("endDate must be on or after startDate")
+		}
+		endDate = &value
+		legacyEnd := parsedEnd.Add(24*time.Hour - time.Nanosecond).UTC()
+		endAt = &legacyEnd
 	}
 	if _, err := normalizeAdminComposeRequest(&req.Compose); err != nil {
 		return nil, fmt.Errorf("compose: %w", err)
@@ -184,6 +219,9 @@ func buildSchedule(req *models.UpsertAdminEmailScheduleRequest, current *models.
 		return nil, errors.New("recurrence must be once, weekly, or monthly")
 	}
 	payload, _ := json.Marshal(req.Compose)
+	if len(payload) > 2*1024*1024 {
+		return nil, errors.New("compose payload exceeds the 2MB schedule limit")
+	}
 	weekdayJSON, _ := json.Marshal(weekdays)
 	monthJSON, _ := json.Marshal(monthDays)
 	status := req.Status
@@ -193,10 +231,18 @@ func buildSchedule(req *models.UpsertAdminEmailScheduleRequest, current *models.
 	if status != models.AdminEmailScheduleDraft && status != models.AdminEmailScheduleActive && status != models.AdminEmailSchedulePaused {
 		return nil, errors.New("status must be draft, active, or paused")
 	}
-	row := &models.AdminEmailSchedule{Name: name, Description: description, Status: status, Recurrence: req.Recurrence, Timezone: req.Timezone, SendTime: req.SendTime, Weekdays: datatypes.JSON(weekdayJSON), MonthDays: datatypes.JSON(monthJSON), StartAt: req.StartAt.UTC(), EndAt: req.EndAt, ComposePayload: datatypes.JSON(payload), Subject: strings.TrimSpace(valueOrEmpty(req.Compose.Subject)), AudienceLabel: strings.TrimSpace(req.AudienceLabel)}
+	audienceLabel := strings.TrimSpace(req.AudienceLabel)
+	if utf8.RuneCountInString(audienceLabel) > 255 {
+		return nil, errors.New("audienceLabel must be 255 characters or fewer")
+	}
+	// StartAt/EndAt remain populated for compatibility with installations that
+	// applied migration 013. Recurrence uses the timezone-safe DATE columns.
+	legacyStart := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 12, 0, 0, 0, time.UTC)
+	row := &models.AdminEmailSchedule{Name: name, Description: description, Status: status, Recurrence: req.Recurrence, Timezone: timezone, SendTime: sendTime, StartDate: startDate, EndDate: endDate, Weekdays: datatypes.JSON(weekdayJSON), MonthDays: datatypes.JSON(monthJSON), StartAt: legacyStart, EndAt: endAt, ComposePayload: datatypes.JSON(payload), Subject: strings.TrimSpace(valueOrEmpty(req.Compose.Subject)), AudienceLabel: audienceLabel, Version: 1}
 	if current != nil {
 		row.ID, row.CreatedAt, row.CreatedByUserID, row.CreatedByEmail, row.CreatedByRole = current.ID, current.CreatedAt, current.CreatedByUserID, current.CreatedByEmail, current.CreatedByRole
 		row.RunCount, row.LastRunAt = current.RunCount, current.LastRunAt
+		row.Version = current.Version
 	}
 	if status == models.AdminEmailScheduleActive {
 		next, err := nextScheduleRun(row, now.Add(-time.Second))
@@ -236,11 +282,25 @@ func nextScheduleRun(row *models.AdminEmailSchedule, after time.Time) (*time.Tim
 	if err != nil {
 		return nil, err
 	}
+	startLocal, err := parseScheduleDate(row.StartDate, loc)
+	if err != nil {
+		return nil, errors.New("schedule has an invalid start date")
+	}
+	var endLocal *time.Time
+	if row.EndDate != nil {
+		parsed, parseErr := parseScheduleDate(*row.EndDate, loc)
+		if parseErr != nil {
+			return nil, errors.New("schedule has an invalid end date")
+		}
+		endLocal = &parsed
+	}
+	clock, clockErr := time.Parse("15:04", row.SendTime)
+	if clockErr != nil {
+		return nil, clockErr
+	}
 	if row.Recurrence == models.AdminEmailRecurrenceOnce {
-		startLocal := row.StartAt.In(loc)
-		clock, _ := time.Parse("15:04", row.SendTime)
 		candidate := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), clock.Hour(), clock.Minute(), 0, 0, loc).UTC()
-		if candidate.After(after) && (row.EndAt == nil || !candidate.After(*row.EndAt)) {
+		if candidate.After(after) && (endLocal == nil || !startLocal.After(*endLocal)) {
 			return &candidate, nil
 		}
 		return nil, nil
@@ -248,16 +308,17 @@ func nextScheduleRun(row *models.AdminEmailSchedule, after time.Time) (*time.Tim
 	var weekdays, monthDays []int
 	_ = json.Unmarshal(row.Weekdays, &weekdays)
 	_ = json.Unmarshal(row.MonthDays, &monthDays)
-	clock, _ := time.Parse("15:04", row.SendTime)
 	cursor := after.In(loc)
-	startLocal := row.StartAt.In(loc)
-	startDate := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, loc)
+	startDate := startLocal
+	if cursor.Before(startDate) {
+		cursor = startDate
+	}
 	for offset := 0; offset < 800; offset++ {
 		date := time.Date(cursor.Year(), cursor.Month(), cursor.Day()+offset, clock.Hour(), clock.Minute(), 0, 0, loc)
 		if date.Before(startDate) || !date.UTC().After(after) {
 			continue
 		}
-		if row.EndAt != nil && date.UTC().After(row.EndAt.UTC()) {
+		if endLocal != nil && time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc).After(*endLocal) {
 			return nil, nil
 		}
 		match := false
@@ -285,47 +346,111 @@ func nextScheduleRun(row *models.AdminEmailSchedule, after time.Time) (*time.Tim
 	return nil, errors.New("could not calculate next occurrence")
 }
 
+func parseScheduleDate(value string, loc *time.Location) (time.Time, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return time.ParseInLocation("2006-01-02", strings.TrimSpace(value), loc)
+}
+
 func (s *adminEmailScheduleService) ProcessDue(ctx context.Context, now time.Time, worker string, limit int) (int, error) {
-	rows, err := s.repo.ClaimDue(ctx, now.UTC(), worker, limit)
-	if err != nil {
-		return 0, err
+	if s == nil || s.repo == nil || s.mailer == nil {
+		return 0, errors.New("email scheduler is not configured")
+	}
+	worker = strings.TrimSpace(worker)
+	if worker == "" {
+		return 0, errors.New("worker id is required")
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 25 {
+		limit = 25
 	}
 	processed := 0
-	for i := range rows {
-		if ctx.Err() != nil {
+	var processErrors []error
+	for processed < limit && ctx.Err() == nil {
+		rows, err := s.repo.ClaimDue(ctx, now.UTC(), worker, 1)
+		if err != nil {
+			return processed, err
+		}
+		if len(rows) == 0 {
 			break
 		}
-		s.processOne(&rows[i], now.UTC())
+		if err := s.processOne(ctx, &rows[0], now.UTC()); err != nil {
+			processErrors = append(processErrors, err)
+		}
 		processed++
 	}
-	return processed, nil
+	return processed, errors.Join(processErrors...)
 }
-func (s *adminEmailScheduleService) processOne(row *models.AdminEmailSchedule, now time.Time) {
+func (s *adminEmailScheduleService) processOne(ctx context.Context, row *models.AdminEmailSchedule, now time.Time) error {
+	if row == nil || row.NextRunAt == nil || row.ClaimedBy == nil {
+		return errors.New("claimed schedule is incomplete")
+	}
+	worker := *row.ClaimedBy
 	scheduledFor := *row.NextRunAt
+	if row.PendingOccurrenceAt != nil {
+		scheduledFor = *row.PendingOccurrenceAt
+	}
 	run := &models.AdminEmailScheduleRun{ScheduleID: row.ID, ScheduledFor: scheduledFor, Status: "running", StartedAt: now}
 	if err := s.repo.CreateRun(run); err != nil {
-		_ = s.repo.ReleaseClaim(row.ID)
-		return
+		_ = s.repo.ReleaseClaim(row.ID, worker)
+		return fmt.Errorf("create schedule run: %w", err)
 	}
+	stopHeartbeat := make(chan struct{})
+	var heartbeatWG sync.WaitGroup
+	heartbeatWG.Add(1)
+	go func() {
+		defer heartbeatWG.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ctx.Done():
+				return
+			case tick := <-ticker.C:
+				_, _ = s.repo.RenewClaim(row.ID, worker, tick.UTC())
+			}
+		}
+	}()
+	defer func() { close(stopHeartbeat); heartbeatWG.Wait() }()
 	var req models.SendAdminComposeEmailRequest
 	err := json.Unmarshal(row.ComposePayload, &req)
 	var result *models.SendAdminComposeEmailResponse
 	if err == nil {
 		result, err = s.mailer.SendComposeEmail(&req, &models.AdminEmailSendActor{UserID: valueOrEmpty(row.CreatedByUserID), Email: valueOrEmpty(row.CreatedByEmail), Role: valueOrEmpty(row.CreatedByRole)})
 	}
+	if result != nil {
+		run.Sent, run.Failed, run.DeliveryID = result.Sent, result.Failed, result.DeliveryID
+		if err == nil && result.Sent == 0 && result.Failed > 0 {
+			err = errors.New("all recipient deliveries failed")
+		}
+	}
 	completed := time.Now().UTC()
 	run.CompletedAt = &completed
 	row.LastRunAt = &scheduledFor
-	row.RunCount++
-	row.ClaimedAt = nil
-	row.ClaimedBy = nil
-	if err != nil {
+	if errors.Is(err, ErrNoDeliverableRecipients) {
+		run.Status = "completed"
+		row.RunCount++
+		row.PendingOccurrenceAt, row.LastError, row.NextRunAt = nil, nil, nil
+		row.ConsecutiveErrors = 0
+		next, nextErr := nextScheduleRun(row, scheduledFor)
+		if nextErr != nil { message:=nextErr.Error(); row.Status=models.AdminEmailScheduleFailed; row.LastError=&message; if completeErr:=s.repo.CompleteRun(run,row);completeErr!=nil{return fmt.Errorf("complete empty-audience run after recurrence error: %w",completeErr)}; return fmt.Errorf("calculate next empty-audience occurrence: %w",nextErr) }
+		row.NextRunAt = next
+		if next == nil {
+			row.Status = models.AdminEmailScheduleCompleted
+		}
+	} else if err != nil {
 		message := err.Error()
 		run.Status = "failed"
 		run.Error = &message
 		row.LastError = &message
 		row.ConsecutiveErrors++
 		// Three consecutive permanent failures pause the schedule to prevent an unbounded retry storm.
+		row.PendingOccurrenceAt = &scheduledFor
 		if row.ConsecutiveErrors >= 3 {
 			row.Status = models.AdminEmailScheduleFailed
 			row.NextRunAt = nil
@@ -334,17 +459,36 @@ func (s *adminEmailScheduleService) processOne(row *models.AdminEmailSchedule, n
 			row.NextRunAt = &retry
 		}
 	} else {
+		row.RunCount++
 		run.Status = "completed"
-		run.Sent = result.Sent
-		run.Failed = result.Failed
-		run.DeliveryID = result.DeliveryID
-		row.LastError = nil
+		if result.Failed > 0 {
+			run.Status = "partial"
+			warning := fmt.Sprintf("%d recipient deliveries failed; see delivery history", result.Failed)
+			row.LastError = &warning
+		}
+		if result.Failed == 0 {
+			row.LastError = nil
+		}
 		row.ConsecutiveErrors = 0
-		next, _ := nextScheduleRun(row, scheduledFor)
+		row.PendingOccurrenceAt = nil
+		next, nextErr := nextScheduleRun(row, scheduledFor)
+		if nextErr != nil {
+			message := nextErr.Error()
+			row.Status = models.AdminEmailScheduleFailed
+			row.LastError = &message
+			row.NextRunAt = nil
+			if completeErr := s.repo.CompleteRun(run, row); completeErr != nil {
+				return fmt.Errorf("complete schedule run after recurrence error: %w", completeErr)
+			}
+			return fmt.Errorf("calculate next schedule occurrence: %w", nextErr)
+		}
 		row.NextRunAt = next
 		if next == nil {
 			row.Status = models.AdminEmailScheduleCompleted
 		}
 	}
-	_ = s.repo.CompleteRun(run, row)
+	if err := s.repo.CompleteRun(run, row); err != nil {
+		return fmt.Errorf("complete schedule run: %w", err)
+	}
+	return nil
 }

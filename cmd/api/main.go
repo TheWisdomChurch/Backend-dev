@@ -392,7 +392,7 @@ func main() {
 	)
 
 	assetService := service.NewAssetService(assetRepo, assetUploader)
-	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, emailSender, branding)
+	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
 	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 

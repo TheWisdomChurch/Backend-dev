@@ -61,6 +61,12 @@ func (r *SubscriberRepository) ListActive() ([]models.Subscriber, error) {
 	return items, nil
 }
 
+func (r *SubscriberRepository) ListUnsubscribedEmails() ([]string, error) {
+	var emails []string
+	err := r.db.Model(&models.Subscriber{}).Where("status = ?", models.SubscriberStatusUnsubscribed).Pluck("email", &emails).Error
+	return emails, err
+}
+
 func (r *SubscriberRepository) GetSummary() (*models.SubscriberSummary, error) {
 	summary := &models.SubscriberSummary{}
 

@@ -15,6 +15,7 @@ import (
 
 	"gorm.io/datatypes"
 
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
@@ -29,14 +30,18 @@ type AdminEmailService interface {
 	PreviewAudience(formIDs []string, limit int) (*models.AdminEmailAudiencePreview, error)
 }
 
+var ErrNoDeliverableRecipients = errors.New("no deliverable recipients")
+
 type adminEmailService struct {
 	formRepo        repository.FormRepository
 	templateRepo    repository.EmailTemplateRepository
 	deliveryRepo    repository.AdminEmailDeliveryRepository
+	subscriberRepo  *repository.SubscriberRepository
 	sender          EmailSender
 	branding        email.Branding
 	tplStore        *email.TemplateStore
 	templateTimeout time.Duration
+	protector       *authutil.Protector
 }
 
 type adminComposeRequestView struct {
@@ -66,8 +71,10 @@ func NewAdminEmailService(
 	formRepo repository.FormRepository,
 	templateRepo repository.EmailTemplateRepository,
 	deliveryRepo repository.AdminEmailDeliveryRepository,
+	subscriberRepo *repository.SubscriberRepository,
 	sender EmailSender,
 	branding email.Branding,
+	authSecret string,
 ) AdminEmailService {
 	var tplStore *email.TemplateStore
 	if strings.TrimSpace(os.Getenv("S3_PUBLIC_BASE_URL")) != "" {
@@ -83,14 +90,17 @@ func NewAdminEmailService(
 		}
 	}
 
+	protector, _ := authutil.NewProtector(authSecret)
 	return &adminEmailService{
 		formRepo:        formRepo,
 		templateRepo:    templateRepo,
 		deliveryRepo:    deliveryRepo,
+		subscriberRepo:  subscriberRepo,
 		sender:          sender,
 		branding:        branding,
 		tplStore:        tplStore,
 		templateTimeout: templateTimeout,
+		protector:       protector,
 	}
 }
 
@@ -403,6 +413,27 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 	if len(resolvedRecipients) == 0 {
 		return nil, errors.New("no valid recipients were resolved from the selected audience")
 	}
+	// A global unsubscribe is a hard suppression across every compose source,
+	// including manual recipients and form audiences. This check is performed
+	// again at execution time for schedules so a later opt-out is respected.
+	if s.subscriberRepo != nil {
+		suppressed, suppressErr := s.subscriberRepo.ListUnsubscribedEmails()
+		if suppressErr != nil {
+			return nil, fmt.Errorf("load email suppression list: %w", suppressErr)
+		}
+		for _, address := range suppressed {
+			normalizedAddress := normalizeEmail(address)
+			if _, exists := resolvedRecipients[normalizedAddress]; exists {
+				delete(resolvedRecipients, normalizedAddress)
+				resp.Skipped++
+			}
+		}
+		if len(resolvedRecipients) == 0 {
+			return nil, fmt.Errorf("%w: all resolved recipients have unsubscribed", ErrNoDeliverableRecipients)
+		}
+		resp.Targeted = len(resolvedRecipients)
+		resp.TotalRecipients = resp.Targeted
+	}
 
 	resp.Targeted = len(resolvedRecipients)
 	resp.TotalRecipients = resp.Targeted
@@ -455,7 +486,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 	}
 
 	for _, recipient := range resolvedRecipients {
-		subscribeURL, unsubscribeURL := buildAdminComposeSubscriptionLinks(s.branding, recipient.Email, recipient.Name)
+		subscribeURL, unsubscribeURL := s.buildAdminComposeSubscriptionLinks(recipient.Email, recipient.Name)
 		recipientName := strings.TrimSpace(recipient.Name)
 		if recipientName == "" {
 			recipientName = firstToken(strings.TrimSpace(strings.SplitN(recipient.Email, "@", 2)[0]))
@@ -473,7 +504,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			continue
 		}
 
-		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content, attachments); err != nil {
+		if err := sendRenderedAdminEmail(s.sender, recipient.Email, subject, content, attachments, unsubscribeURL); err != nil {
 			// sendRenderedAdminEmail's own "email is not configured"/"content is nil"/
 			// "html body is empty" guard errors aren't logged by the observedEmailSender
 			// wrapper (they never reach it), so log here too — only the underlying
@@ -854,8 +885,8 @@ func deriveAdminEmailAudienceSource(manualCount, formCount int) models.AdminEmai
 	}
 }
 
-func buildAdminComposeSubscriptionLinks(branding email.Branding, emailAddr, recipientName string) (string, string) {
-	base := strings.TrimRight(strings.TrimSpace(branding.PublicURL), "/")
+func (s *adminEmailService) buildAdminComposeSubscriptionLinks(emailAddr, recipientName string) (string, string) {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
 	addr := strings.TrimSpace(emailAddr)
 	if base == "" || addr == "" {
 		return "", ""
@@ -865,7 +896,12 @@ func buildAdminComposeSubscriptionLinks(branding email.Branding, emailAddr, reci
 	if strings.TrimSpace(recipientName) != "" {
 		subscribeURL += "&name=" + urlQueryEscape(recipientName)
 	}
-	unsubscribeURL := base + "/api/v1/notifications/unsubscribe?email=" + urlQueryEscape(addr)
+	unsubscribeURL := ""
+	if s.protector != nil {
+		if token, err := s.protector.EncryptString("unsubscribe\n" + normalizeEmail(addr)); err == nil {
+			unsubscribeURL = base + "/api/v1/notifications/unsubscribe?token=" + urlQueryEscape(token)
+		}
+	}
 	return subscribeURL, unsubscribeURL
 }
 
@@ -948,7 +984,7 @@ func (s *adminEmailService) fetchComposeAttachments(items []models.AdminEmailAtt
 	return attachments, nil
 }
 
-func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *formCampaignRenderedContent, attachments []email.Attachment) error {
+func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *formCampaignRenderedContent, attachments []email.Attachment, unsubscribeURL string) error {
 	if sender == nil {
 		return errors.New("email sender is not configured")
 	}
@@ -963,6 +999,11 @@ func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *for
 	textBody := strings.TrimSpace(content.Text)
 
 	if len(attachments) > 0 {
+		if withOptions, ok := sender.(interface {
+			SendHTMLWithAttachmentsAndOptions(string, string, string, string, []email.Attachment, email.MessageOptions) error
+		}); ok {
+			return withOptions.SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody, attachments, email.MessageOptions{UnsubscribeURL: unsubscribeURL})
+		}
 		withAttachments, ok := sender.(interface {
 			SendHTMLWithAttachments(to, subject, htmlBody, textBody string, attachments []email.Attachment) error
 		})
@@ -970,6 +1011,11 @@ func sendRenderedAdminEmail(sender EmailSender, to, subject string, content *for
 			return errors.New("email sender does not support attachments")
 		}
 		return withAttachments.SendHTMLWithAttachments(to, subject, htmlBody, textBody, attachments)
+	}
+	if withOptions, ok := sender.(interface {
+		SendHTMLTextWithOptions(string, string, string, string, email.MessageOptions) error
+	}); ok {
+		return withOptions.SendHTMLTextWithOptions(to, subject, htmlBody, textBody, email.MessageOptions{UnsubscribeURL: unsubscribeURL})
 	}
 
 	if multipart, ok := sender.(interface {

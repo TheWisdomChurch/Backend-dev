@@ -43,9 +43,11 @@ type UpsertAdminEmailScheduleRequest struct {
 	Recurrence    AdminEmailRecurrence         `json:"recurrence" binding:"required"`
 	Timezone      string                       `json:"timezone" binding:"required"`
 	SendTime      string                       `json:"sendTime" binding:"required"`
+	StartDate     string                       `json:"startDate" binding:"required"`
+	EndDate       *string                      `json:"endDate,omitempty"`
 	Weekdays      []int                        `json:"weekdays,omitempty"`
 	MonthDays     []int                        `json:"monthDays,omitempty"`
-	StartAt       time.Time                    `json:"startAt" binding:"required"`
+	StartAt       time.Time                    `json:"startAt,omitempty"`
 	EndAt         *time.Time                   `json:"endAt,omitempty"`
 	AudienceLabel string                       `json:"audienceLabel,omitempty"`
 	Compose       SendAdminComposeEmailRequest `json:"compose" binding:"required"`

@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/middleware"
 	"wisdomHouse-backend/internal/models"
@@ -41,6 +43,14 @@ func (h *AdminEmailHandler) UpdateSchedule(c *gin.Context) {
 	}
 	item, err := h.schedules.Update(c.Param("id"), &req)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Email schedule not found")
+			return
+		}
+		if strings.Contains(err.Error(), "currently being processed") || strings.Contains(err.Error(), "reload and retry") {
+			utils.ErrorResponse(c, http.StatusConflict, err.Error())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -49,7 +59,11 @@ func (h *AdminEmailHandler) UpdateSchedule(c *gin.Context) {
 func (h *AdminEmailHandler) GetSchedule(c *gin.Context) {
 	item, err := h.schedules.Get(c.Param("id"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Email schedule not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Email schedule not found")
+		} else {
+			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load email schedule")
+		}
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Email schedule loaded", item)
@@ -57,8 +71,21 @@ func (h *AdminEmailHandler) GetSchedule(c *gin.Context) {
 func (h *AdminEmailHandler) ListSchedules(c *gin.Context) {
 	page := parseIntClamp(c.DefaultQuery("page", "1"), 1, 1_000_000)
 	limit := parseIntClamp(c.DefaultQuery("limit", "20"), 1, 100)
-	items, total, err := h.schedules.List(page, limit, c.Query("status"))
+	status := strings.TrimSpace(c.Query("status"))
+	if status != "" && status != "draft" && status != "active" && status != "paused" && status != "completed" && status != "failed" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "Invalid schedule status filter")
+		return
+	}
+	items, total, err := h.schedules.List(page, limit, status)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Email schedule not found")
+			return
+		}
+		if strings.Contains(err.Error(), "currently being processed") || strings.Contains(err.Error(), "reload and retry") {
+			utils.ErrorResponse(c, http.StatusConflict, err.Error())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load email schedules")
 		return
 	}
@@ -80,7 +107,7 @@ func (h *AdminEmailHandler) SetScheduleStatus(c *gin.Context) {
 }
 func (h *AdminEmailHandler) DeleteSchedule(c *gin.Context) {
 	if err := h.schedules.Delete(c.Param("id")); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "Only inactive schedules can be deleted")
+		utils.ErrorResponse(c, http.StatusConflict, "Only inactive schedules can be deleted")
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Email schedule deleted", gin.H{"id": c.Param("id")})

@@ -782,18 +782,13 @@ func (s *authServiceImpl) Register(firstName, lastName, email, password, role st
 
 	// Create user object
 	user := &models.User{
-		FirstName: firstName,
-		LastName:  lastName,
-		Email:     emailNorm,
-		Password:  string(hashedPassword),
-		Role:      role,
-		IsActive:  true,
-		AdminApproved: func() bool {
-			if role == "admin" {
-				return false
-			}
-			return true
-		}(),
+		FirstName:     firstName,
+		LastName:      lastName,
+		Email:         emailNorm,
+		Password:      string(hashedPassword),
+		Role:          role,
+		IsActive:      true,
+		AdminApproved: role != "admin",
 	}
 
 	// Wrap user creation + approval request in a transaction for atomicity.

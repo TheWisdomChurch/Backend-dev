@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -164,13 +166,13 @@ func (s *Sender) SendHTMLTextWithOptions(to, subject, htmlBody, textBody string,
 		return fmt.Errorf("html body is required")
 	}
 
-	if textBody == "" {
-		return s.SendHTML(to, subject, htmlBody)
-	}
-
 	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
-		msg.SetBodyString(gomail.TypeTextPlain, textBody)
-		msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+		if textBody != "" {
+			msg.SetBodyString(gomail.TypeTextPlain, textBody)
+			msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
+		} else {
+			msg.SetBodyString(gomail.TypeTextHTML, htmlBody)
+		}
 		applyMessageOptions(msg, opts)
 		return nil
 	})
@@ -281,6 +283,10 @@ type Attachment struct {
 // SendMultipartWithAttachment (single PDF, receipt-specific), this accepts
 // any number of attachments of any type.
 func (s *Sender) SendHTMLWithAttachments(to, subject, htmlBody, textBody string, attachments []Attachment) error {
+	return s.SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody, attachments, MessageOptions{})
+}
+
+func (s *Sender) SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody string, attachments []Attachment, opts MessageOptions) error {
 	htmlBody = strings.TrimSpace(htmlBody)
 	if htmlBody == "" {
 		return fmt.Errorf("html body is required")
@@ -288,6 +294,7 @@ func (s *Sender) SendHTMLWithAttachments(to, subject, htmlBody, textBody string,
 	textBody = strings.TrimSpace(textBody)
 
 	return s.sendInternal(to, subject, "", func(msg *gomail.Msg) error {
+		applyMessageOptions(msg, opts)
 		if textBody != "" {
 			msg.SetBodyString(gomail.TypeTextPlain, textBody)
 			msg.AddAlternativeString(gomail.TypeTextHTML, htmlBody)
@@ -343,7 +350,8 @@ func (s *Sender) FetchAttachment(ctx context.Context, fileURL, filename string) 
 	if err != nil {
 		return Attachment{}, err
 	}
-	resp, err := s.http.Do(req)
+	client := safeAttachmentHTTPClient(s.http.Timeout)
+	resp, err := client.Do(req)
 	if err != nil {
 		return Attachment{}, fmt.Errorf("failed to fetch attachment: %w", err)
 	}
@@ -378,6 +386,35 @@ func (s *Sender) FetchAttachment(ctx context.Context, fileURL, filename string) 
 	}
 
 	return Attachment{Filename: name, ContentType: ct, Bytes: body}, nil
+}
+
+func safeAttachmentHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, resolved := range ips {
+			ip := resolved.IP
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+				continue
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
+		return nil, fmt.Errorf("attachment host resolves only to a private or unsafe network")
+	}
+	return &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("too many attachment redirects")
+		}
+		return nil
+	}}
 }
 
 // SendTemplateReceiptWithPDF fetches templates from S3, enforces size limits (in TemplateStore),

@@ -58,6 +58,9 @@ func (s *formService) SendFormCampaignEmail(formID string, req *models.SendFormC
 	if err != nil {
 		return nil, err
 	}
+	if form == nil {
+		return nil, errors.New("form not found")
+	}
 
 	normalized, err := normalizeFormCampaignRequest(req)
 	if err != nil {

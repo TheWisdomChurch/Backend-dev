@@ -31,18 +31,21 @@ const (
 type AdminEmailSchedule struct {
 	ID string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 
-	Name        string                   `gorm:"type:varchar(160);not null" json:"name"`
-	Description string                   `gorm:"type:varchar(500);not null;default:''" json:"description"`
-	Status      AdminEmailScheduleStatus `gorm:"type:varchar(20);not null;default:'draft';index" json:"status"`
-	Recurrence  AdminEmailRecurrence     `gorm:"type:varchar(20);not null;index" json:"recurrence"`
-	Timezone    string                   `gorm:"type:varchar(80);not null" json:"timezone"`
-	SendTime    string                   `gorm:"type:char(5);not null" json:"sendTime"`
-	Weekdays    datatypes.JSON           `gorm:"type:jsonb;not null;default:'[]'" json:"weekdays"`
-	MonthDays   datatypes.JSON           `gorm:"type:jsonb;not null;default:'[]'" json:"monthDays"`
-	StartAt     time.Time                `gorm:"not null" json:"startAt"`
-	EndAt       *time.Time               `json:"endAt,omitempty"`
-	NextRunAt   *time.Time               `gorm:"index" json:"nextRunAt,omitempty"`
-	LastRunAt   *time.Time               `json:"lastRunAt,omitempty"`
+	Name                string                   `gorm:"type:varchar(160);not null" json:"name"`
+	Description         string                   `gorm:"type:varchar(500);not null;default:''" json:"description"`
+	Status              AdminEmailScheduleStatus `gorm:"type:varchar(20);not null;default:'draft';index" json:"status"`
+	Recurrence          AdminEmailRecurrence     `gorm:"type:varchar(20);not null;index" json:"recurrence"`
+	Timezone            string                   `gorm:"type:varchar(80);not null" json:"timezone"`
+	SendTime            string                   `gorm:"type:char(5);not null" json:"sendTime"`
+	StartDate           string                   `gorm:"type:date;not null" json:"startDate"`
+	EndDate             *string                  `gorm:"type:date" json:"endDate,omitempty"`
+	Weekdays            datatypes.JSON           `gorm:"type:jsonb;not null;default:'[]'" json:"weekdays"`
+	MonthDays           datatypes.JSON           `gorm:"type:jsonb;not null;default:'[]'" json:"monthDays"`
+	StartAt             time.Time                `gorm:"not null" json:"startAt"`
+	EndAt               *time.Time               `json:"endAt,omitempty"`
+	NextRunAt           *time.Time               `gorm:"index" json:"nextRunAt,omitempty"`
+	LastRunAt           *time.Time               `json:"lastRunAt,omitempty"`
+	PendingOccurrenceAt *time.Time               `gorm:"index" json:"-"`
 
 	ComposePayload datatypes.JSON `gorm:"type:jsonb;not null" json:"-"`
 	Subject        string         `gorm:"type:varchar(255);not null" json:"subject"`
@@ -53,6 +56,7 @@ type AdminEmailSchedule struct {
 	LastError         *string    `gorm:"type:text" json:"lastError,omitempty"`
 	ClaimedAt         *time.Time `gorm:"index" json:"-"`
 	ClaimedBy         *string    `gorm:"type:varchar(120)" json:"-"`
+	Version           int        `gorm:"not null;default:1" json:"version"`
 
 	CreatedByUserID *string `gorm:"type:uuid" json:"createdByUserId,omitempty"`
 	CreatedByEmail  *string `gorm:"type:varchar(255)" json:"createdByEmail,omitempty"`
@@ -70,6 +74,7 @@ type AdminEmailScheduleRun struct {
 	ScheduleID   string     `gorm:"type:uuid;not null;index;uniqueIndex:ux_schedule_occurrence" json:"scheduleId"`
 	ScheduledFor time.Time  `gorm:"not null;index;uniqueIndex:ux_schedule_occurrence" json:"scheduledFor"`
 	Status       string     `gorm:"type:varchar(20);not null;index" json:"status"`
+	Attempt      int        `gorm:"not null;default:1" json:"attempt"`
 	DeliveryID   *string    `gorm:"type:uuid" json:"deliveryId,omitempty"`
 	Sent         int        `gorm:"not null;default:0" json:"sent"`
 	Failed       int        `gorm:"not null;default:0" json:"failed"`

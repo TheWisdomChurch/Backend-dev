@@ -54,6 +54,24 @@ func (s observedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string
 	return err
 }
 
+func (s observedEmailSender) SendHTMLTextWithOptions(to, subject, htmlBody, textBody string, opts email.MessageOptions) error {
+	if s.inner == nil {
+		return errors.New("email sender is not configured")
+	}
+	var err error
+	if sender, ok := s.inner.(interface {
+		SendHTMLTextWithOptions(string, string, string, string, email.MessageOptions) error
+	}); ok {
+		err = sender.SendHTMLTextWithOptions(to, subject, htmlBody, textBody, opts)
+	} else {
+		err = s.SendHTMLText(to, subject, htmlBody, textBody)
+	}
+	if err != nil {
+		applog.L().Error("bulk email delivery failed", "to", maskEmail(to), "subject", subject, "error", err)
+	}
+	return err
+}
+
 func (s observedEmailSender) FetchAttachment(ctx context.Context, fileURL, filename string) (email.Attachment, error) {
 	if s.inner == nil {
 		return email.Attachment{}, errors.New("email sender is not configured")
@@ -82,6 +100,18 @@ func (s observedEmailSender) SendHTMLWithAttachments(to, subject, htmlBody, text
 		applog.L().Error("email delivery with attachments failed", "to", maskEmail(to), "subject", subject, "error", err)
 	}
 	return err
+}
+
+func (s observedEmailSender) SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody string, attachments []email.Attachment, opts email.MessageOptions) error {
+	if s.inner == nil {
+		return errors.New("email sender is not configured")
+	}
+	if sender, ok := s.inner.(interface {
+		SendHTMLWithAttachmentsAndOptions(string, string, string, string, []email.Attachment, email.MessageOptions) error
+	}); ok {
+		return sender.SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody, attachments, opts)
+	}
+	return s.SendHTMLWithAttachments(to, subject, htmlBody, textBody, attachments)
 }
 
 func maskEmail(raw string) string {
@@ -155,6 +185,36 @@ func (s chainedEmailSender) SendHTMLText(to, subject, htmlBody, textBody string)
 	return nil
 }
 
+func (s chainedEmailSender) SendHTMLTextWithOptions(to, subject, htmlBody, textBody string, opts email.MessageOptions) error {
+	send := func(sender service.EmailSender) error {
+		if sender == nil {
+			return errors.New("email sender is not configured")
+		}
+		if capable, ok := sender.(interface {
+			SendHTMLTextWithOptions(string, string, string, string, email.MessageOptions) error
+		}); ok {
+			return capable.SendHTMLTextWithOptions(to, subject, htmlBody, textBody, opts)
+		}
+		if multipart, ok := sender.(interface {
+			SendHTMLText(string, string, string, string) error
+		}); ok {
+			return multipart.SendHTMLText(to, subject, htmlBody, textBody)
+		}
+		return sender.SendHTML(to, subject, htmlBody)
+	}
+	if s.primary == nil {
+		return send(s.fallback)
+	}
+	if err := send(s.primary); err != nil && s.fallback != nil {
+		if fallbackErr := send(s.fallback); fallbackErr != nil {
+			return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, fallbackErr)
+		}
+		return nil
+	} else {
+		return err
+	}
+}
+
 func (s chainedEmailSender) SendHTMLWithAttachments(to, subject, htmlBody, textBody string, attachments []email.Attachment) error {
 	sendWithAttachments := func(sender service.EmailSender) error {
 		if sender == nil {
@@ -187,6 +247,36 @@ func (s chainedEmailSender) SendHTMLWithAttachments(to, subject, htmlBody, textB
 		return err
 	}
 	return nil
+}
+
+func (s chainedEmailSender) SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody string, attachments []email.Attachment, opts email.MessageOptions) error {
+	send := func(sender service.EmailSender) error {
+		if sender == nil {
+			return errors.New("email sender is not configured")
+		}
+		if capable, ok := sender.(interface {
+			SendHTMLWithAttachmentsAndOptions(string, string, string, string, []email.Attachment, email.MessageOptions) error
+		}); ok {
+			return capable.SendHTMLWithAttachmentsAndOptions(to, subject, htmlBody, textBody, attachments, opts)
+		}
+		if capable, ok := sender.(interface {
+			SendHTMLWithAttachments(string, string, string, string, []email.Attachment) error
+		}); ok {
+			return capable.SendHTMLWithAttachments(to, subject, htmlBody, textBody, attachments)
+		}
+		return errors.New("email sender does not support attachments")
+	}
+	if s.primary == nil {
+		return send(s.fallback)
+	}
+	if err := send(s.primary); err != nil && s.fallback != nil {
+		if fallbackErr := send(s.fallback); fallbackErr != nil {
+			return fmt.Errorf("%s failed: %w; %s failed: %v", s.primaryName, err, s.fallbackName, fallbackErr)
+		}
+		return nil
+	} else {
+		return err
+	}
 }
 
 func (s chainedEmailSender) FetchAttachment(ctx context.Context, fileURL, filename string) (email.Attachment, error) {
