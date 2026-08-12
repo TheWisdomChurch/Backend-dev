@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_admin_email_delivery_recipient_results;
+ALTER TABLE admin_email_deliveries DROP CONSTRAINT IF EXISTS chk_admin_email_recipient_results_array;
+ALTER TABLE admin_email_deliveries DROP COLUMN IF EXISTS recipient_results;

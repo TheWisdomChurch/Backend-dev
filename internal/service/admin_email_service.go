@@ -58,8 +58,8 @@ type adminComposeRequestView struct {
 }
 
 type adminComposeRecipient struct {
-	Email string
-	Name  string
+	Email   string
+	Name    string
 	Sources []models.AdminEmailAudienceRecipientSource
 }
 
@@ -67,6 +67,8 @@ type adminComposeFormAudience struct {
 	Summary          models.AdminEmailAudienceFormSummary
 	Recipients       []adminComposeRecipient
 	Skipped          int
+	Duplicates       int
+	Invalid          int
 	LastSubmissionAt *time.Time
 }
 
@@ -251,8 +253,8 @@ func (s *adminEmailService) PreviewAudience(formIDs, rawAudienceTypes []string, 
 	}
 
 	type recipientAggregate struct {
-		item       models.AdminEmailAudiencePreviewRecipient
-		sources    map[string]struct{}
+		item    models.AdminEmailAudiencePreviewRecipient
+		sources map[string]struct{}
 	}
 
 	recipientOrder := make([]string, 0)
@@ -274,6 +276,8 @@ func (s *adminEmailService) PreviewAudience(formIDs, rawAudienceTypes []string, 
 		resp.TotalSubmissions += audience.Summary.TotalSubmissions
 		resp.ValidRecipients += audience.Summary.ValidRecipients
 		resp.Skipped += audience.Skipped
+		resp.DuplicateRecipients += audience.Duplicates
+		resp.InvalidRecipients += audience.Invalid
 
 		for _, recipient := range audience.Recipients {
 			source := models.AdminEmailAudienceRecipientSource{Type: "form", ID: form.ID, Name: strings.TrimSpace(form.Title), FormID: form.ID, FormTitle: strings.TrimSpace(form.Title)}
@@ -293,10 +297,10 @@ func (s *adminEmailService) PreviewAudience(formIDs, rawAudienceTypes []string, 
 
 			recipientMap[recipient.Email] = &recipientAggregate{
 				item: models.AdminEmailAudiencePreviewRecipient{
-					Email: recipient.Email,
-					Name:  recipient.Name,
+					Email:       recipient.Email,
+					Name:        recipient.Name,
 					SourceForms: []models.AdminEmailAudienceRecipientSource{source},
-					Sources: []models.AdminEmailAudienceRecipientSource{source},
+					Sources:     []models.AdminEmailAudienceRecipientSource{source},
 				},
 				sources: map[string]struct{}{("form:" + form.ID): {}},
 			}
@@ -338,7 +342,7 @@ func (s *adminEmailService) PreviewAudience(formIDs, rawAudienceTypes []string, 
 	}
 
 	resp.UniqueRecipients = len(recipientOrder)
-	resp.Skipped += resp.DuplicateRecipients + resp.InvalidRecipients
+	resp.Skipped = resp.DuplicateRecipients + resp.InvalidRecipients
 	for i, emailAddr := range recipientOrder {
 		if i >= limit {
 			break
@@ -411,11 +415,13 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 	}
 
 	resp := &models.SendAdminComposeEmailResponse{
-		Subject:          subject,
-		TemplateSource:   templateSource,
-		FailedRecipients: []string{},
-		StartedAt:        startedAt.Format(time.RFC3339),
-		SentAt:           startedAt.Format(time.RFC3339),
+		Subject:            subject,
+		TemplateSource:     templateSource,
+		FailedRecipients:   []string{},
+		RecipientResults:   []models.AdminEmailRecipientResult{},
+		StartedAt:          startedAt.Format(time.RFC3339),
+		SentAt:             startedAt.Format(time.RFC3339),
+		ConfirmationStatus: "provider_accepted",
 	}
 
 	resolvedRecipients := make(map[string]adminComposeRecipient)
@@ -433,6 +439,8 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 		}
 		resp.FormRecipients += audience.Summary.UniqueRecipients
 		resp.Skipped += audience.Skipped
+		resp.DuplicateRecipients += audience.Duplicates
+		resp.InvalidRecipients += audience.Invalid
 		sourceForms = append(sourceForms, audience.Summary)
 
 		for _, recipient := range audience.Recipients {
@@ -478,7 +486,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			resolvedRecipients[emailAddr] = adminComposeRecipient{Email: emailAddr, Name: strings.TrimSpace(contact.Name), Sources: []models.AdminEmailAudienceRecipientSource{source}}
 		}
 	}
-	resp.Skipped += resp.DuplicateRecipients + resp.InvalidRecipients
+	resp.Skipped = resp.DuplicateRecipients + resp.InvalidRecipients
 	resp.SourceForms = sourceForms
 	resp.AudienceSource = string(deriveAdminEmailAudienceSource(resp.ManualRecipients, resp.FormRecipients))
 
@@ -495,7 +503,8 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 		}
 		for _, address := range suppressed {
 			normalizedAddress := normalizeEmail(address)
-			if _, exists := resolvedRecipients[normalizedAddress]; exists {
+			if recipient, exists := resolvedRecipients[normalizedAddress]; exists {
+				resp.RecipientResults = append(resp.RecipientResults, models.AdminEmailRecipientResult{Email: recipient.Email, Name: recipient.Name, Status: "suppressed", Reason: "globally_unsubscribed", Sources: recipient.Sources})
 				delete(resolvedRecipients, normalizedAddress)
 				resp.Skipped++
 				resp.UnsubscribedRecipients++
@@ -574,6 +583,7 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			applog.L().Error("admin compose email render failed", "to", recipient.Email, "template_source", templateSelection.Source, "error", err)
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, recipient.Email)
+			resp.RecipientResults = append(resp.RecipientResults, models.AdminEmailRecipientResult{Email: recipient.Email, Name: recipient.Name, Status: "failed", Reason: "template_render_failed", Sources: recipient.Sources})
 			continue
 		}
 
@@ -585,10 +595,12 @@ func (s *adminEmailService) SendComposeEmail(req *models.SendAdminComposeEmailRe
 			applog.L().Error("admin compose email send failed", "to", recipient.Email, "template_source", templateSelection.Source, "error", err)
 			resp.Failed++
 			resp.FailedRecipients = appendFailedRecipient(resp.FailedRecipients, recipient.Email)
+			resp.RecipientResults = append(resp.RecipientResults, models.AdminEmailRecipientResult{Email: recipient.Email, Name: recipient.Name, Status: "failed", Reason: "provider_rejected", Sources: recipient.Sources})
 			continue
 		}
 
 		resp.Sent++
+		resp.RecipientResults = append(resp.RecipientResults, models.AdminEmailRecipientResult{Email: recipient.Email, Name: recipient.Name, Status: "provider_accepted", Sources: recipient.Sources})
 	}
 
 	resp.CompletedAt = time.Now().UTC().Format(time.RFC3339)
@@ -844,15 +856,19 @@ func (s *adminEmailService) resolveFormAudienceByForm(form *models.Form) (*admin
 	seen := make(map[string]struct{}, len(submissions))
 	validRecipients := 0
 	skipped := 0
+	duplicates := 0
+	invalid := 0
 	for _, submission := range submissions {
 		emailAddr := normalizeEmail(valueOrEmpty(submission.Email))
 		if emailAddr == "" || !emailRe.MatchString(emailAddr) {
 			skipped++
+			invalid++
 			continue
 		}
 		validRecipients++
 		if _, exists := seen[emailAddr]; exists {
 			skipped++
+			duplicates++
 			continue
 		}
 		seen[emailAddr] = struct{}{}
@@ -879,6 +895,8 @@ func (s *adminEmailService) resolveFormAudienceByForm(form *models.Form) (*admin
 		},
 		Recipients: recipients,
 		Skipped:    skipped,
+		Duplicates: duplicates,
+		Invalid:    invalid,
 	}
 	if len(submissions) > 0 {
 		lastSubmissionAt := submissions[0].CreatedAt.UTC()
@@ -961,6 +979,7 @@ func mapAdminEmailDeliveryHistoryRows(rows []models.AdminEmailDelivery) []models
 			Skipped:          row.Skipped,
 			Failed:           row.Failed,
 			FailedRecipients: decodeStringListJSON(row.FailedRecipients),
+			RecipientResults: decodeAdminEmailRecipientResults(row.RecipientResults),
 			StartedAt:        row.StartedAt.UTC().Format(time.RFC3339),
 			CompletedAt:      formatOptionalTimeRFC3339(row.CompletedAt),
 			CreatedByUserID:  row.CreatedByUserID,
@@ -1166,6 +1185,7 @@ func (s *adminEmailService) saveAdminEmailDelivery(
 		Skipped:          resp.Skipped,
 		Failed:           resp.Failed,
 		FailedRecipients: encodeStringListJSON(resp.FailedRecipients),
+		RecipientResults: encodeAdminEmailRecipientResults(resp.RecipientResults),
 		StartedAt:        startedAt.UTC(),
 		CompletedAt:      completedAt,
 	}
@@ -1176,6 +1196,25 @@ func (s *adminEmailService) saveAdminEmailDelivery(
 		return nil, err
 	}
 	return delivery, nil
+}
+
+func encodeAdminEmailRecipientResults(items []models.AdminEmailRecipientResult) datatypes.JSON {
+	if len(items) == 0 {
+		return datatypes.JSON([]byte("[]"))
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return datatypes.JSON([]byte("[]"))
+	}
+	return datatypes.JSON(raw)
+}
+
+func decodeAdminEmailRecipientResults(raw datatypes.JSON) []models.AdminEmailRecipientResult {
+	var items []models.AdminEmailRecipientResult
+	if len(raw) == 0 || json.Unmarshal(raw, &items) != nil {
+		return []models.AdminEmailRecipientResult{}
+	}
+	return items
 }
 
 func applyAdminEmailDeliveryActor(delivery *models.AdminEmailDelivery, actor *models.AdminEmailSendActor) {

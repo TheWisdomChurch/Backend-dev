@@ -429,7 +429,7 @@ func (s *formService) SendEventReminderEmails(now time.Time, lookAhead time.Dura
 		lookAhead = 24 * time.Hour
 	}
 
-	rows, err := s.reminderRepo.ListDue(now.UTC(), now.UTC().Add(lookAhead), 500)
+	rows, err := s.reminderRepo.ClaimDue(now.UTC(), now.UTC().Add(lookAhead), 500, "form-reminder-worker")
 	if err != nil {
 		return 0, 0, err
 	}
@@ -441,6 +441,7 @@ func (s *formService) SendEventReminderEmails(now time.Time, lookAhead time.Dura
 		addr := strings.TrimSpace(item.Email)
 		if addr == "" {
 			failed++
+			_ = s.reminderRepo.MarkReminderFailed(item.ID, "recipient email is missing")
 			continue
 		}
 
@@ -476,6 +477,7 @@ func (s *formService) SendEventReminderEmails(now time.Time, lookAhead time.Dura
 
 		if err := s.sender.SendHTML(addr, subject, body); err != nil {
 			failed++
+			_ = s.reminderRepo.MarkReminderFailed(item.ID, err.Error())
 			applog.L().Warn("failed to send event reminder email", "to", addr, "error", err)
 			continue
 		}

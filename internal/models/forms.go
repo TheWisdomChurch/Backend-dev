@@ -49,6 +49,15 @@ type Form struct {
 	SubmissionCount int64   `gorm:"-" json:"submissionCount"`
 }
 
+type FormSlugAlias struct {
+	ID        string    `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	FormID    string    `gorm:"type:uuid;not null;index" json:"formId"`
+	Slug      string    `gorm:"size:255;not null;uniqueIndex" json:"slug"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (FormSlugAlias) TableName() string { return "form_slug_aliases" }
+
 func (Form) TableName() string {
 	return "forms"
 }

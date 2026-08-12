@@ -19,6 +19,7 @@ type FormRepository interface {
 
 	Create(form *models.Form) error
 	Update(form *models.Form) error
+	UpdateWithSlugAlias(form *models.Form, previousSlug string) error
 	Delete(id string) error
 
 	SlugExists(slug string) (bool, error)
@@ -129,12 +130,29 @@ func (r *formRepository) attachSubmissionCounts(items []models.Form) error {
 
 func (r *formRepository) GetBySlug(slug string) (*models.Form, error) {
 	var f models.Form
-	err := r.db.DB.Preload("Fields", "deleted_at IS NULL").
-		First(&f, "slug = ? AND is_published = true", slug).Error
+	err := r.db.DB.Preload("Fields", "deleted_at IS NULL").First(&f, "slug = ? AND is_published = true", slug).Error
+	if err == gorm.ErrRecordNotFound {
+		err = r.db.DB.Preload("Fields", "deleted_at IS NULL").
+			Joins("JOIN form_slug_aliases ON form_slug_aliases.form_id = forms.id").
+			Where("form_slug_aliases.slug = ? AND forms.is_published = true", slug).
+			First(&f).Error
+	}
 	if err != nil {
 		return nil, err
 	}
 	return &f, nil
+}
+
+func (r *formRepository) UpdateWithSlugAlias(form *models.Form, previousSlug string) error {
+	return r.db.DB.Transaction(func(tx *gorm.DB) error {
+		if previousSlug != "" && form.Slug != nil && previousSlug != *form.Slug {
+			alias := &models.FormSlugAlias{FormID: form.ID, Slug: previousSlug}
+			if err := tx.Where("slug = ?", previousSlug).FirstOrCreate(alias).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Save(form).Error
+	})
 }
 
 func (r *formRepository) GetAnyBySlug(slug string) (*models.Form, error) {
@@ -206,6 +224,11 @@ func (r *formRepository) SlugExists(slug string) (bool, error) {
 	var count int64
 	if err := r.db.DB.Model(&models.Form{}).Where("slug = ?", slug).Count(&count).Error; err != nil {
 		return false, err
+	}
+	if count == 0 {
+		if err := r.db.DB.Model(&models.FormSlugAlias{}).Where("slug = ?", slug).Count(&count).Error; err != nil {
+			return false, err
+		}
 	}
 	return count > 0, nil
 }

@@ -62,6 +62,11 @@ The migration chain currently contains three units:
   optimistic concurrency, coherent retry identities, and constrained run states.
 - `015_celebration_automation.up.sql` / `.down.sql` — configurable birthday and anniversary
   automation, daily run ownership, cross-domain deduplication, and recipient delivery history.
+- `016_store_checkout_lifecycle.up.sql` / `.down.sql` — durable checkout lifecycle hardening.
+- `017_admin_email_recipient_results.up.sql` / `.down.sql` — durable per-recipient campaign
+  confirmation, suppression, failure, and contributing-audience history.
+- `018_form_reminder_delivery_claims.up.sql` / `.down.sql` — database claims, bounded retries,
+  failure diagnostics, and provider-acceptance state for form event reminders.
 
 This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
 of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
@@ -81,7 +86,7 @@ doesn't already have a record for.
 ## Adding a migration
 
 1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `015`; the next one is `016`).
+   one (currently `018`; the next one is `019`).
    Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
    each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
    debugging too, and safe to fold into a future consolidation.

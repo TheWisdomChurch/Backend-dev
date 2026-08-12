@@ -26,8 +26,13 @@ type FormCalendarReminder struct {
 
 	CalendarToken string `gorm:"type:varchar(120);not null;uniqueIndex" json:"-"`
 
-	OptedInAt      *time.Time `gorm:"index" json:"optedInAt,omitempty"`
-	ReminderSentAt *time.Time `gorm:"index" json:"reminderSentAt,omitempty"`
+	OptedInAt       *time.Time `gorm:"index" json:"optedInAt,omitempty"`
+	ReminderSentAt  *time.Time `gorm:"index" json:"reminderSentAt,omitempty"`
+	DeliveryStatus  string     `gorm:"type:varchar(24);not null;default:'pending';index" json:"deliveryStatus"`
+	DeliveryAttempt int        `gorm:"not null;default:0" json:"deliveryAttempt"`
+	ClaimedAt       *time.Time `gorm:"index" json:"claimedAt,omitempty"`
+	ClaimedBy       *string    `gorm:"type:varchar(120)" json:"claimedBy,omitempty"`
+	LastError       *string    `gorm:"type:text" json:"lastError,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

@@ -49,6 +49,7 @@ type AdminEmailDelivery struct {
 	Skipped          int                      `gorm:"not null;default:0" json:"skipped"`
 	Failed           int                      `gorm:"not null;default:0" json:"failed"`
 	FailedRecipients datatypes.JSON           `gorm:"type:jsonb" json:"failedRecipients,omitempty"`
+	RecipientResults datatypes.JSON           `gorm:"type:jsonb;not null;default:'[]'" json:"recipientResults,omitempty"`
 
 	StartedAt   time.Time  `gorm:"not null;index" json:"startedAt"`
 	CompletedAt *time.Time `gorm:"index" json:"completedAt,omitempty"`
