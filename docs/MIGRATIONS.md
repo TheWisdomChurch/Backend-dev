@@ -60,6 +60,8 @@ The migration chain currently contains three units:
   occurrence history, and indexes for due-work polling.
 - `014_admin_email_scheduler_hardening.up.sql` / `.down.sql` — timezone-safe local schedule dates,
   optimistic concurrency, coherent retry identities, and constrained run states.
+- `015_celebration_automation.up.sql` / `.down.sql` — configurable birthday and anniversary
+  automation, daily run ownership, cross-domain deduplication, and recipient delivery history.
 
 This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
 of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
@@ -79,7 +81,7 @@ doesn't already have a record for.
 ## Adding a migration
 
 1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `014`; the next one is `015`).
+   one (currently `015`; the next one is `016`).
    Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
    each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
    debugging too, and safe to fold into a future consolidation.

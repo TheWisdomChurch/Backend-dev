@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -64,7 +65,8 @@ func (s *celebrationAutomationService) GetStatus(now time.Time) (*models.Celebra
 		return nil, runErr
 	}
 	next := nextCelebrationRun(local, config.SendTime)
-	return &models.CelebrationAutomationStatus{Config: *config, TodayRun: run, NextRunAt: &next, WorkerHealthy: configValid(config) == nil}, nil
+	healthy := config.LastWorkerHeartbeat != nil && now.UTC().Sub(config.LastWorkerHeartbeat.UTC()) <= 3*time.Minute
+	return &models.CelebrationAutomationStatus{Config: *config, TodayRun: run, NextRunAt: &next, WorkerHealthy: healthy}, nil
 }
 
 func (s *celebrationAutomationService) UpdateConfig(req *models.UpdateCelebrationAutomationConfigRequest, actor *models.AdminEmailSendActor) (*models.CelebrationAutomationConfig, error) {
@@ -148,6 +150,9 @@ func (s *celebrationAutomationService) ProcessDue(ctx context.Context, now time.
 	if err := configValid(config); err != nil {
 		return nil, err
 	}
+	if touchErr := s.repo.TouchWorker(ctx, worker, now.UTC()); touchErr != nil {
+		return nil, fmt.Errorf("record worker heartbeat: %w", touchErr)
+	}
 	loc, _ := time.LoadLocation(config.Timezone)
 	local := now.In(loc)
 	if trigger == "scheduler" {
@@ -167,7 +172,10 @@ func (s *celebrationAutomationService) ProcessDue(ctx context.Context, now time.
 	}
 	claimed, err := s.repo.ClaimRun(ctx, run.ID, worker, now.UTC())
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return run, nil
+		if trigger == "manual" {
+			return run, nil
+		}
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -181,6 +189,25 @@ type celebrationRecipient struct {
 }
 
 func (s *celebrationAutomationService) executeRun(ctx context.Context, run *models.CelebrationAutomationRun, config *models.CelebrationAutomationConfig, local time.Time, worker string) (*models.CelebrationAutomationRun, error) {
+	stopHeartbeat := make(chan struct{})
+	var heartbeat sync.WaitGroup
+	heartbeat.Add(1)
+	go func() {
+		defer heartbeat.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-ctx.Done():
+				return
+			case tick := <-ticker.C:
+				_, _ = s.repo.RenewRunClaim(ctx, run.ID, worker, tick.UTC())
+			}
+		}
+	}()
+	defer func() { close(stopHeartbeat); heartbeat.Wait() }()
 	candidates, err := s.repo.ListCandidates(ctx, int(local.Month()), local.Day(), config.BirthdayEnabled, config.AnniversaryEnabled)
 	if err != nil {
 		return nil, s.failRun(ctx, run, config, worker, err)

@@ -605,6 +605,7 @@ func main() {
 	go startFormReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), formService, time.Hour, 24*time.Hour)
 	go startNewMemberWorkflowScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), newMemberWorkflowService, 15*time.Minute)
 	go startVisitReminderScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), engagementHandler, 15*time.Minute)
+	go startStoreReservationScheduler(cleanupCtx, newRedisLock(cfg.Redis.URL), storeService, 5*time.Minute)
 	go startAdminEmailScheduleWorker(cleanupCtx, adminEmailScheduleService, 30*time.Second)
 	go startCelebrationAutomationWorker(cleanupCtx, celebrationAutomationService, time.Minute)
 

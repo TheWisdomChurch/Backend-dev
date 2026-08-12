@@ -28,15 +28,23 @@ func (StoreProduct) TableName() string {
 }
 
 type StoreOrder struct {
-	ID      string `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	OrderID string `gorm:"size:120;uniqueIndex;not null" json:"orderId"`
-	Status  string `gorm:"size:30;not null;default:'pending'" json:"status"`
+	ID              string `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	OrderID         string `gorm:"size:120;uniqueIndex;not null" json:"orderId"`
+	Status          string `gorm:"size:30;not null;default:'pending'" json:"status"`
+	PaymentStatus   string `gorm:"size:30;not null;default:'unpaid';index" json:"paymentStatus"`
+	IdempotencyKey  string `gorm:"size:100;uniqueIndex;not null" json:"-"`
+	AccessTokenHash string `gorm:"size:64;not null" json:"-"`
 
 	Subtotal    float64 `gorm:"not null;default:0" json:"subtotal"`
 	DeliveryFee float64 `gorm:"not null;default:0" json:"deliveryFee"`
 	Total       float64 `gorm:"not null;default:0" json:"total"`
 
-	PaymentMethod string `gorm:"size:40;not null" json:"paymentMethod"`
+	PaymentMethod        string     `gorm:"size:40;not null" json:"paymentMethod"`
+	PaymentSlipURL       *string    `gorm:"type:text" json:"paymentSlipUrl,omitempty"`
+	PaidAt               *time.Time `json:"paidAt,omitempty"`
+	CancelledAt          *time.Time `json:"cancelledAt,omitempty"`
+	StockReleasedAt      *time.Time `json:"stockReleasedAt,omitempty"`
+	ReservationExpiresAt *time.Time `gorm:"index" json:"reservationExpiresAt,omitempty"`
 
 	CustomerFirstName string  `gorm:"size:120;not null" json:"-"`
 	CustomerLastName  string  `gorm:"size:120;not null" json:"-"`

@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -132,26 +130,31 @@ func (h *StoreHandler) GetOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	order, err := h.svc.GetOrder(orderID)
+	order, err := h.svc.GetOrder(orderID, c.GetHeader("X-Order-Access-Token"))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "Order not found")
-		return
-	}
-	// This endpoint is intentionally public so customers can revisit their
-	// confirmation, but an order ID alone must not disclose contact/address PII.
-	// Require the email used at checkout as a second capability factor and use
-	// one indistinguishable not-found response for both failure modes.
-	if !orderLookupAuthorized(c.Query("email"), order.CustomerEmail) {
 		utils.ErrorResponse(c, http.StatusNotFound, "Order not found")
 		return
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Order loaded", mapOrderResponse(order))
 }
 
-func orderLookupAuthorized(providedEmail, storedEmail string) bool {
-	provided := strings.ToLower(strings.TrimSpace(providedEmail))
-	stored := strings.ToLower(strings.TrimSpace(storedEmail))
-	return provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(stored)) == 1
+func (h *StoreHandler) SubmitPaymentProof(c *gin.Context) {
+	orderID, ok := parseOrderIDPathParam(c, "orderId", "order id")
+	if !ok {
+		return
+	}
+	var req struct {
+		PaymentSlipURL string `json:"paymentSlipUrl" binding:"required"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	order, err := h.svc.SubmitPaymentProof(orderID, c.GetHeader("X-Order-Access-Token"), req.PaymentSlipURL)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Payment proof submitted", mapOrderResponse(order))
 }
 
 func (h *StoreHandler) ListOrdersAdmin(c *gin.Context) {
@@ -200,19 +203,40 @@ func (h *StoreHandler) UpdateOrderStatus(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Order status updated", mapOrderResponse(item))
 }
 
+func (h *StoreHandler) UpdateOrderPaymentStatus(c *gin.Context) {
+	orderID, ok := parseOrderIDPathParam(c, "orderId", "order id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if !validation.BindJSON(c, &req) {
+		return
+	}
+	order, err := h.svc.UpdateOrderPaymentStatus(orderID, req.Status)
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusConflict, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Payment status updated", mapOrderResponse(order))
+}
+
 func mapOrderResponse(order *models.StoreOrder) gin.H {
 	if order == nil {
 		return gin.H{}
 	}
 	return gin.H{
-		"orderId":       order.OrderID,
-		"orderDate":     order.CreatedAt,
-		"status":        order.Status,
-		"paymentMethod": order.PaymentMethod,
-		"subtotal":      order.Subtotal,
-		"deliveryFee":   order.DeliveryFee,
-		"total":         order.Total,
-		"items":         order.Items,
+		"orderId":        order.OrderID,
+		"orderDate":      order.CreatedAt,
+		"status":         order.Status,
+		"paymentMethod":  order.PaymentMethod,
+		"paymentStatus":  order.PaymentStatus,
+		"paymentSlipUrl": order.PaymentSlipURL,
+		"subtotal":       order.Subtotal,
+		"deliveryFee":    order.DeliveryFee,
+		"total":          order.Total,
+		"items":          order.Items,
 		"customer": gin.H{
 			"firstName": order.CustomerFirstName,
 			"lastName":  order.CustomerLastName,

@@ -23,9 +23,11 @@ type CelebrationCandidate struct {
 
 type CelebrationAutomationRepository interface {
 	GetConfig() (*models.CelebrationAutomationConfig, error)
+	TouchWorker(context.Context, string, time.Time) error
 	UpdateConfig(*models.CelebrationAutomationConfig) error
 	EnsureRun(context.Context, string, string, string, []byte) (*models.CelebrationAutomationRun, error)
 	ClaimRun(context.Context, string, string, time.Time) (*models.CelebrationAutomationRun, error)
+	RenewRunClaim(context.Context, string, string, time.Time) (bool, error)
 	CompleteRun(context.Context, *models.CelebrationAutomationRun, string) error
 	ListCandidates(context.Context, int, int, bool, bool) ([]CelebrationCandidate, error)
 	UpsertDelivery(context.Context, *models.CelebrationDelivery) (*models.CelebrationDelivery, error)
@@ -35,7 +37,16 @@ type CelebrationAutomationRepository interface {
 	GetRunByDate(string) (*models.CelebrationAutomationRun, error)
 }
 
+func (r *celebrationAutomationRepository) RenewRunClaim(ctx context.Context, id, worker string, now time.Time) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&models.CelebrationAutomationRun{}).Where("id = ? AND claimed_by = ? AND status = 'running'", id, worker).Update("claimed_at", now)
+	return result.RowsAffected == 1, result.Error
+}
+
 type celebrationAutomationRepository struct{ db *database.Database }
+
+func (r *celebrationAutomationRepository) TouchWorker(ctx context.Context, worker string, now time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.CelebrationAutomationConfig{}).Where("id = ?", "default").Updates(map[string]any{"last_worker_heartbeat": now, "last_worker_id": worker}).Error
+}
 
 func NewCelebrationAutomationRepository(db *database.Database) CelebrationAutomationRepository {
 	return &celebrationAutomationRepository{db: db}

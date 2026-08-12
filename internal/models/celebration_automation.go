@@ -7,23 +7,25 @@ import (
 )
 
 type CelebrationAutomationConfig struct {
-	ID                     string    `gorm:"primaryKey;type:varchar(40)" json:"id"`
-	Enabled                bool      `gorm:"not null;default:false" json:"enabled"`
-	BirthdayEnabled        bool      `gorm:"not null;default:true" json:"birthdayEnabled"`
-	AnniversaryEnabled     bool      `gorm:"not null;default:true" json:"anniversaryEnabled"`
-	Timezone               string    `gorm:"type:varchar(80);not null" json:"timezone"`
-	SendTime               string    `gorm:"type:char(5);not null" json:"sendTime"`
-	Feb29Policy            string    `gorm:"type:varchar(12);not null;default:'feb28'" json:"feb29Policy"`
-	MaxAttempts            int       `gorm:"not null;default:3" json:"maxAttempts"`
-	RetryMinutes           int       `gorm:"not null;default:15" json:"retryMinutes"`
-	BirthdaySubject        string    `gorm:"type:varchar(180);not null" json:"birthdaySubject"`
-	AnniversarySubject     string    `gorm:"type:varchar(180);not null" json:"anniversarySubject"`
-	BirthdayTemplateKey    string    `gorm:"type:varchar(120);not null;default:'birthday'" json:"birthdayTemplateKey"`
-	AnniversaryTemplateKey string    `gorm:"type:varchar(120);not null;default:'anniversary'" json:"anniversaryTemplateKey"`
-	UpdatedByUserID        *string   `gorm:"type:uuid" json:"updatedByUserId,omitempty"`
-	UpdatedByEmail         *string   `gorm:"type:varchar(255)" json:"updatedByEmail,omitempty"`
-	CreatedAt              time.Time `gorm:"autoCreateTime" json:"createdAt"`
-	UpdatedAt              time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
+	ID                     string     `gorm:"primaryKey;type:varchar(40)" json:"id"`
+	Enabled                bool       `gorm:"not null;default:false" json:"enabled"`
+	BirthdayEnabled        bool       `gorm:"not null;default:true" json:"birthdayEnabled"`
+	AnniversaryEnabled     bool       `gorm:"not null;default:true" json:"anniversaryEnabled"`
+	Timezone               string     `gorm:"type:varchar(80);not null" json:"timezone"`
+	SendTime               string     `gorm:"type:char(5);not null" json:"sendTime"`
+	Feb29Policy            string     `gorm:"type:varchar(12);not null;default:'feb28'" json:"feb29Policy"`
+	MaxAttempts            int        `gorm:"not null;default:3" json:"maxAttempts"`
+	RetryMinutes           int        `gorm:"not null;default:15" json:"retryMinutes"`
+	BirthdaySubject        string     `gorm:"type:varchar(180);not null" json:"birthdaySubject"`
+	AnniversarySubject     string     `gorm:"type:varchar(180);not null" json:"anniversarySubject"`
+	BirthdayTemplateKey    string     `gorm:"type:varchar(120);not null;default:'birthday'" json:"birthdayTemplateKey"`
+	AnniversaryTemplateKey string     `gorm:"type:varchar(120);not null;default:'anniversary'" json:"anniversaryTemplateKey"`
+	UpdatedByUserID        *string    `gorm:"type:uuid" json:"updatedByUserId,omitempty"`
+	UpdatedByEmail         *string    `gorm:"type:varchar(255)" json:"updatedByEmail,omitempty"`
+	LastWorkerHeartbeat    *time.Time `json:"lastWorkerHeartbeat,omitempty"`
+	LastWorkerID           *string    `gorm:"type:varchar(120)" json:"lastWorkerId,omitempty"`
+	CreatedAt              time.Time  `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt              time.Time  `gorm:"autoUpdateTime" json:"updatedAt"`
 }
 
 func (CelebrationAutomationConfig) TableName() string { return "celebration_automation_config" }

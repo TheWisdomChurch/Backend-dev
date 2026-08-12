@@ -241,6 +241,7 @@ func setupRouter(
 	})
 	api.POST("/store/orders", middleware.NoStore(), storeOrderRateLimiter, storeHandler.CreateOrder)
 	api.GET("/store/orders/:orderId", middleware.NoStore(), storeOrderRateLimiter, storeHandler.GetOrder)
+	api.POST("/store/orders/:orderId/payment-proof", middleware.NoStore(), storeOrderRateLimiter, storeHandler.SubmitPaymentProof)
 	// PRAYER REQUESTS — public submission (aggressive rate limit applied at infra level)
 	api.POST("/prayer-requests", prayerRequestHandler.Submit)
 
@@ -551,6 +552,7 @@ func setupRouter(
 	admin.PATCH("/store/products/:id/active", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.UpdateProductActive)
 	admin.GET("/store/orders", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.ListOrdersAdmin)
 	admin.PATCH("/store/orders/:orderId/status", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.UpdateOrderStatus)
+	admin.PATCH("/store/orders/:orderId/payment-status", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.UpdateOrderPaymentStatus)
 	admin.POST("/members/notify", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.SendAnnouncement)
 	admin.POST("/members/import", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.ImportCSV)
 

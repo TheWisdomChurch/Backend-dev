@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
@@ -27,8 +28,19 @@ type StoreRepository interface {
 	CreateProducts(items []models.StoreProduct) error
 	CreateOrder(order *models.StoreOrder) error
 	GetOrderByOrderID(orderID string) (*models.StoreOrder, error)
+	GetOrderByIdempotencyKey(key string) (*models.StoreOrder, error)
 	ListOrders(offset, limit int, status string) ([]models.StoreOrder, int64, error)
 	UpdateOrderStatus(orderID, status string) (*models.StoreOrder, error)
+	UpdateOrderPaymentProof(orderID, proofURL string) (*models.StoreOrder, error)
+	UpdateOrderPaymentStatus(orderID, status string, paidAt *time.Time) (*models.StoreOrder, error)
+	ExpirePendingReservations(now time.Time, limit int) (int, error)
+}
+
+func (r *storeRepository) UpdateOrderPaymentStatus(orderID, status string, paidAt *time.Time) (*models.StoreOrder, error) {
+	if err := r.db.DB.Model(&models.StoreOrder{}).Where("order_id = ?", orderID).Updates(map[string]any{"payment_status": status, "paid_at": paidAt}).Error; err != nil {
+		return nil, err
+	}
+	return r.GetOrderByOrderID(orderID)
 }
 
 type storeRepository struct {
@@ -165,6 +177,14 @@ func (r *storeRepository) CreateOrder(order *models.StoreOrder) error {
 		if order.DeliveryFee < 0 {
 			order.DeliveryFee = 0
 		}
+		if order.PaymentMethod == "delivery" {
+			order.DeliveryFee = subtotal * 0.10
+			if order.DeliveryFee < 1000 {
+				order.DeliveryFee = 1000
+			}
+		} else {
+			order.DeliveryFee = 0
+		}
 		order.Subtotal = subtotal
 		order.Total = subtotal + order.DeliveryFee
 
@@ -181,6 +201,14 @@ func (r *storeRepository) CreateOrder(order *models.StoreOrder) error {
 		}
 		return nil
 	})
+}
+
+func (r *storeRepository) GetOrderByIdempotencyKey(key string) (*models.StoreOrder, error) {
+	var order models.StoreOrder
+	if err := r.db.DB.Preload("Items").First(&order, "idempotency_key = ?", key).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
 }
 
 func (r *storeRepository) GetOrderByOrderID(orderID string) (*models.StoreOrder, error) {
@@ -224,6 +252,22 @@ func (r *storeRepository) UpdateOrderStatus(orderID, status string) (*models.Sto
 			return err
 		}
 		item.Status = status
+		if status == "cancelled" && item.StockReleasedAt == nil {
+			var orderItems []models.StoreOrderItem
+			if err := tx.Where("store_order_id = ?", item.ID).Find(&orderItems).Error; err != nil {
+				return err
+			}
+			for _, orderItem := range orderItems {
+				if orderItem.ProductID != nil {
+					if err := tx.Model(&models.StoreProduct{}).Where("id = ?", *orderItem.ProductID).UpdateColumn("stock", gorm.Expr("stock + ?", orderItem.Quantity)).Error; err != nil {
+						return err
+					}
+				}
+			}
+			now := time.Now().UTC()
+			item.CancelledAt = &now
+			item.StockReleasedAt = &now
+		}
 		if err := tx.Save(&item).Error; err != nil {
 			return err
 		}
@@ -233,6 +277,50 @@ func (r *storeRepository) UpdateOrderStatus(orderID, status string) (*models.Sto
 		return nil, err
 	}
 	return &item, nil
+}
+
+func (r *storeRepository) UpdateOrderPaymentProof(orderID, proofURL string) (*models.StoreOrder, error) {
+	result := r.db.DB.Model(&models.StoreOrder{}).
+		Where("order_id = ? AND payment_method = ? AND payment_status IN ?", orderID, "transfer", []string{"unpaid", "proof_submitted"}).
+		Updates(map[string]any{"payment_slip_url": proofURL, "payment_status": "proof_submitted", "reservation_expires_at": nil})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil, errors.New("order cannot accept payment proof")
+	}
+	return r.GetOrderByOrderID(orderID)
+}
+
+func (r *storeRepository) ExpirePendingReservations(now time.Time, limit int) (int, error) {
+	expired := 0
+	err := r.db.DB.Transaction(func(tx *gorm.DB) error {
+		var orders []models.StoreOrder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("status = ? AND payment_status = ? AND reservation_expires_at IS NOT NULL AND reservation_expires_at <= ? AND stock_released_at IS NULL", "pending", "unpaid", now).
+			Limit(limit).Find(&orders).Error; err != nil {
+			return err
+		}
+		for i := range orders {
+			var items []models.StoreOrderItem
+			if err := tx.Where("store_order_id = ?", orders[i].ID).Find(&items).Error; err != nil {
+				return err
+			}
+			for _, item := range items {
+				if item.ProductID != nil {
+					if err := tx.Model(&models.StoreProduct{}).Where("id = ?", *item.ProductID).UpdateColumn("stock", gorm.Expr("stock + ?", item.Quantity)).Error; err != nil {
+						return err
+					}
+				}
+			}
+			if err := tx.Model(&orders[i]).Updates(map[string]any{"status": "cancelled", "cancelled_at": now, "stock_released_at": now, "reservation_expires_at": nil}).Error; err != nil {
+				return err
+			}
+			expired++
+		}
+		return nil
+	})
+	return expired, err
 }
 
 var nonDigitPriceRe = regexp.MustCompile(`[^0-9.]`)

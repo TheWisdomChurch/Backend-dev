@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -287,121 +285,39 @@ func startVisitReminderScheduler(ctx context.Context, lock *redisLock, handler *
 	}
 }
 
-func parseHourMinute(raw string) (int, int, error) {
-	parts := strings.Split(strings.TrimSpace(raw), ":")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("time must be HH:MM")
-	}
-	hour, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-	if err != nil {
-		return 0, 0, fmt.Errorf("hour must be numeric")
-	}
-	minute, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil {
-		return 0, 0, fmt.Errorf("minute must be numeric")
-	}
-	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		return 0, 0, fmt.Errorf("time must be valid 24h clock")
-	}
-	return hour, minute, nil
-}
-
-func nextRunAt(now time.Time, hour, minute int) time.Time {
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
-	if !next.After(now) {
-		next = next.Add(24 * time.Hour)
-	}
-	return next
-}
-
-func startBirthdayScheduler(
-	ctx context.Context,
-	lock *redisLock,
-	workforceSvc service.WorkforceService,
-	memberSvc service.MemberService,
-	leadershipSvc service.LeadershipService,
-	tz string,
-	sendAt string,
-) {
-	if workforceSvc == nil && memberSvc == nil && leadershipSvc == nil {
+func startStoreReservationScheduler(ctx context.Context, lock *redisLock, svc service.StoreService, interval time.Duration) {
+	if svc == nil {
 		return
 	}
-
-	if strings.TrimSpace(sendAt) == "" {
-		sendAt = "09:00"
+	if interval <= 0 {
+		interval = 5 * time.Minute
 	}
-	hour, minute, err := parseHourMinute(sendAt)
-	if err != nil {
-		applog.L().Warn("invalid BIRTHDAY_SCHEDULER_TIME, using 09:00", "value", sendAt)
-		hour, minute = 9, 0
-	}
-
-	loc := time.UTC
-	if strings.TrimSpace(tz) != "" {
-		if l, err := time.LoadLocation(tz); err == nil {
-			loc = l
-		} else {
-			applog.L().Warn("invalid BIRTHDAY_SCHEDULER_TZ, using UTC", "value", tz)
+	run := func() {
+		now := time.Now().UTC()
+		if lock != nil {
+			ok, err := lock.Acquire(ctx, "store:expire-reservations", interval)
+			if err != nil || !ok {
+				return
+			}
+		}
+		count, err := svc.ExpirePendingReservations(now, 250)
+		if err != nil {
+			applog.L().Warn("store reservation cleanup failed", "error", err)
+			return
+		}
+		if count > 0 {
+			applog.L().Info("expired abandoned store reservations", "count", count)
 		}
 	}
-
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	for {
-		now := time.Now().In(loc)
-		next := nextRunAt(now, hour, minute)
-		timer := time.NewTimer(time.Until(next))
-
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return
-		case <-timer.C:
-		}
-
-		dateKey := next.Format("2006-01-02")
-		if lock != nil {
-			ok, err := lock.Acquire(ctx, "birthday_send:"+dateKey, 36*time.Hour)
-			if err != nil {
-				applog.L().Warn("birthday scheduler lock failed", "error", err)
-				continue
-			}
-			if !ok {
-				applog.L().Info("birthday scheduler already ran", "date", dateKey)
-				continue
-			}
-		}
-
-		if workforceSvc != nil {
-			result, err := workforceSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
-			if err != nil {
-				applog.L().Warn("workforce birthday send failed", "error", err)
-			} else {
-				applog.L().Info("workforce birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
-			}
-		}
-
-		if memberSvc != nil {
-			result, err := memberSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
-			if err != nil {
-				applog.L().Warn("member birthday send failed", "error", err)
-			} else {
-				applog.L().Info("member birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
-			}
-		}
-
-		if leadershipSvc != nil {
-			result, err := leadershipSvc.SendBirthdayGreetings(int(next.Month()), next.Day())
-			if err != nil {
-				applog.L().Warn("leadership birthday send failed", "error", err)
-			} else {
-				applog.L().Info("leadership birthdays sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
-			}
-
-			result, err = leadershipSvc.SendAnniversaryGreetings(int(next.Month()), next.Day())
-			if err != nil {
-				applog.L().Warn("leadership anniversary send failed", "error", err)
-			} else {
-				applog.L().Info("leadership anniversaries sent", "targeted", result.Targeted, "sent", result.Sent, "skipped", result.Skipped)
-			}
+		case <-ticker.C:
+			run()
 		}
 	}
 }

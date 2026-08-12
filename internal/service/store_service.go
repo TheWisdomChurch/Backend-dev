@@ -1,27 +1,35 @@
 package service
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
 
 type CreateStoreOrderRequest struct {
-	OrderID       string                       `json:"orderId"`
-	Subtotal      float64                      `json:"subtotal"`
-	DeliveryFee   float64                      `json:"deliveryFee"`
-	Total         float64                      `json:"total"`
-	PaymentMethod string                       `json:"paymentMethod"`
-	Items         []CreateStoreOrderItem       `json:"items"`
-	Customer      CreateStoreOrderCustomer     `json:"customer"`
-	BankDetails   *CreateStoreOrderBankDetails `json:"bankDetails,omitempty"`
+	IdempotencyKey string                       `json:"idempotencyKey"`
+	CheckoutToken  string                       `json:"checkoutToken"`
+	Subtotal       float64                      `json:"subtotal"`
+	DeliveryFee    float64                      `json:"deliveryFee"`
+	Total          float64                      `json:"total"`
+	PaymentMethod  string                       `json:"paymentMethod"`
+	PaymentSlipURL string                       `json:"paymentSlipUrl"`
+	Items          []CreateStoreOrderItem       `json:"items"`
+	Customer       CreateStoreOrderCustomer     `json:"customer"`
+	BankDetails    *CreateStoreOrderBankDetails `json:"bankDetails,omitempty"`
 }
 
 type CreateStoreOrderItem struct {
@@ -58,9 +66,12 @@ type StoreService interface {
 	UpdateProductStock(id uint, stock int) (*models.StoreProduct, error)
 	UpdateProductActive(id uint, isActive bool) (*models.StoreProduct, error)
 	CreateOrder(req CreateStoreOrderRequest) (*models.StoreOrder, error)
-	GetOrder(orderID string) (*models.StoreOrder, error)
+	GetOrder(orderID, checkoutToken string) (*models.StoreOrder, error)
 	ListOrders(page, limit int, status string) ([]models.StoreOrder, int64, error)
 	UpdateOrderStatus(orderID, status string) (*models.StoreOrder, error)
+	SubmitPaymentProof(orderID, checkoutToken, proofURL string) (*models.StoreOrder, error)
+	UpdateOrderPaymentStatus(orderID, status string) (*models.StoreOrder, error)
+	ExpirePendingReservations(now time.Time, limit int) (int, error)
 }
 
 type storeService struct {
@@ -135,8 +146,28 @@ func (s *storeService) UpdateProductActive(id uint, isActive bool) (*models.Stor
 }
 
 func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOrder, error) {
+	key := strings.TrimSpace(req.IdempotencyKey)
+	token := strings.TrimSpace(req.CheckoutToken)
+	if _, err := uuid.Parse(key); err != nil {
+		return nil, errors.New("idempotencyKey must be a valid UUID")
+	}
+	if _, err := uuid.Parse(token); err != nil {
+		return nil, errors.New("checkoutToken must be a valid UUID")
+	}
+	if existing, err := s.repo.GetOrderByIdempotencyKey(key); err == nil {
+		if !secureTokenMatches(token, existing.AccessTokenHash) {
+			return nil, errors.New("checkout attempt conflicts with an existing order")
+		}
+		return existing, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
 	if strings.TrimSpace(req.PaymentMethod) == "" {
 		return nil, errors.New("paymentMethod is required")
+	}
+	method := strings.ToLower(strings.TrimSpace(req.PaymentMethod))
+	if method != "transfer" && method != "delivery" {
+		return nil, errors.New("paymentMethod must be transfer or delivery")
 	}
 	if len(req.Items) == 0 {
 		return nil, errors.New("at least one item is required")
@@ -154,10 +185,13 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 		// for backward compatibility with older frontends.
 		OrderID:             newPublicOrderID(),
 		Status:              "pending",
+		PaymentStatus:       "unpaid",
+		IdempotencyKey:      key,
+		AccessTokenHash:     hashCheckoutToken(token),
 		Subtotal:            req.Subtotal,
 		DeliveryFee:         req.DeliveryFee,
 		Total:               req.Total,
-		PaymentMethod:       strings.TrimSpace(req.PaymentMethod),
+		PaymentMethod:       method,
 		CustomerFirstName:   strings.TrimSpace(req.Customer.FirstName),
 		CustomerLastName:    strings.TrimSpace(req.Customer.LastName),
 		CustomerEmail:       strings.TrimSpace(strings.ToLower(req.Customer.Email)),
@@ -168,6 +202,13 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 		CustomerZipCode:     strPtrOrNil(req.Customer.ZipCode),
 		CustomerAccountName: nil,
 		CustomerBankName:    nil,
+	}
+	if slip := strings.TrimSpace(req.PaymentSlipURL); slip != "" {
+		order.PaymentSlipURL = &slip
+	}
+	if method == "transfer" {
+		expires := time.Now().UTC().Add(30 * time.Minute)
+		order.ReservationExpiresAt = &expires
 	}
 	if req.BankDetails != nil {
 		order.CustomerAccountName = strPtrOrNil(req.BankDetails.CustomerAccountName)
@@ -198,8 +239,37 @@ func (s *storeService) CreateOrder(req CreateStoreOrderRequest) (*models.StoreOr
 	return s.repo.GetOrderByOrderID(order.OrderID)
 }
 
-func (s *storeService) GetOrder(orderID string) (*models.StoreOrder, error) {
-	return s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+func (s *storeService) ExpirePendingReservations(now time.Time, limit int) (int, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return s.repo.ExpirePendingReservations(now.UTC(), limit)
+}
+
+func (s *storeService) GetOrder(orderID, checkoutToken string) (*models.StoreOrder, error) {
+	order, err := s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+	if err != nil {
+		return nil, err
+	}
+	if !secureTokenMatches(strings.TrimSpace(checkoutToken), order.AccessTokenHash) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return order, nil
+}
+
+func hashCheckoutToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+func secureTokenMatches(token, expected string) bool {
+	if token == "" || expected == "" {
+		return false
+	}
+	actual := hashCheckoutToken(token)
+	return subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
 
 func newPublicOrderID() string {
@@ -229,7 +299,49 @@ func (s *storeService) UpdateOrderStatus(orderID, status string) (*models.StoreO
 	if strings.TrimSpace(orderID) == "" {
 		return nil, errors.New("orderId is required")
 	}
+	current, err := s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+	if err != nil {
+		return nil, err
+	}
+	allowed := map[string]map[string]bool{"pending": {"processing": true, "cancelled": true}, "processing": {"shipped": true, "cancelled": true}, "shipped": {"delivered": true}, "delivered": {}, "cancelled": {}}
+	if normalized != current.Status && !allowed[current.Status][normalized] {
+		return nil, fmt.Errorf("order cannot move from %s to %s", current.Status, normalized)
+	}
 	return s.repo.UpdateOrderStatus(strings.TrimSpace(orderID), normalized)
+}
+
+func (s *storeService) SubmitPaymentProof(orderID, checkoutToken, proofURL string) (*models.StoreOrder, error) {
+	order, err := s.GetOrder(orderID, checkoutToken)
+	if err != nil {
+		return nil, err
+	}
+	if order.PaymentMethod != "transfer" {
+		return nil, errors.New("payment proof is only valid for bank-transfer orders")
+	}
+	proofURL = strings.TrimSpace(proofURL)
+	parsed, err := url.ParseRequestURI(proofURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, errors.New("a valid payment proof URL is required")
+	}
+	return s.repo.UpdateOrderPaymentProof(order.OrderID, proofURL)
+}
+
+func (s *storeService) UpdateOrderPaymentStatus(orderID, status string) (*models.StoreOrder, error) {
+	order, err := s.repo.GetOrderByOrderID(strings.TrimSpace(orderID))
+	if err != nil {
+		return nil, err
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	allowed := map[string]map[string]bool{"unpaid": {"proof_submitted": true, "paid": true, "failed": true}, "proof_submitted": {"paid": true, "failed": true}, "failed": {"proof_submitted": true}, "paid": {"refunded": true}, "refunded": {}}
+	if status != order.PaymentStatus && !allowed[order.PaymentStatus][status] {
+		return nil, fmt.Errorf("payment cannot move from %s to %s", order.PaymentStatus, status)
+	}
+	var paidAt *time.Time
+	if status == "paid" {
+		now := time.Now().UTC()
+		paidAt = &now
+	}
+	return s.repo.UpdateOrderPaymentStatus(order.OrderID, status, paidAt)
 }
 
 func (s *storeService) seedDefaultProducts() error {
