@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
 	"wisdomHouse-backend/internal/validation"
@@ -24,6 +25,8 @@ func NewCelebrationAutomationHandler(svc service.CelebrationAutomationService) *
 func (h *CelebrationAutomationHandler) GetStatus(c *gin.Context) {
 	result, err := h.svc.GetStatus(time.Now())
 	if err != nil {
+		requestID, _ := c.Get("request_id")
+		applog.FromContext(c.Request.Context()).Error("failed to load celebration automation status", "request_id", requestID, "error", err)
 		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load celebration automation status")
 		return
 	}

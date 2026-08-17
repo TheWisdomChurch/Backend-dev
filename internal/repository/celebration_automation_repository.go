@@ -51,15 +51,45 @@ func (r *celebrationAutomationRepository) TouchWorker(ctx context.Context, worke
 func NewCelebrationAutomationRepository(db *database.Database) CelebrationAutomationRepository {
 	return &celebrationAutomationRepository{db: db}
 }
+
+func defaultCelebrationAutomationConfig() models.CelebrationAutomationConfig {
+	return models.CelebrationAutomationConfig{
+		ID:                     "default",
+		Enabled:                false,
+		BirthdayEnabled:        true,
+		AnniversaryEnabled:     true,
+		Timezone:               "Africa/Lagos",
+		SendTime:               "09:00",
+		Feb29Policy:            "feb28",
+		MaxAttempts:            3,
+		RetryMinutes:           15,
+		BirthdaySubject:        "Happy Birthday from The Wisdom Church",
+		AnniversarySubject:     "Happy Wedding Anniversary from The Wisdom Church",
+		BirthdayTemplateKey:    "birthday",
+		AnniversaryTemplateKey: "anniversary",
+	}
+}
+
 func (r *celebrationAutomationRepository) GetConfig() (*models.CelebrationAutomationConfig, error) {
-	var v models.CelebrationAutomationConfig
-	if err := r.db.First(&v, "id = ?", "default").Error; err != nil {
+	v := defaultCelebrationAutomationConfig()
+	defaults := v
+	if err := r.db.Where("id = ?", "default").Attrs(defaults).FirstOrCreate(&v).Error; err != nil {
 		return nil, err
 	}
 	return &v, nil
 }
 func (r *celebrationAutomationRepository) UpdateConfig(v *models.CelebrationAutomationConfig) error {
-	return r.db.Model(&models.CelebrationAutomationConfig{}).Where("id = ?", "default").Select("enabled", "birthday_enabled", "anniversary_enabled", "timezone", "send_time", "feb29_policy", "max_attempts", "retry_minutes", "birthday_subject", "anniversary_subject", "birthday_template_key", "anniversary_template_key", "updated_by_user_id", "updated_by_email", "updated_at").Updates(v).Error
+	if _, err := r.GetConfig(); err != nil {
+		return err
+	}
+	result := r.db.Model(&models.CelebrationAutomationConfig{}).Where("id = ?", "default").Select("enabled", "birthday_enabled", "anniversary_enabled", "timezone", "send_time", "feb29_policy", "max_attempts", "retry_minutes", "birthday_subject", "anniversary_subject", "birthday_template_key", "anniversary_template_key", "updated_by_user_id", "updated_by_email", "updated_at").Updates(v)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("celebration automation configuration was not updated")
+	}
+	return nil
 }
 func (r *celebrationAutomationRepository) EnsureRun(ctx context.Context, date, timezone, trigger string, snapshot []byte) (*models.CelebrationAutomationRun, error) {
 	v := &models.CelebrationAutomationRun{RunDate: date, Timezone: timezone, Status: "pending", Attempt: 0, Trigger: trigger, ConfigSnapshot: snapshot}
