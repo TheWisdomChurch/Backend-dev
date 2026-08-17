@@ -683,6 +683,9 @@ func main() {
 		logger.Error("invalid SERVER_TRUSTED_PROXIES", "error", err)
 		os.Exit(1)
 	}
+	if cfg.App.Environment == "production" && len(cfg.Server.TrustedProxies) == 0 {
+		logger.Warn("SERVER_TRUSTED_PROXIES is empty in production; proxied visitors may share one rate-limit identity")
+	}
 	logger.Info("trusted proxies configured", "proxies", cfg.Server.TrustedProxies)
 
 	server := &http.Server{

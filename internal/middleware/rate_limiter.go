@@ -177,14 +177,15 @@ func memoryRateLimiter(opts RateLimiterOptions) gin.HandlerFunc {
 		}
 
 		ip := c.ClientIP()
+		visitorKey := opts.Prefix + ":" + ip
 
 		memMu.Lock()
-		v, exists := memVisitors[ip]
+		v, exists := memVisitors[visitorKey]
 		if !exists {
 			v = &visitor{
 				limiter: rate.NewLimiter(r, opts.Burst),
 			}
-			memVisitors[ip] = v
+			memVisitors[visitorKey] = v
 		}
 		v.lastSeen = time.Now()
 		lim := v.limiter
