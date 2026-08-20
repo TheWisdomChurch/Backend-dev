@@ -27,6 +27,16 @@ import (
 // TypeVideoProcess is the asynq task type name for video transcoding.
 const TypeVideoProcess = "video:process"
 
+// maxSourceVideoBytes bounds worker disk usage even if an upstream storage
+// endpoint reports no Content-Length or streams indefinitely. Public upload
+// validation is not a sufficient control here because queued work can outlive
+// the request and source objects can be replaced independently.
+const maxSourceVideoBytes int64 = 512 * 1024 * 1024
+
+var sourceVideoHTTPClient = &http.Client{
+	Timeout: 10 * time.Minute,
+}
+
 // VideoProcessPayload is everything the worker needs to do its job without
 // re-deriving anything from the asset row — the request handler already
 // knows the folder/assetID it used when it stored the original.
@@ -148,13 +158,16 @@ func (h *VideoProcessHandler) downloadToTemp(ctx context.Context, url string) (s
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sourceVideoHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status fetching source video: %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxSourceVideoBytes {
+		return "", fmt.Errorf("source video exceeds %d byte processing limit", maxSourceVideoBytes)
 	}
 
 	f, err := os.CreateTemp("", "wisdom-video-in-*")
@@ -163,9 +176,14 @@ func (h *VideoProcessHandler) downloadToTemp(ctx context.Context, url string) (s
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	written, err := io.Copy(f, io.LimitReader(resp.Body, maxSourceVideoBytes+1))
+	if err != nil {
 		os.Remove(f.Name())
 		return "", err
+	}
+	if written > maxSourceVideoBytes {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("source video exceeds %d byte processing limit", maxSourceVideoBytes)
 	}
 	return f.Name(), nil
 }

@@ -30,3 +30,16 @@ func TestResponsiveEmailShellDoesNotDoubleWrapNativeTemplate(t *testing.T) {
 		t.Fatal("native responsive template was wrapped twice")
 	}
 }
+
+func TestResponsiveEmailShellDoesNotInjectGenericDocumentLabels(t *testing.T) {
+	html := EnsureResponsiveDocument(Branding{
+		AppName:    "The Wisdom Church",
+		AppTagline: "Official communication",
+	}, "<p>Message</p>")
+
+	for _, forbidden := range []string{"Official communication", "Official document", "Secure recipient communication"} {
+		if strings.Contains(strings.ToLower(html), strings.ToLower(forbidden)) {
+			t.Fatalf("global email shell must not inject %q", forbidden)
+		}
+	}
+}

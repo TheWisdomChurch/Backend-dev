@@ -80,9 +80,10 @@ func addResponsiveContentClasses(body string) string {
 }
 
 // renderHeaderBlock renders the brand lockup: logo on the left, a vertical
-// hairline divider, then "The" / "Wisdom Church" stacked with the tagline
-// beneath — followed by a full-width hairline separating the header from
-// body content.
+// hairline divider, then the church name. Generic classifications/taglines
+// do not belong in the global shell: they made every message look like the
+// same document regardless of its purpose. Template-specific context belongs
+// in the message body via renderEyebrow.
 func renderHeaderBlock(b Branding) string {
 	b = normalizeBranding(b)
 	logoURL := brandLogoURL(b)
@@ -91,8 +92,6 @@ func renderHeaderBlock(b Branding) string {
 	if logoURL != "" {
 		logoCell = "<img src=\"" + html.EscapeString(logoURL) + "\" width=\"56\" height=\"56\" alt=\"" + html.EscapeString(b.AppName) + "\" style=\"display:block;width:56px;height:56px;border-radius:14px;object-fit:cover;\">"
 	}
-
-	tagline := strings.TrimSpace(b.Tagline())
 
 	return "<tr><td class=\"wc-header\" style=\"padding:38px 48px 30px;\">" +
 		"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
@@ -103,18 +102,10 @@ func renderHeaderBlock(b Branding) string {
 		"<td style=\"vertical-align:middle;font-family:" + fontStack + ";\">" +
 		"<div style=\"font-size:13px;font-weight:400;color:" + colorMuted + ";line-height:1.3;\">The</div>" +
 		"<div style=\"font-size:18px;font-weight:800;letter-spacing:-.01em;color:" + colorInk + ";line-height:1.25;\">" + html.EscapeString(strings.TrimPrefix(strings.TrimSpace(b.AppName), "The ")) + "</div>" +
-		conditionalTagline(tagline) +
 		"</td>" +
 		"</tr></table>" +
 		"</td></tr>" +
 		"<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>"
-}
-
-func conditionalTagline(tagline string) string {
-	if tagline == "" {
-		return ""
-	}
-	return "<div style=\"font-size:10.5px;font-style:italic;font-weight:500;color:" + colorAccent + ";letter-spacing:.01em;margin-top:5px;\">" + html.EscapeString(tagline) + "</div>"
 }
 
 func firstLetter(s string) string {

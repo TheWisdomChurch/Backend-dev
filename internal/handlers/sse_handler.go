@@ -41,7 +41,6 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-	c.Header("Access-Control-Allow-Origin", c.GetHeader("Origin"))
 	c.Status(http.StatusOK)
 
 	sub := h.hub.Subscribe(userID)
