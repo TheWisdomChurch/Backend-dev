@@ -12,7 +12,7 @@ import (
 
 // normalizeMinistryWorkforceMigrationSQL is the ministry/workforce normalization
 // migration, originally 009_normalize_ministry_workforce.up.sql and now folded into
-// migrations/011_consolidated_incremental_schema.up.sql. It's kept here verbatim (not
+// the 011 logical section in migrations/schema.up.sql. It's kept here verbatim (not
 // read from that file) because the file also contains sections that depend on tables
 // (users, refresh_tokens, etc.) this test's minimal legacy-schema fixture doesn't have.
 const normalizeMinistryWorkforceMigrationSQL = `

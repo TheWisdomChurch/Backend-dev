@@ -23,6 +23,13 @@ type MigrationRecord struct {
 	AppliedAt int64  `gorm:"autoCreateTime:milli"`
 }
 
+const migrationSectionPrefix = "-- migration:"
+
+type migrationUnit struct {
+	Name string
+	SQL  string
+}
+
 // TableName specifies the table name for the migration record
 func (MigrationRecord) TableName() string {
 	return "app_schema_migrations"
@@ -50,7 +57,10 @@ func RunMigrations(db *gorm.DB, migrationsDir string) error {
 		return nil
 	}
 
-	// Apply each migration
+	// Apply each physical file. A consolidated schema may contain named
+	// sections whose names match the historical migration filenames. Keeping
+	// those logical identities makes a two-file schema safe for fresh,
+	// partially upgraded, and fully upgraded databases alike.
 	for _, file := range files {
 		filename := filepath.Base(file)
 
@@ -59,48 +69,87 @@ func RunMigrations(db *gorm.DB, migrationsDir string) error {
 			continue
 		}
 
-		// Check if migration was already applied
-		var record MigrationRecord
-		result := db.Where("name = ?", filename).First(&record)
-
-		if result.Error == nil {
-			applog.L().Debug("migration already applied", "file", filename)
-			continue
-		}
-
-		if result.Error != gorm.ErrRecordNotFound {
-			return fmt.Errorf("failed to check migration status: %w", result.Error)
-		}
-
-		// Read and execute migration
 		content, err := os.ReadFile(file)
 		if err != nil {
 			return fmt.Errorf("failed to read migration file %s: %w", filename, err)
 		}
-
-		applog.L().Info("running migration", "file", filename)
-
-		// Wrap execution + bookkeeping in a transaction so a failing migration never
-		// leaves the schema half-applied while also being unrecorded (which would
-		// otherwise re-run on next boot against a partially-mutated schema).
-		txErr := db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Exec(string(content)).Error; err != nil {
-				return fmt.Errorf("failed to execute migration %s: %w", filename, err)
-			}
-			if err := tx.Create(&MigrationRecord{Name: filename}).Error; err != nil {
-				return fmt.Errorf("failed to record migration %s: %w", filename, err)
-			}
-			return nil
-		})
-		if txErr != nil {
-			return txErr
+		units, err := parseMigrationUnits(filename, string(content))
+		if err != nil {
+			return err
 		}
+		for _, unit := range units {
+			var record MigrationRecord
+			result := db.Where("name = ?", unit.Name).First(&record)
+			if result.Error == nil {
+				applog.L().Debug("migration already applied", "migration", unit.Name)
+				continue
+			}
+			if result.Error != gorm.ErrRecordNotFound {
+				return fmt.Errorf("failed to check migration status: %w", result.Error)
+			}
 
-		applog.L().Info("migration completed", "file", filename)
+			applog.L().Info("running migration", "migration", unit.Name, "source", filename)
+			txErr := db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Exec(unit.SQL).Error; err != nil {
+					return fmt.Errorf("failed to execute migration %s: %w", unit.Name, err)
+				}
+				if err := tx.Create(&MigrationRecord{Name: unit.Name}).Error; err != nil {
+					return fmt.Errorf("failed to record migration %s: %w", unit.Name, err)
+				}
+				return nil
+			})
+			if txErr != nil {
+				return txErr
+			}
+			applog.L().Info("migration completed", "migration", unit.Name)
+		}
 	}
 
 	applog.L().Info("all migrations completed successfully")
 	return nil
+}
+
+func parseMigrationUnits(filename, content string) ([]migrationUnit, error) {
+	lines := strings.Split(content, "\n")
+	var units []migrationUnit
+	currentName := ""
+	var current strings.Builder
+	flush := func() error {
+		sql := strings.TrimSpace(current.String())
+		if currentName == "" || sql == "" {
+			return nil
+		}
+		for _, unit := range units {
+			if unit.Name == currentName {
+				return fmt.Errorf("duplicate migration section %q in %s", currentName, filename)
+			}
+		}
+		units = append(units, migrationUnit{Name: currentName, SQL: sql})
+		return nil
+	}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, migrationSectionPrefix) {
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			current.Reset()
+			currentName = strings.TrimSpace(strings.TrimPrefix(trimmed, migrationSectionPrefix))
+			if currentName == "" || filepath.Base(currentName) != currentName || !strings.HasSuffix(currentName, ".up.sql") {
+				return nil, fmt.Errorf("invalid migration section name %q in %s", currentName, filename)
+			}
+			continue
+		}
+		current.WriteString(line)
+		current.WriteByte('\n')
+	}
+	if currentName == "" {
+		return []migrationUnit{{Name: filename, SQL: strings.TrimSpace(content)}}, nil
+	}
+	if err := flush(); err != nil {
+		return nil, err
+	}
+	return units, nil
 }
 
 // renameLegacyMigrationsTable is a one-time upgrade step: earlier versions of this

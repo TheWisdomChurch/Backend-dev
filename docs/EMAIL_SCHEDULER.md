@@ -32,8 +32,8 @@ can run safely without normally claiming the same occurrence.
 ## Deployment
 
 Run `make migrate` before or during deployment. Migration
-`013_admin_email_scheduler.up.sql` creates schedules and occurrence history;
-`014_admin_email_scheduler_hardening.up.sql` adds timezone-safe local dates,
+The `013_admin_email_scheduler.up.sql` logical section in `schema.up.sql` creates schedules and occurrence history;
+the `014_admin_email_scheduler_hardening.up.sql` section adds timezone-safe local dates,
 optimistic versions, coherent retry identity, and run-status constraints. The worker starts with the API and
 requires no separate cron service. PostgreSQL is required; Redis is not required
 for this scheduler because its locking and leases are database-backed.

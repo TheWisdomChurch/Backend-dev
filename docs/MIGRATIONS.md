@@ -8,12 +8,11 @@ CLI is part of the deploy path.
 
 1. On startup (or when explicitly running the `migrate` subcommand), the app connects to the database.
 2. `RunMigrations()` ensures an `app_schema_migrations` table exists (columns: `id`, `name`, `applied_at`).
-3. It reads every `*.up.sql` file from `migrations/`, running `schema.up.sql` first if present, then the
-   rest alphabetically.
-4. Any file whose name isn't already recorded in `app_schema_migrations` gets executed and recorded —
-   each migration's SQL execution and its record insert happen inside one transaction, so a failing
-   migration never leaves the schema half-applied while also being unrecorded.
-5. Already-applied files are skipped, so re-running the app (or the `migrate` subcommand) is always safe.
+3. It reads `migrations/schema.up.sql` and splits it at `-- migration: <name>.up.sql` boundaries.
+4. Each logical section retains its historical migration name. Any section whose name is not recorded in
+   `app_schema_migrations` is executed and recorded in one transaction.
+5. Already-applied sections are skipped. This preserves compatibility with databases that applied the old
+   numbered physical files while allowing the repository to maintain only two schema files.
 
 ### Table name and legacy upgrade
 
@@ -47,53 +46,23 @@ every time it boots.
 
 ## File layout
 
-The migration chain currently contains three units:
+The migrations directory contains exactly two physical files:
 
-- `schema.up.sql` / `schema.down.sql` — the original baseline schema.
-- `011_consolidated_incremental_schema.up.sql` / `.down.sql` — every incremental change made since the
-  baseline (account lockout, refresh tokens, campuses, giving, attendance, cell groups, prayer requests,
-  performance indexes, ministries, audit logs, schema-drift reconciliation, approval requests, analytics
-  pipeline, new-member workflows, ministry/workforce normalization, etc.), merged into one file pair.
-- `012_visit_workflow.up.sql` / `.down.sql` — the durable plan-a-visit lifecycle, including scheduling,
-  ownership, reminders, check-in, and follow-up tracking.
-- `013_admin_email_scheduler.up.sql` / `.down.sql` — durable email recurrence rules, worker leases,
-  occurrence history, and indexes for due-work polling.
-- `014_admin_email_scheduler_hardening.up.sql` / `.down.sql` — timezone-safe local schedule dates,
-  optimistic concurrency, coherent retry identities, and constrained run states.
-- `015_celebration_automation.up.sql` / `.down.sql` — configurable birthday and anniversary
-  automation, daily run ownership, cross-domain deduplication, and recipient delivery history.
-- `016_store_checkout_lifecycle.up.sql` / `.down.sql` — durable checkout lifecycle hardening.
-- `017_admin_email_recipient_results.up.sql` / `.down.sql` — durable per-recipient campaign
-  confirmation, suppression, failure, and contributing-audience history.
-- `018_form_reminder_delivery_claims.up.sql` / `.down.sql` — database claims, bounded retries,
-  failure diagnostics, and provider-acceptance state for form event reminders.
-- `019_form_architecture_and_slug_aliases.up.sql` / `.down.sql` — unified current form renderer
-  marker and durable historical-link aliases for editable published URLs.
+- `schema.up.sql` — the baseline and every forward migration in dependency order. Each unit starts with a
+  unique `-- migration: <historical-name>.up.sql` boundary.
+- `schema.down.sql` — destructive rollback operations in reverse dependency order, wrapped in one transaction.
 
-This used to be ten separate files (`001_consolidated_incremental_schema` — itself an earlier consolidation
-of 11 numbered migrations — plus `002_audit_logs` … `010_backfill_workforce_dates`). They were folded into
-the single `011_consolidated_incremental_schema` pair because the long list was hard to scan for no real
-benefit once all of them had shipped. **This is safe only because every statement in the consolidated file
-is idempotent** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, or a guarded `ADD CONSTRAINT`) — so the single
-file converges any database to the right end state whether it previously had none, some, or all of the ten
-former files applied. If you ever need to consolidate again, keep that idempotency rule: it's what makes
-squashing migrations safe instead of a source of silent drift.
-
-Note this is different from folding new content directly into `schema.up.sql` itself, which would **not**
-be safe — the runner tracks applied migrations by filename, and `schema.up.sql` is already recorded as
-applied on every real environment, so any new content added under that same filename would silently never
-run anywhere except a brand-new database. Consolidations always need a filename the migration table
-doesn't already have a record for.
+Logical names deliberately match the previous numbered filenames. This lets a database that already recorded
+`015_celebration_automation.up.sql`, for example, skip that section without replaying it. A partially upgraded
+database executes only the sections it is missing, and a fresh database executes every section in order.
 
 ## Adding a migration
 
-1. Create `migrations/NNN_description.up.sql`, where `NNN` is the next number after the highest existing
-   one (currently `019`; the next one is `020`).
-   Write idempotent SQL where practical (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, etc.) —
-   each file still runs as a single transaction, but idempotent SQL makes it safe to hand-run during
-   debugging too, and safe to fold into a future consolidation.
-2. Add a matching `migrations/NNN_description.down.sql` with the reverse operation.
-3. Migrations run automatically the next time the app boots, or immediately via `make migrate`.
+1. Append a uniquely named `-- migration: NNN_description.up.sql` section to `schema.up.sql`.
+2. Add its rollback at the top of `schema.down.sql`, immediately after `BEGIN;`, so rollback order remains
+   the reverse of forward dependencies.
+3. Keep forward SQL idempotent where PostgreSQL supports it, and never rename a section after deployment.
+4. Run the database tests and then execute `make migrate` against a staging database before production.
 
 ## Verifying migrations ran
 
@@ -103,12 +72,7 @@ psql "$DATABASE_URL" -c "SELECT * FROM app_schema_migrations ORDER BY applied_at
 
 ## Rolling back
 
-There is no automated `down` runner — down migrations are written for manual use. To roll back the most
-recent migration:
-
-```bash
-psql "$DATABASE_URL" -f migrations/NNN_description.down.sql
-psql "$DATABASE_URL" -c "DELETE FROM app_schema_migrations WHERE name = 'NNN_description.up.sql';"
-```
-
-For the baseline schema, `migrations/schema.down.sql` exists and can be run the same way.
+There is no automated down runner. `schema.down.sql` is a complete destructive rollback of the consolidated
+schema and must only be run against a disposable database or as part of an explicitly approved full teardown.
+Operational production rollbacks should deploy a new forward migration section that restores the required
+state instead of attempting to extract and execute destructive SQL manually.

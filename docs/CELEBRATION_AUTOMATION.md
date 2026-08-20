@@ -30,7 +30,7 @@ day lock. The only production execution path is `CelebrationAutomationService`.
 
 ## Operations
 
-Migration `015_celebration_automation.up.sql` installs the automation in a
+The `015_celebration_automation.up.sql` logical section in `schema.up.sql` installs the automation in a
 paused state. An email administrator must review timezone, subjects, templates,
 and retry policy at `/dashboard/administration/automations`, then explicitly
 activate automatic delivery. This prevents a deployment from unexpectedly
