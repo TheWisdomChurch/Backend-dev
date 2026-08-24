@@ -158,7 +158,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	fields := applyImplicitFieldVisibilityDefaults(form.Fields)
 
-	mediaSafeValues, err := s.materializeSubmissionMedia(form, req.Values)
+	fieldValues := submissionFieldValues(req.Values)
+
+	mediaSafeValues, err := s.materializeSubmissionMedia(form, fieldValues)
 	if err != nil {
 		return err
 	}
@@ -249,6 +251,19 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	return nil
+}
+
+// submissionFieldValues separates server-managed consent metadata from answers
+// before answers are checked against the form's configured field keys.
+func submissionFieldValues(values map[string]any) map[string]any {
+	fieldValues := make(map[string]any, len(values))
+	for key, value := range values {
+		if key == "_consentAccepted" || key == "_consentVersion" {
+			continue
+		}
+		fieldValues[key] = value
+	}
+	return fieldValues
 }
 
 func (s *formService) BuildAdminReportPDF(formID string, start, end *time.Time) (string, []byte, error) {

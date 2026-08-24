@@ -56,3 +56,37 @@ func TestBuildLeadershipRequestFromFormBuilderValues(t *testing.T) {
 		t.Fatalf("imageURL = %v, want profile image", req.ImageURL)
 	}
 }
+
+func TestSubmissionFieldValuesRemovesConsentMetadataBeforeValidation(t *testing.T) {
+	values := map[string]any{
+		"email":            "ada@example.com",
+		"_consentAccepted": true,
+		"_consentVersion":  "2026-08",
+	}
+
+	got := submissionFieldValues(values)
+	if got["email"] != "ada@example.com" {
+		t.Fatalf("email = %v, want ada@example.com", got["email"])
+	}
+	if _, exists := got["_consentAccepted"]; exists {
+		t.Fatal("_consentAccepted must not be validated as a configured form field")
+	}
+	if _, exists := got["_consentVersion"]; exists {
+		t.Fatal("_consentVersion must not be validated as a configured form field")
+	}
+
+	// Sanitizing the validation input must not mutate the request because Submit
+	// reads consent acceptance separately when it records server-owned metadata.
+	if values["_consentAccepted"] != true || values["_consentVersion"] != "2026-08" {
+		t.Fatal("submissionFieldValues mutated the request values")
+	}
+}
+
+func TestSubmissionFieldValuesKeepsUnknownUserFieldsForStrictValidation(t *testing.T) {
+	values := map[string]any{"unexpected": "value"}
+	got := submissionFieldValues(values)
+
+	if got["unexpected"] != "value" {
+		t.Fatal("ordinary unknown fields must remain for strict validation")
+	}
+}
