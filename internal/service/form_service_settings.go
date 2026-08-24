@@ -387,6 +387,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s == nil {
 		return datatypes.JSON([]byte("null")), nil
 	}
+	canonicalizeFormPresentationSettings(s)
 	if s.Capacity != nil && *s.Capacity < 0 {
 		return nil, errors.New("capacity cannot be negative")
 	}
@@ -711,26 +712,8 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			c.Purposes = &clean
 		}
 	}
-	if err := normalizeFormContentSections(s.Sections); err != nil {
-		return nil, err
-	}
 	if err := normalizeLegacyFormContentSections(s.ContentSections); err != nil {
 		return nil, err
-	}
-
-	if s.Sections == nil && s.ContentSections != nil {
-		converted := convertLegacyToExtendedSections(*s.ContentSections)
-		if err := normalizeFormContentSections(&converted); err != nil {
-			return nil, err
-		}
-		s.Sections = &converted
-	}
-	if s.ContentSections == nil && s.Sections != nil {
-		legacy := convertExtendedToLegacySections(*s.Sections)
-		if err := normalizeLegacyFormContentSections(&legacy); err != nil {
-			return nil, err
-		}
-		s.ContentSections = &legacy
 	}
 
 	// Normalize and validate optional design settings
@@ -867,6 +850,7 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		}
 	}
 
+	canonicalizeFormPresentationSettings(s)
 	b, err := json.Marshal(s)
 	if err != nil {
 		return nil, errors.New("invalid settings")
@@ -884,16 +868,55 @@ func decodeSettings(j datatypes.JSON) (*models.FormSettingsDTO, error) {
 	if err := json.Unmarshal(j, &s); err != nil {
 		return &models.FormSettingsDTO{}, err
 	}
-	if s.Sections != nil && s.ContentSections == nil {
+	canonicalizeFormPresentationSettings(&s)
+	applyCurrentFormArchitectureDefaults(&s)
+	return &s, nil
+}
+
+// canonicalizeFormPresentationSettings keeps the admin/public contract on one
+// source of truth. Older records can still be read from the nested design and
+// sections shapes, but responses and newly stored settings do not emit both.
+func canonicalizeFormPresentationSettings(s *models.FormSettingsDTO) {
+	if s == nil {
+		return
+	}
+	if s.ContentSections == nil && s.Sections != nil {
 		legacy := convertExtendedToLegacySections(*s.Sections)
 		s.ContentSections = &legacy
 	}
-	if s.ContentSections != nil && s.Sections == nil {
-		converted := convertLegacyToExtendedSections(*s.ContentSections)
-		s.Sections = &converted
+	s.Sections = nil
+
+	if s.Design == nil {
+		return
 	}
-	applyCurrentFormArchitectureDefaults(&s)
-	return &s, nil
+	d := s.Design
+	copyString := func(canonical **string, legacy **string) {
+		if *canonical == nil {
+			*canonical = *legacy
+		}
+		*legacy = nil
+	}
+	copyStrings := func(canonical **[]string, legacy **[]string) {
+		if *canonical == nil {
+			*canonical = *legacy
+		}
+		*legacy = nil
+	}
+
+	copyString(&s.FooterText, &d.FooterText)
+	copyString(&s.FooterBg, &d.FooterBg)
+	copyString(&s.FooterTextColor, &d.FooterTextColor)
+	copyString(&s.SubmitButtonText, &d.SubmitButtonText)
+	copyString(&s.SubmitButtonBg, &d.SubmitButtonBg)
+	copyString(&s.SubmitButtonTextColor, &d.SubmitButtonTextColor)
+	copyString(&s.SubmitButtonIcon, &d.SubmitButtonIcon)
+	copyString(&s.IntroTitle, &d.IntroTitle)
+	copyString(&s.IntroSubtitle, &d.IntroSubtitle)
+	copyStrings(&s.IntroBullets, &d.IntroBullets)
+	copyStrings(&s.IntroBulletSubtexts, &d.IntroBulletSubtext)
+	copyString(&s.LayoutMode, &d.LayoutMode)
+	copyString(&s.DateFormat, &d.DateFormat)
+	copyString(&s.FormHeaderNote, &d.FormHeaderNote)
 }
 
 func applyCurrentFormArchitectureDefaults(s *models.FormSettingsDTO) {
