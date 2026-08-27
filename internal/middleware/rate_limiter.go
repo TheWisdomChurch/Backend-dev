@@ -29,6 +29,7 @@ type RateLimiterOptions struct {
 	Prefix            string // e.g. "rl"
 	Window            time.Duration
 	Message           string
+	SkipPaths         []string
 	SkipPathPrefixes  []string
 }
 
@@ -87,7 +88,7 @@ func redisRateLimiter(rdb *redis.Client, opts RateLimiterOptions) gin.HandlerFun
 	window := opts.Window
 
 	return func(c *gin.Context) {
-		if shouldSkipRateLimit(c.Request.URL.Path, opts.SkipPathPrefixes) {
+		if shouldSkipRateLimit(c.Request.URL.Path, opts.SkipPaths, opts.SkipPathPrefixes) {
 			c.Next()
 			return
 		}
@@ -171,7 +172,7 @@ func memoryRateLimiter(opts RateLimiterOptions) gin.HandlerFunc {
 	r := rate.Every(opts.Window / time.Duration(opts.RequestsPerMinute))
 
 	return func(c *gin.Context) {
-		if shouldSkipRateLimit(c.Request.URL.Path, opts.SkipPathPrefixes) {
+		if shouldSkipRateLimit(c.Request.URL.Path, opts.SkipPaths, opts.SkipPathPrefixes) {
 			c.Next()
 			return
 		}
@@ -201,9 +202,11 @@ func memoryRateLimiter(opts RateLimiterOptions) gin.HandlerFunc {
 	}
 }
 
-func shouldSkipRateLimit(path string, prefixes []string) bool {
-	if len(prefixes) == 0 {
-		return false
+func shouldSkipRateLimit(path string, exactPaths, prefixes []string) bool {
+	for _, exact := range exactPaths {
+		if path == strings.TrimSpace(exact) {
+			return true
+		}
 	}
 
 	for _, prefix := range prefixes {

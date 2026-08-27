@@ -64,3 +64,39 @@ func TestMemoryRateLimiterStillLimitsWithinOnePolicy(t *testing.T) {
 		t.Fatalf("second request returned %d, want %d", response.Code, http.StatusTooManyRequests)
 	}
 }
+
+func TestMemoryRateLimiterSkipsOnlyExactPublicReadPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetMemoryRateLimiters()
+
+	router := gin.New()
+	router.Use(RateLimiter(RateLimiterOptions{
+		RequestsPerMinute: 1,
+		Burst:             1,
+		Window:            time.Minute,
+		Prefix:            "rl:exact-skip",
+		SkipPaths:         []string{"/api/v1/leadership"},
+	}))
+	router.GET("/api/v1/leadership", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.POST("/api/v1/leadership/apply", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	for range 2 {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/leadership", nil)
+		request.RemoteAddr = "203.0.113.20:4321"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("skipped read returned %d, want %d", response.Code, http.StatusNoContent)
+		}
+	}
+
+	for attempt, want := range []int{http.StatusNoContent, http.StatusTooManyRequests} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/leadership/apply", nil)
+		request.RemoteAddr = "203.0.113.20:4321"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("apply attempt %d returned %d, want %d", attempt+1, response.Code, want)
+		}
+	}
+}

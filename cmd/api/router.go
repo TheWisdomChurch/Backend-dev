@@ -87,7 +87,10 @@ func setupRouter(
 		RedisURL:          cfg.Redis.URL,
 		Prefix:            "rl",
 		Message:           "Too many requests. Please wait a moment and try again.",
-		SkipPathPrefixes:  []string{"/api/v1/auth/login", "/api/v1/auth/otp/", "/api/v1/auth/me", "/api/v1/auth/mfa"},
+		// The public website renders this safe read server-side, so all visitors
+		// otherwise consume one shared-IP quota. Apply/upload remain protected.
+		SkipPaths:        []string{"/api/v1/leadership"},
+		SkipPathPrefixes: []string{"/api/v1/auth/login", "/api/v1/auth/otp/", "/api/v1/auth/me", "/api/v1/auth/mfa"},
 	}))
 
 	// Health

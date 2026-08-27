@@ -90,3 +90,23 @@ func TestSubmissionFieldValuesKeepsUnknownUserFieldsForStrictValidation(t *testi
 		t.Fatal("ordinary unknown fields must remain for strict validation")
 	}
 }
+
+func TestBuildLeadershipRequestFromLeadershipPreset(t *testing.T) {
+	values := map[string]any{
+		"full_name":       "Grace Hopper",
+		"email":           "grace@example.com",
+		"leadership_role": "pastor",
+		"photo":           "https://cdn.example.com/grace.webp",
+	}
+
+	req, err := buildLeadershipRequest(values)
+	if err != nil {
+		t.Fatalf("buildLeadershipRequest returned error: %v", err)
+	}
+	if req.Role != models.LeadershipRoleSeniorPastor {
+		t.Fatalf("role = %q, want %q", req.Role, models.LeadershipRoleSeniorPastor)
+	}
+	if req.ImageURL == nil || *req.ImageURL != "https://cdn.example.com/grace.webp" {
+		t.Fatalf("imageURL = %v, want preset photo", req.ImageURL)
+	}
+}

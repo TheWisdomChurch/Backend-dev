@@ -424,6 +424,7 @@ func buildLeadershipRequest(values map[string]any) (*models.CreateLeadershipRequ
 		"photo_url",
 		"avatar",
 		"picture",
+		"photo",
 	)
 	birthday := valueAsString(values, "birthday", "birthDate", "birth_date", "dob", "dateOfBirth", "date_of_birth")
 	anniversary := valueAsString(values, "anniversary", "weddingAnniversary", "wedding_anniversary", "anniversaryDate", "anniversary_date")
@@ -676,7 +677,7 @@ func normalizeLeadershipRoleInput(value string) models.LeadershipRole {
 	clean = strings.Trim(clean, "_")
 
 	switch clean {
-	case string(models.LeadershipRoleSeniorPastor), "senior", "lead_pastor", "head_pastor":
+	case string(models.LeadershipRoleSeniorPastor), "pastor", "senior", "lead_pastor", "head_pastor":
 		return models.LeadershipRoleSeniorPastor
 	case string(models.LeadershipRoleAssociatePastor), "associate", "assistant_pastor", "assistant":
 		return models.LeadershipRoleAssociatePastor
