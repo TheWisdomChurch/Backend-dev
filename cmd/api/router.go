@@ -443,6 +443,7 @@ func setupRouter(
 	admin.GET("/forms", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.ListAdminForms)
 	admin.GET("/forms/:id", middleware.RequirePermission(middleware.PermissionFormsRead), formHandler.GetAdminForm)
 	admin.POST("/forms", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.CreateAdminForm)
+	admin.POST("/forms/upgrade-presentation", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.UpgradeFormPresentation)
 	admin.PUT("/forms/:id", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.UpdateAdminForm)
 	admin.DELETE("/forms/:id", middleware.RequirePermission(middleware.PermissionFormsManage), formHandler.DeleteAdminForm)
 	admin.POST("/forms/:id/banner", middleware.RequirePermission(middleware.PermissionFormsManage), middleware.RequirePermission(middleware.PermissionUploadsManage), formHandler.UploadAdminFormBanner)

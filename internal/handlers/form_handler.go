@@ -103,6 +103,15 @@ func (h *FormHandler) UpdateAdminForm(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Form updated", form)
 }
 
+func (h *FormHandler) UpgradeFormPresentation(c *gin.Context) {
+	updated, err := h.svc.UpgradePresentation()
+	if err != nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to upgrade form presentation")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Forms upgraded to the current design", gin.H{"updated": updated})
+}
+
 func (h *FormHandler) DeleteAdminForm(c *gin.Context) {
 	id, ok := formIDParam(c)
 	if !ok {

@@ -55,6 +55,7 @@ type FormService interface {
 	GetByID(id string) (*models.Form, error)
 	Create(req *models.CreateFormRequest) (*models.Form, error)
 	Update(id string, req *models.UpdateFormRequest) (*models.Form, error)
+	UpgradePresentation() (int, error)
 	Delete(id string) error
 	Publish(id string) (string, *string, error)
 	GetOrCreateReportLink(formID string) (*models.FormReportLinkPayload, error)
@@ -304,6 +305,37 @@ func (s *formService) GetByID(id string) (*models.Form, error) {
 	}
 	s.attachPublicURL(form)
 	return form, nil
+}
+
+// UpgradePresentation persists the current presentation contract for existing
+// forms without touching their fields, submissions, public links, or routing.
+// New forms already pass through encodeSettings, which applies these defaults.
+func (s *formService) UpgradePresentation() (int, error) {
+	forms, _, err := s.repo.ListIncludingArchived(0, 10000)
+	if err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for i := range forms {
+		settings, err := decodeSettings(forms[i].Settings)
+		if err != nil {
+			return updated, fmt.Errorf("form %s: %w", forms[i].ID, err)
+		}
+		next, err := encodeSettings(settings)
+		if err != nil {
+			return updated, fmt.Errorf("form %s: %w", forms[i].ID, err)
+		}
+		if string(forms[i].Settings) == string(next) {
+			continue
+		}
+		forms[i].Settings = next
+		if err := s.repo.Update(&forms[i]); err != nil {
+			return updated, err
+		}
+		updated++
+	}
+	return updated, nil
 }
 
 func (s *formService) Create(req *models.CreateFormRequest) (*models.Form, error) {
