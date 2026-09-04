@@ -95,6 +95,7 @@ type formService struct {
 	memberSvc      MemberService
 	leadershipSvc  LeadershipService
 	testimonialSvc TestimonialService
+	weddingSvc     WeddingAnniversaryService
 	notifySvc      AdminNotificationService
 	sender         EmailSender
 	branding       email.Branding
@@ -115,6 +116,7 @@ func NewFormService(
 	memberSvc MemberService,
 	leadershipSvc LeadershipService,
 	testimonialSvc TestimonialService,
+	weddingSvc WeddingAnniversaryService,
 	notifySvc AdminNotificationService,
 	sender EmailSender,
 	branding email.Branding,
@@ -145,6 +147,7 @@ func NewFormService(
 		memberSvc:       memberSvc,
 		leadershipSvc:   leadershipSvc,
 		testimonialSvc:  testimonialSvc,
+		weddingSvc:      weddingSvc,
 		notifySvc:       notifySvc,
 		sender:          sender,
 		branding:        branding,

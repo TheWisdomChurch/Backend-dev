@@ -4,6 +4,8 @@ on:
   push:
     branches: [ "main" ]
     tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 concurrency:
@@ -53,6 +55,11 @@ jobs:
         run: go vet ./...
 
   build-and-push:
+    # Never publish an image from a pull_request event — only a merged/pushed
+    # commit on main (or a tag) should ever produce a published image. The
+    # test job above still runs on pull_request so a broken build is caught
+    # before merge, not after.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     needs: test
 

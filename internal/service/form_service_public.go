@@ -238,7 +238,7 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 	}
 
 	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
-	if err := s.syncSubmissionTarget(form, settings, cleanValues); err != nil {
+	if err := s.syncSubmissionTarget(form, settings, cleanValues, sub.ID); err != nil {
 		target := resolveSubmissionTargetForForm(form, settings)
 		applog.L().Warn("submission target sync failed",
 			"form_id", strings.TrimSpace(form.ID),

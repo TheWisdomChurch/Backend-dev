@@ -33,15 +33,16 @@ type CelebrationAutomationService interface {
 
 type celebrationAutomationService struct {
 	repo        repository.CelebrationAutomationRepository
+	weddingRepo repository.WeddingAnniversaryRepository
 	subscribers *repository.SubscriberRepository
 	sender      EmailSender
 	branding    email.Branding
 	protector   *authutil.Protector
 }
 
-func NewCelebrationAutomationService(repo repository.CelebrationAutomationRepository, subscribers *repository.SubscriberRepository, sender EmailSender, branding email.Branding, authSecret string) CelebrationAutomationService {
+func NewCelebrationAutomationService(repo repository.CelebrationAutomationRepository, weddingRepo repository.WeddingAnniversaryRepository, subscribers *repository.SubscriberRepository, sender EmailSender, branding email.Branding, authSecret string) CelebrationAutomationService {
 	protector, _ := authutil.NewProtector(authSecret)
-	return &celebrationAutomationService{repo: repo, subscribers: subscribers, sender: sender, branding: branding, protector: protector}
+	return &celebrationAutomationService{repo: repo, weddingRepo: weddingRepo, subscribers: subscribers, sender: sender, branding: branding, protector: protector}
 }
 
 func (s *celebrationAutomationService) GetStatus(now time.Time) (*models.CelebrationAutomationStatus, error) {
@@ -185,6 +186,7 @@ func (s *celebrationAutomationService) ProcessDue(ctx context.Context, now time.
 
 type celebrationRecipient struct {
 	email, name, kind string
+	spouseName        string
 	sources           []map[string]string
 }
 
@@ -208,7 +210,11 @@ func (s *celebrationAutomationService) executeRun(ctx context.Context, run *mode
 		}
 	}()
 	defer func() { close(stopHeartbeat); heartbeat.Wait() }()
-	candidates, err := s.repo.ListCandidates(ctx, int(local.Month()), local.Day(), config.BirthdayEnabled, config.AnniversaryEnabled)
+	// Birthdays come from the three people-tables via ListCandidates. Wedding
+	// anniversaries come from the dedicated wedding_anniversaries table, which
+	// carries spouse details, an active/archived pastoral status, and the
+	// greet-both consent — so they're gathered separately below.
+	candidates, err := s.repo.ListCandidates(ctx, int(local.Month()), local.Day(), config.BirthdayEnabled, false)
 	if err != nil {
 		return nil, s.failRun(ctx, run, config, worker, err)
 	}
@@ -237,6 +243,31 @@ func (s *celebrationAutomationService) executeRun(ctx context.Context, run *mode
 			item.name = name
 		}
 		item.sources = append(item.sources, map[string]string{"type": candidate.Source, "id": candidate.SourceID})
+	}
+
+	if config.AnniversaryEnabled && s.weddingRepo != nil {
+		views, annivErr := s.weddingRepo.ListDueByMonthDay(ctx, int(local.Month()), local.Day())
+		if annivErr != nil {
+			return nil, s.failRun(ctx, run, config, worker, annivErr)
+		}
+		for _, view := range views {
+			greeting := coupleGreetingName(view)
+			source := map[string]string{"type": string(view.SubjectType), "id": view.SubjectID, "marriageId": view.ID}
+			for _, addr := range coupleAddresses(view) {
+				address := normalizeEmail(addr)
+				if address == "" || !emailRe.MatchString(address) {
+					invalid++
+					continue
+				}
+				key := "anniversary|" + address
+				item := aggregated[key]
+				if item == nil {
+					item = &celebrationRecipient{email: address, name: greeting, kind: "anniversary", spouseName: titleCaseName(view.SpouseName)}
+					aggregated[key] = item
+				}
+				item.sources = append(item.sources, source)
+			}
+		}
 	}
 	suppressed := map[string]bool{}
 	if s.subscribers != nil {
@@ -365,7 +396,7 @@ func (s *celebrationAutomationService) failRun(ctx context.Context, run *models.
 func (s *celebrationAutomationService) renderCelebration(ctx context.Context, store *email.TemplateStore, config *models.CelebrationAutomationConfig, recipient *celebrationRecipient, local time.Time) (string, string) {
 	dateLabel := local.Format("02/01")
 	if recipient.kind == "anniversary" {
-		data := email.AnniversaryTemplateData{Branding: s.branding, RecipientName: recipient.name, AnniversaryDate: dateLabel, HeroImageURL: email.TemplateAssetURL(s.branding, "anniversary", "hero.png")}
+		data := email.AnniversaryTemplateData{Branding: s.branding, RecipientName: recipient.name, SpouseName: recipient.spouseName, AnniversaryDate: dateLabel, HeroImageURL: email.TemplateAssetURL(s.branding, "anniversary", "hero.png")}
 		if store != nil {
 			renderCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			_, html, _, err := store.RenderWithData(renderCtx, config.AnniversaryTemplateKey, data)

@@ -187,6 +187,7 @@ func main() {
 	emailAudienceRepo := repository.NewEmailAudienceRepository(db)
 	adminEmailScheduleRepo := repository.NewAdminEmailScheduleRepository(db)
 	celebrationAutomationRepo := repository.NewCelebrationAutomationRepository(db)
+	weddingAnniversaryRepo := repository.NewWeddingAnniversaryRepository(db)
 	emailTemplateRepo := repository.NewEmailTemplateRepository(db)
 	subscriberRepo := repository.NewSubscriberRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -396,7 +397,8 @@ func main() {
 	assetService := service.NewAssetService(assetRepo, assetUploader)
 	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailAudienceRepo, emailSender, branding, cfg.Auth.SecretKey)
 	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
-	celebrationAutomationService := service.NewCelebrationAutomationService(celebrationAutomationRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
+	weddingAnniversaryService := service.NewWeddingAnniversaryService(weddingAnniversaryRepo, subscriberRepo, emailSender, adminNotificationService, branding)
+	celebrationAutomationService := service.NewCelebrationAutomationService(celebrationAutomationRepo, weddingAnniversaryRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
 	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
@@ -415,6 +417,7 @@ func main() {
 		memberService,
 		leadershipService,
 		testimonialService,
+		weddingAnniversaryService,
 		adminNotificationService,
 		emailSender,
 		branding,
@@ -572,6 +575,7 @@ func main() {
 	)
 	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader, userRepo)
 	memberHandler := handlers.NewMemberHandler(memberService)
+	weddingAnniversaryHandler := handlers.NewWeddingAnniversaryHandler(weddingAnniversaryService)
 	newMemberWorkflowHandler := handlers.NewNewMemberWorkflowHandler(newMemberWorkflowService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
@@ -662,6 +666,7 @@ func main() {
 		workforceHandler,
 		leadershipHandler,
 		memberHandler,
+		weddingAnniversaryHandler,
 		newMemberWorkflowHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
