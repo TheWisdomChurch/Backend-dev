@@ -412,7 +412,7 @@ func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdayS
 
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 
 	dateLabel := fmt.Sprintf("%02d/%02d", day, month)

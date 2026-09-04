@@ -81,7 +81,7 @@ func (s *authServiceImpl) BeginTOTPSetup(userID string) (*models.TOTPSetupRespon
 		issuer = strings.TrimSpace(s.branding.AppName)
 	}
 	if issuer == "" {
-		issuer = "Wisdom House"
+		issuer = "The Wisdom Church"
 	}
 
 	accountName := strings.TrimSpace(user.Email)

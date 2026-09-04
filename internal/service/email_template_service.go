@@ -65,7 +65,7 @@ func (s *emailTemplateService) SendTemplateEmail(req *models.SendTemplateEmailRe
 
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 
 	var subject string
@@ -176,7 +176,7 @@ func (s *emailTemplateService) renderRemoteTemplate(
 
 	branding := s.branding
 	if strings.TrimSpace(branding.AppName) == "" {
-		branding.AppName = "Wisdom House"
+		branding.AppName = "The Wisdom Church"
 	}
 
 	expiresRFC3339 := ""

@@ -326,7 +326,7 @@ func (s *workforceService) SendBirthdayGreetings(month, day int) (*models.Birthd
 
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 
 	dateLabel := fmt.Sprintf("%02d/%02d", day, month)
@@ -631,7 +631,7 @@ func (s *workforceService) sendRejectionEmail(member *models.WorkforceMember, re
 
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
 	if fullName == "" {

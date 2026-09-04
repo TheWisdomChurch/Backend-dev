@@ -454,7 +454,7 @@ func (s *authServiceImpl) sendFailedLoginAlert(user *models.User, meta LoginMeta
 
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 
 	body := email.RenderLoginAlertEmail(email.LoginAlertTemplateData{
@@ -848,7 +848,7 @@ func (s *authServiceImpl) sendAdminWelcome(user *models.User) {
 	})
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 	subject := fmt.Sprintf("Welcome to %s Admin", appName)
 	_ = s.sender.SendHTML(user.Email, subject, body)

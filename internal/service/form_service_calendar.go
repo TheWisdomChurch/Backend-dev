@@ -276,7 +276,7 @@ func buildCalendarDetails(eventTitle, registrationCode, appName string) string {
 	}
 	brand := strings.TrimSpace(appName)
 	if brand == "" {
-		brand = "Wisdom House"
+		brand = "The Wisdom Church"
 	}
 
 	if strings.TrimSpace(registrationCode) == "" {

@@ -186,7 +186,7 @@ func sendAdminApprovedEmail(sender EmailSender, branding email.Branding, user *m
 	})
 	appName := strings.TrimSpace(branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 	subject := fmt.Sprintf("%s admin account approved", appName)
 	_ = sender.SendHTML(user.Email, subject, body)
@@ -199,7 +199,7 @@ func sendAdminRejectedEmail(sender EmailSender, branding email.Branding, user *m
 
 	appName := strings.TrimSpace(branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 
 	name := strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " "))

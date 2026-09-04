@@ -304,7 +304,7 @@ func (s *notificationService) sendSubscriberWelcome(sub *models.Subscriber) {
 	})
 	appName := strings.TrimSpace(s.branding.AppName)
 	if appName == "" {
-		appName = "Wisdom House"
+		appName = "The Wisdom Church"
 	}
 	subject := fmt.Sprintf("Welcome to %s", appName)
 	_ = s.sender.SendHTML(sub.Email, subject, body)

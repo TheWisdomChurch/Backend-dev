@@ -183,7 +183,7 @@ func (s *otpService) SendOTP(req *models.SendOTPRequest) (*models.SendOTPRespons
 func otpSubject(appName, purpose string) string {
 	name := strings.TrimSpace(appName)
 	if name == "" {
-		name = "Wisdom House"
+		name = "The Wisdom Church"
 	}
 
 	p := strings.TrimSpace(purpose)
