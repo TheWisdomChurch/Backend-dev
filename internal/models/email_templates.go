@@ -85,20 +85,20 @@ type SendTemplateEmailResponse struct {
 // the same shell/component helpers as every other outbound email. There must
 // never be a second hand-written copy of this rendering logic anywhere else.
 type FormEmailContent struct {
-	Preheader               string                  `json:"preheader,omitempty"`
-	Eyebrow                 string                  `json:"eyebrow,omitempty"`
-	Heading                 string                  `json:"heading,omitempty"`
-	Message                 string                  `json:"message,omitempty"`
-	MessageHTML             string                  `json:"messageHtml,omitempty"`
-	ImageURL                string                  `json:"imageUrl,omitempty"`
-	CTALabel                string                  `json:"ctaLabel,omitempty"`
-	CTAURL                  string                  `json:"ctaUrl,omitempty"`
-	CalendarLabel           string                  `json:"calendarLabel,omitempty"`
-	CalendarURL             string                  `json:"calendarUrl,omitempty"`
-	CalendarEvent           *FormEmailCalendarEvent `json:"calendarEvent,omitempty"`
-	ResourceLinks           []FormEmailResourceLink `json:"resourceLinks,omitempty"`
-	SpotlightLabel          string                  `json:"spotlightLabel,omitempty"`
-	SpotlightText           string                  `json:"spotlightText,omitempty"`
+	Preheader      string                  `json:"preheader,omitempty"`
+	Eyebrow        string                  `json:"eyebrow,omitempty"`
+	Heading        string                  `json:"heading,omitempty"`
+	Message        string                  `json:"message,omitempty"`
+	MessageHTML    string                  `json:"messageHtml,omitempty"`
+	ImageURL       string                  `json:"imageUrl,omitempty"`
+	CTALabel       string                  `json:"ctaLabel,omitempty"`
+	CTAURL         string                  `json:"ctaUrl,omitempty"`
+	CalendarLabel  string                  `json:"calendarLabel,omitempty"`
+	CalendarURL    string                  `json:"calendarUrl,omitempty"`
+	CalendarEvent  *FormEmailCalendarEvent `json:"calendarEvent,omitempty"`
+	ResourceLinks  []FormEmailResourceLink `json:"resourceLinks,omitempty"`
+	SpotlightLabel string                  `json:"spotlightLabel,omitempty"`
+	SpotlightText  string                  `json:"spotlightText,omitempty"`
 	// FooterNote is form-specific context (e.g. "This confirms your
 	// children's ministry registration"), rendered above the standard
 	// footer. Social links are not configurable per form — they always come
@@ -106,7 +106,7 @@ type FormEmailContent struct {
 	// renderFooterBlock, the same as every other outbound email.
 	FooterNote              string `json:"footerNote,omitempty"`
 	IncludeRegistrationCode bool   `json:"includeRegistrationCode,omitempty"`
-	IncludeCalendarOptIn    bool                    `json:"includeCalendarOptIn,omitempty"`
+	IncludeCalendarOptIn    bool   `json:"includeCalendarOptIn,omitempty"`
 }
 
 type FormEmailCalendarEvent struct {
@@ -126,19 +126,19 @@ type FormEmailResourceLink struct {
 }
 
 type CreateEmailTemplateRequest struct {
-	TemplateKey string               `json:"templateKey" binding:"required"`
-	OwnerType   *string              `json:"ownerType,omitempty"`
-	OwnerID     *string              `json:"ownerId,omitempty"`
-	Subject     *string              `json:"subject,omitempty"`
+	TemplateKey string  `json:"templateKey" binding:"required"`
+	OwnerType   *string `json:"ownerType,omitempty"`
+	OwnerID     *string `json:"ownerId,omitempty"`
+	Subject     *string `json:"subject,omitempty"`
 	// HTMLBody/TextBody are optional when Content is set: the service
 	// renders them from Content via internal/email.RenderFormEmailContent.
 	// Provide HTMLBody directly only for a hand-authored one-off template.
-	HTMLBody string             `json:"htmlBody,omitempty"`
-	TextBody *string            `json:"textBody,omitempty"`
-	Content  *FormEmailContent  `json:"content,omitempty"`
+	HTMLBody string               `json:"htmlBody,omitempty"`
+	TextBody *string              `json:"textBody,omitempty"`
+	Content  *FormEmailContent    `json:"content,omitempty"`
 	Status   *EmailTemplateStatus `json:"status,omitempty"`
-	Version  *int               `json:"version,omitempty"`
-	Activate bool               `json:"activate,omitempty"`
+	Version  *int                 `json:"version,omitempty"`
+	Activate bool                 `json:"activate,omitempty"`
 }
 
 type UpdateEmailTemplateRequest struct {

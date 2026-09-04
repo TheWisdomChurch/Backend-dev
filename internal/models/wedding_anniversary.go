@@ -95,10 +95,10 @@ type WeddingAnniversaryInput struct {
 // WeddingAnniversaryView is a read row joined to the greeted person's identity.
 type WeddingAnniversaryView struct {
 	WeddingAnniversary
-	FirstName    string `json:"firstName"`
-	LastName     string `json:"lastName"`
-	Email        string `json:"email"`
-	NeedsSpouse  bool   `json:"needsSpouse"` // true when SpouseName is blank (backfilled rows)
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
+	Email       string `json:"email"`
+	NeedsSpouse bool   `json:"needsSpouse"` // true when SpouseName is blank (backfilled rows)
 }
 
 // WeddingAnniversaryStats mirrors BirthdayStatsResponse for the admin dashboard.
