@@ -134,13 +134,28 @@ func (s *notificationService) Unsubscribe(email string) error {
 		return errors.New("email is required")
 	}
 
+	now := time.Now().UTC()
 	sub, err := s.subscribers.GetByEmail(emailAddr)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// The address was never a newsletter subscriber — e.g. an external
+		// spouse who only ever received a wedding-anniversary greeting. Their
+		// unsubscribe link must still work, so create a suppressed record
+		// rather than erroring: ListUnsubscribedEmails() is the single
+		// suppression list every outbound flow (celebrations included) checks.
+		source := "unsubscribe-link"
+		suppressed := &models.Subscriber{
+			Email:          emailAddr,
+			Source:         &source,
+			Status:         models.SubscriberStatusUnsubscribed,
+			UnsubscribedAt: &now,
+		}
+		return s.subscribers.Create(suppressed)
+	}
 	if err != nil {
 		return err
 	}
 
 	sub.Status = models.SubscriberStatusUnsubscribed
-	now := time.Now().UTC()
 	sub.UnsubscribedAt = &now
 	return s.subscribers.Update(sub)
 }

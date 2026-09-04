@@ -16,7 +16,7 @@ type MinistryService interface {
 	Get(ctx context.Context, id string) (*models.Ministry, error)
 	List(ctx context.Context, campusID, category *string, activeOnly bool, limit, offset int) ([]models.Ministry, int64, error)
 	Delete(ctx context.Context, id string) error
-	AddMember(ctx context.Context, ministryID, memberID, role string) error
+	AddMember(ctx context.Context, ministryID, memberID, role string) (*models.MinistryMember, error)
 	RemoveMember(ctx context.Context, ministryID, memberID string) error
 	ListMembers(ctx context.Context, ministryID string) ([]models.MinistryMember, error)
 	MemberMinistries(ctx context.Context, memberID string) ([]models.Ministry, error)
@@ -150,7 +150,7 @@ func (s *ministryService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func (s *ministryService) AddMember(ctx context.Context, ministryID, memberID, role string) error {
+func (s *ministryService) AddMember(ctx context.Context, ministryID, memberID, role string) (*models.MinistryMember, error) {
 	if role == "" {
 		role = "member"
 	}

@@ -18,7 +18,7 @@ type MinistryRepository interface {
 	List(ctx context.Context, campusID, category *string, activeOnly bool, limit, offset int) ([]models.Ministry, int64, error)
 	Delete(ctx context.Context, id string) error
 
-	AddMember(ctx context.Context, m *models.MinistryMember) error
+	AddMember(ctx context.Context, m *models.MinistryMember) (*models.MinistryMember, error)
 	RemoveMember(ctx context.Context, ministryID, memberID string) error
 	ListMembers(ctx context.Context, ministryID string) ([]models.MinistryMember, error)
 	MemberMinistries(ctx context.Context, memberID string) ([]models.Ministry, error)
@@ -165,8 +165,11 @@ func (r *ministryRepository) Delete(ctx context.Context, id string) error {
 	return r.db.DB.WithContext(ctx).Delete(&models.Ministry{}, "id = ?", id).Error
 }
 
-func (r *ministryRepository) AddMember(ctx context.Context, m *models.MinistryMember) error {
-	return r.db.DB.WithContext(ctx).Create(m).Error
+func (r *ministryRepository) AddMember(ctx context.Context, m *models.MinistryMember) (*models.MinistryMember, error) {
+	if err := r.db.DB.WithContext(ctx).Create(m).Error; err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (r *ministryRepository) RemoveMember(ctx context.Context, ministryID, memberID string) error {

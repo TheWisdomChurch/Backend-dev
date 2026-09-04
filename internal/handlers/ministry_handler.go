@@ -190,11 +190,12 @@ func (h *MinistryHandler) AddMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
-	if err := h.svc.AddMember(c.Request.Context(), id, body.MemberID, body.Role); err != nil {
+	member, err := h.svc.AddMember(c.Request.Context(), id, body.MemberID, body.Role)
+	if err != nil {
 		utils.Err(c, err)
 		return
 	}
-	utils.OKMsg(c, "member added", nil)
+	utils.Created(c, member)
 }
 
 func (h *MinistryHandler) RemoveMember(c *gin.Context) {

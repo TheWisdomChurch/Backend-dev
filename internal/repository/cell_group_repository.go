@@ -14,7 +14,7 @@ type CellGroupRepository interface {
 	List(ctx context.Context, campusID *string, activeOnly bool, limit, offset int) ([]models.CellGroup, int64, error)
 	Delete(ctx context.Context, id string) error
 
-	AddMember(ctx context.Context, m *models.CellGroupMember) error
+	AddMember(ctx context.Context, m *models.CellGroupMember) (*models.CellGroupMember, error)
 	RemoveMember(ctx context.Context, groupID, memberID string) error
 	ListMembers(ctx context.Context, groupID string) ([]models.CellGroupMember, error)
 	MemberGroups(ctx context.Context, memberID string) ([]models.CellGroup, error)
@@ -71,8 +71,11 @@ func (r *cellGroupRepository) Delete(ctx context.Context, id string) error {
 	return r.db.DB.WithContext(ctx).Delete(&models.CellGroup{}, "id = ?", id).Error
 }
 
-func (r *cellGroupRepository) AddMember(ctx context.Context, m *models.CellGroupMember) error {
-	return r.db.DB.WithContext(ctx).Create(m).Error
+func (r *cellGroupRepository) AddMember(ctx context.Context, m *models.CellGroupMember) (*models.CellGroupMember, error) {
+	if err := r.db.DB.WithContext(ctx).Create(m).Error; err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (r *cellGroupRepository) RemoveMember(ctx context.Context, groupID, memberID string) error {
