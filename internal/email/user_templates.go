@@ -154,9 +154,11 @@ type LeadershipStatusTemplateData struct {
 
 type AnniversaryTemplateData struct {
 	Branding        Branding
-	RecipientName   string
+	RecipientName   string // may already be "David & Sarah" when a couple
+	SpouseName      string // optional; only used to compose a greeting when RecipientName is a single name
 	AnniversaryDate string
 	Message         string
+	ScriptureHTML   string // optional blessing verse, rendered as a quote block
 	HeroImageURL    string
 }
 
@@ -211,32 +213,47 @@ func RenderLeadershipDeclinedEmail(data LeadershipStatusTemplateData) string {
 
 func RenderAnniversaryEmail(data AnniversaryTemplateData) string {
 	b := normalizeBranding(data.Branding)
+
+	// RecipientName may already be a couple ("David & Sarah"). If it's a single
+	// name and a SpouseName is supplied, compose the couple greeting here.
 	name := strings.TrimSpace(data.RecipientName)
+	spouse := strings.TrimSpace(data.SpouseName)
+	if name != "" && spouse != "" && !strings.Contains(name, "&") {
+		name = name + " & " + spouse
+	}
 	if name == "" {
 		name = "friend"
-	} else {
-		name = html.EscapeString(name)
 	}
+	name = html.EscapeString(name)
+
 	date := strings.TrimSpace(data.AnniversaryDate)
 	dateLine := ""
 	if date != "" {
 		dateLine = "<p style=\"margin:0 0 16px;font-size:14px;color:" + colorMuted + ";\">Celebrating on " + html.EscapeString(date) + "</p>"
 	}
+
 	message := strings.TrimSpace(data.Message)
 	if message == "" {
-		message = "Warm wishes on your wedding anniversary."
+		message = "On behalf of the whole church family, we celebrate the covenant you have kept and the home you have built together. May this new year of marriage bring you deeper joy, renewed strength, and abundant grace."
+	}
+
+	scripture := ""
+	if s := strings.TrimSpace(data.ScriptureHTML); s != "" {
+		scripture = renderQuoteBlock(s, "")
 	}
 
 	body := renderHeroImageBlock(data.HeroImageURL, "Wedding anniversary") +
 		renderBodyOpen() +
+		renderEyebrow("A moment worth celebrating", "") +
 		renderHeading("Happy Wedding Anniversary, "+name+"!") +
 		renderParagraph(html.EscapeString(message)) +
 		dateLine +
-		"<p style=\"margin:0;font-size:14px;color:" + colorMuted + ";\">With love,</p>" +
-		"<p style=\"margin:4px 0 0;font-size:14px;font-weight:600;color:" + colorInk + ";\">" + html.EscapeString(b.AppName) + " Team</p>" +
+		scripture +
+		"<p style=\"margin:18px 0 0;font-size:14px;color:" + colorMuted + ";\">With love and prayers,</p>" +
+		"<p style=\"margin:4px 0 0;font-size:14px;font-weight:600;color:" + colorInk + ";\">" + html.EscapeString(b.AppName) + "</p>" +
 		renderBodyClose()
 
-	return renderEmailShell(b, "", body)
+	return renderEmailShellWithPreheader(b, "", "Celebrating your wedding anniversary — with love from "+b.AppName+".", body)
 }
 
 // RenderFormResponseEmail renders a registration confirmation for form submissions.

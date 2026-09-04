@@ -1,5 +1,10 @@
 BEGIN;
 
+-- rollback: 021_wedding_anniversaries.down.sql
+-- The legacy leadership_members/workforce_members anniversary_month/day columns
+-- were never dropped, so they remain the fallback after this rollback.
+DROP TABLE IF EXISTS wedding_anniversaries;
+
 -- rollback: 020_celebration_automation_config_repair.down.sql
 -- Deliberately non-destructive. Rolling back this repair must not delete a
 -- production automation configuration that administrators may have updated.

@@ -39,9 +39,14 @@ func ResolveTemplateAssetURL(b Branding, keyOrURL string) string {
 	return base + "/" + strings.TrimLeft(raw, "/")
 }
 
-// renderHeroImageBlock renders a full table row containing a hero image, or
-// "" when no URL is given — callers can concatenate it directly at the
-// table-row level alongside renderInfoGrid/renderActionRow/etc.
+// renderHeroImageBlock renders a full table row containing a full-bleed hero
+// image, or "" when no URL is given — callers can concatenate it directly at
+// the table-row level alongside renderInfoGrid/renderActionRow/etc.
+//
+// The image runs edge to edge inside the card (no side padding, no border, no
+// width cap): the card's border-radius + overflow:hidden clip it cleanly, and
+// on a narrow phone it fills the width instead of shrinking to a bordered
+// thumbnail inside 40px of padding.
 func renderHeroImageBlock(url string, alt string) string {
 	trimmed := strings.TrimSpace(url)
 	if trimmed == "" {
@@ -51,7 +56,7 @@ func renderHeroImageBlock(url string, alt string) string {
 	if altText == "" {
 		altText = "Email illustration"
 	}
-	return "<tr><td style=\"padding:0 40px;\">" +
-		"<img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" style=\"display:block;width:100%;max-width:520px;height:auto;border:1px solid " + colorLine + ";\">" +
+	return "<tr><td class=\"wc-hero-cell\" style=\"padding:0;\">" +
+		"<img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" class=\"wc-hero\" style=\"display:block;width:100%;max-width:100%;height:auto;border:0;margin:0;\">" +
 		"</td></tr>"
 }

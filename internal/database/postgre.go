@@ -227,6 +227,7 @@ func allMigrationModels() []any {
 		&models.CelebrationAutomationConfig{},
 		&models.CelebrationAutomationRun{},
 		&models.CelebrationDelivery{},
+		&models.WeddingAnniversary{},
 		&models.RegistrationSequence{},
 		&models.Asset{},
 		&models.EmailTemplate{},
