@@ -26,6 +26,16 @@ type EmailTemplate struct {
 	HTMLBody string  `gorm:"type:text;not null" json:"htmlBody"`
 	TextBody *string `gorm:"type:text" json:"textBody,omitempty"`
 
+	// ContentJSON is the structured content behind a form response email —
+	// heading, message, CTA, calendar/resource blocks, etc. When present,
+	// HTMLBody/TextBody are generated from it by
+	// internal/email.RenderFormEmailContent (the single place that owns this
+	// design) rather than hand-built by a caller. It round-trips as a plain
+	// JSON object over the API: datatypes.JSON marshals/unmarshals its raw
+	// bytes verbatim, so the admin portal reads and writes it as
+	// FormEmailContent with no HTML-comment-embedding trick needed.
+	ContentJSON datatypes.JSON `gorm:"type:jsonb" json:"content,omitempty"`
+
 	Status   EmailTemplateStatus `gorm:"size:20;not null;default:'draft'" json:"status"`
 	Version  int                 `gorm:"not null;default:1" json:"version"`
 	IsActive bool                `gorm:"not null;default:false" json:"isActive"`
@@ -69,16 +79,66 @@ type SendTemplateEmailResponse struct {
 	SentAt   string `json:"sentAt"`
 }
 
+// FormEmailContent is the structured content behind one form's response
+// email — the *only* shape the admin portal edits. RenderFormEmailContent
+// (internal/email) is the *only* place that turns it into HTML, built from
+// the same shell/component helpers as every other outbound email. There must
+// never be a second hand-written copy of this rendering logic anywhere else.
+type FormEmailContent struct {
+	Preheader               string                  `json:"preheader,omitempty"`
+	Eyebrow                 string                  `json:"eyebrow,omitempty"`
+	Heading                 string                  `json:"heading,omitempty"`
+	Message                 string                  `json:"message,omitempty"`
+	MessageHTML             string                  `json:"messageHtml,omitempty"`
+	ImageURL                string                  `json:"imageUrl,omitempty"`
+	CTALabel                string                  `json:"ctaLabel,omitempty"`
+	CTAURL                  string                  `json:"ctaUrl,omitempty"`
+	CalendarLabel           string                  `json:"calendarLabel,omitempty"`
+	CalendarURL             string                  `json:"calendarUrl,omitempty"`
+	CalendarEvent           *FormEmailCalendarEvent `json:"calendarEvent,omitempty"`
+	ResourceLinks           []FormEmailResourceLink `json:"resourceLinks,omitempty"`
+	SpotlightLabel          string                  `json:"spotlightLabel,omitempty"`
+	SpotlightText           string                  `json:"spotlightText,omitempty"`
+	// FooterNote is form-specific context (e.g. "This confirms your
+	// children's ministry registration"), rendered above the standard
+	// footer. Social links are not configurable per form — they always come
+	// from the shared church branding (internal/email.Branding.Social) via
+	// renderFooterBlock, the same as every other outbound email.
+	FooterNote              string `json:"footerNote,omitempty"`
+	IncludeRegistrationCode bool   `json:"includeRegistrationCode,omitempty"`
+	IncludeCalendarOptIn    bool                    `json:"includeCalendarOptIn,omitempty"`
+}
+
+type FormEmailCalendarEvent struct {
+	Title       string `json:"title"`
+	StartAt     string `json:"startAt"`
+	EndAt       string `json:"endAt,omitempty"`
+	Location    string `json:"location,omitempty"`
+	Description string `json:"description,omitempty"`
+	TimeZone    string `json:"timeZone,omitempty"`
+}
+
+type FormEmailResourceLink struct {
+	Label       string `json:"label"`
+	URL         string `json:"url"`
+	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind,omitempty"` // flyer|document|guide|schedule|resource
+}
+
 type CreateEmailTemplateRequest struct {
 	TemplateKey string               `json:"templateKey" binding:"required"`
 	OwnerType   *string              `json:"ownerType,omitempty"`
 	OwnerID     *string              `json:"ownerId,omitempty"`
 	Subject     *string              `json:"subject,omitempty"`
-	HTMLBody    string               `json:"htmlBody" binding:"required"`
-	TextBody    *string              `json:"textBody,omitempty"`
-	Status      *EmailTemplateStatus `json:"status,omitempty"`
-	Version     *int                 `json:"version,omitempty"`
-	Activate    bool                 `json:"activate,omitempty"`
+	// HTMLBody/TextBody are optional when Content is set: the service
+	// renders them from Content via internal/email.RenderFormEmailContent.
+	// Provide HTMLBody directly only for a hand-authored one-off template.
+	HTMLBody string             `json:"htmlBody,omitempty"`
+	TextBody *string            `json:"textBody,omitempty"`
+	Content  *FormEmailContent  `json:"content,omitempty"`
+	Status   *EmailTemplateStatus `json:"status,omitempty"`
+	Version  *int               `json:"version,omitempty"`
+	Activate bool               `json:"activate,omitempty"`
 }
 
 type UpdateEmailTemplateRequest struct {
@@ -88,6 +148,7 @@ type UpdateEmailTemplateRequest struct {
 	Subject     *string              `json:"subject,omitempty"`
 	HTMLBody    *string              `json:"htmlBody,omitempty"`
 	TextBody    *string              `json:"textBody,omitempty"`
+	Content     *FormEmailContent    `json:"content,omitempty"`
 	Status      *EmailTemplateStatus `json:"status,omitempty"`
 	Version     *int                 `json:"version,omitempty"`
 	Activate    *bool                `json:"activate,omitempty"`
