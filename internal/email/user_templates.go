@@ -224,7 +224,8 @@ func RenderAnniversaryEmail(data AnniversaryTemplateData) string {
 	if name == "" {
 		name = "friend"
 	}
-	name = html.EscapeString(name)
+	// name is passed into renderHeading below, which escapes the whole
+	// heading string itself — escaping here too would double-escape "&".
 
 	date := strings.TrimSpace(data.AnniversaryDate)
 	dateLine := ""
