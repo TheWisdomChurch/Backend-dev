@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -74,18 +73,19 @@ func (s *adminNotificationService) NotifyRoles(input AdminNotificationInput) err
 
 		if s.sender != nil && user.Email != "" {
 			subject := input.Title
-			recipientName := strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " "))
-			message := input.Message
-			if portal := strings.TrimSpace(s.branding.AdminPortalURL); portal != "" {
-				message = fmt.Sprintf("%s\n\nOpen the admin portal: %s", message, portal)
-			}
-			body := email.RenderNotificationEmail(email.NotificationTemplateData{
+			recipientName := personDisplayName(user.FirstName, user.LastName)
+			data := email.NotificationTemplateData{
 				Branding:      s.branding,
 				Title:         subject,
-				Message:       message,
+				Message:       input.Message,
 				RecipientName: &recipientName,
-			})
-			_ = s.sender.SendHTML(user.Email, subject, body)
+				Internal:      true,
+			}
+			if portal := strings.TrimSpace(s.branding.AdminPortalURL); portal != "" {
+				data.ActionURL = portal
+				data.ActionLabel = "Open admin portal"
+			}
+			_ = s.sender.SendHTML(user.Email, subject, email.RenderNotificationEmail(data))
 		}
 	}
 

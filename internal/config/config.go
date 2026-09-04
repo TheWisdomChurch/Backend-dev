@@ -348,7 +348,7 @@ func Load() (*Config, error) {
 			CSRFCookieName:               getEnv("AUTH_CSRF_COOKIE_NAME", "csrf_secret"),
 			CSRFHeaderName:               getEnv("AUTH_CSRF_HEADER_NAME", "X-CSRF-Token"),
 			SecretKey:                    getEnv("AUTH_SECRET_KEY", ""),
-			MFAIssuer:                    getEnv("AUTH_MFA_ISSUER", getEnv("APP_NAME", "Wisdom House Backend")),
+			MFAIssuer:                    getEnv("AUTH_MFA_ISSUER", getEnv("APP_NAME", "The Wisdom Church")),
 			GoogleClientID:               getEnv("AUTH_GOOGLE_CLIENT_ID", ""),
 			GoogleClientSecret:           getEnv("AUTH_GOOGLE_CLIENT_SECRET", ""),
 			GoogleRedirectURL:            getEnv("AUTH_GOOGLE_REDIRECT_URL", ""),
@@ -360,7 +360,7 @@ func Load() (*Config, error) {
 		App: AppConfig{
 			Environment:               env,
 			LogLevel:                  getEnv("LOG_LEVEL", "info"),
-			Name:                      getEnv("APP_NAME", "Wisdom House Backend"),
+			Name:                      getEnv("APP_NAME", "The Wisdom Church"),
 			Version:                   getEnv("APP_VERSION", "1.0.0"),
 			Debug:                     getEnvAsBool("APP_DEBUG", false),
 			PublicURL:                 getEnv("APP_PUBLIC_URL", "http://localhost:8080"),

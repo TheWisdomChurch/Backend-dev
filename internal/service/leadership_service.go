@@ -639,7 +639,7 @@ func (s *leadershipService) notifyNewApplication(member *models.LeadershipMember
 	if s.notifySvc == nil || member == nil {
 		return
 	}
-	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	fullName := personDisplayName(member.FirstName, member.LastName)
 	title := "New leadership application"
 	message := fmt.Sprintf("%s applied for leadership (%s).", fullName, humanLeadershipRole(member.Role))
 	entityType := "leadership"
@@ -658,7 +658,7 @@ func (s *leadershipService) notifyLeadershipDeleteRequest(member *models.Leaders
 	if s.notifySvc == nil || member == nil || req == nil {
 		return
 	}
-	fullName := strings.TrimSpace(strings.Join([]string{member.FirstName, member.LastName}, " "))
+	fullName := personDisplayName(member.FirstName, member.LastName)
 	if fullName == "" {
 		fullName = "Leadership profile"
 	}
