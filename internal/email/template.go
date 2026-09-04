@@ -14,6 +14,17 @@ type NotificationTemplateData struct {
 	Event          *models.Event
 	RecipientName  *string
 	UnsubscribeURL string
+
+	// ActionURL / ActionLabel render a real call-to-action button under the
+	// message instead of leaving a bare URL in the body text. ActionLabel
+	// defaults to "Open" when only the URL is set.
+	ActionURL   string
+	ActionLabel string
+
+	// Internal marks a staff-only operational notification: the "you
+	// subscribed to updates / unsubscribe" footer is replaced with a quiet
+	// internal-notice line, since staff never opted in and can't opt out.
+	Internal bool
 }
 
 func RenderNotificationEmail(data NotificationTemplateData) string {
@@ -46,15 +57,42 @@ func RenderNotificationEmail(data NotificationTemplateData) string {
 			"</td></tr></table>"
 	}
 
+	footerHTML := renderSubscriptionFooter(b.AppName, data.UnsubscribeURL)
+	if data.Internal {
+		footerHTML = renderInternalNotice(b.AppName)
+	}
+
+	actionRow := ""
+	if url := strings.TrimSpace(data.ActionURL); url != "" {
+		label := strings.TrimSpace(data.ActionLabel)
+		if label == "" {
+			label = "Open"
+		}
+		actionRow = renderActionRow(renderButton(label, url, "", ""))
+	}
+
 	body := renderBodyOpen() +
 		"<p style=\"margin:0 0 4px;font-size:15px;color:" + colorBody + ";\">" + greeting + "</p>" +
 		renderHeading(title) +
 		renderParagraph(safeMessage) +
 		eventBlock +
-		renderSubscriptionFooter(b.AppName, data.UnsubscribeURL) +
-		renderBodyClose()
+		renderBodyClose() +
+		actionRow +
+		"<tr><td class=\"wc-content-pad\" style=\"padding:0 48px 8px;font-family:" + fontStack + ";\">" +
+		footerHTML +
+		"</td></tr>"
 
-	return renderEmailShell(b, "", body)
+	preheader := strings.TrimSpace(data.Message)
+	if len(preheader) > 140 {
+		preheader = strings.TrimSpace(preheader[:140])
+	}
+	return renderEmailShellWithPreheader(b, "", preheader, body)
+}
+
+// renderInternalNotice is the footer line for staff-only operational mail —
+// no subscription language, no unsubscribe link.
+func renderInternalNotice(appName string) string {
+	return "<p style=\"margin:24px 0 0;font-size:12px;line-height:1.6;color:" + colorFaint + ";\">Internal notification for " + html.EscapeString(appName) + " administrators.</p>"
 }
 
 func RenderNotificationText(data NotificationTemplateData) string {
@@ -69,9 +107,24 @@ func RenderNotificationText(data NotificationTemplateData) string {
 	if data.Event != nil {
 		out.WriteString("\n\nEvent: " + data.Event.Title + "\nDate: " + data.Event.Date + "\nTime: " + data.Event.Time + "\nLocation: " + data.Event.Location)
 	}
-	out.WriteString("\n\nYou received this because you subscribed to updates.")
-	if url := strings.TrimSpace(data.UnsubscribeURL); url != "" {
-		out.WriteString("\nUnsubscribe: " + url)
+	if url := strings.TrimSpace(data.ActionURL); url != "" {
+		label := strings.TrimSpace(data.ActionLabel)
+		if label == "" {
+			label = "Open"
+		}
+		out.WriteString("\n\n" + label + ": " + url)
+	}
+	if data.Internal {
+		appName := strings.TrimSpace(data.Branding.AppName)
+		if appName == "" {
+			appName = "The Wisdom Church"
+		}
+		out.WriteString("\n\nInternal notification for " + appName + " administrators.")
+	} else {
+		out.WriteString("\n\nYou received this because you subscribed to updates.")
+		if url := strings.TrimSpace(data.UnsubscribeURL); url != "" {
+			out.WriteString("\nUnsubscribe: " + url)
+		}
 	}
 	return out.String()
 }

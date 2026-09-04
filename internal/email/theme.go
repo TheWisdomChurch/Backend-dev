@@ -23,6 +23,16 @@ const (
 	colorFaint  = "#8A93A3" // footer/tertiary text
 	colorBody   = "#3A414D" // body copy
 
+	// Dark-mode counterparts, applied only under prefers-color-scheme:dark
+	// (see the media block in renderEmailShellWithPreheader). Warm near-black
+	// rather than pure #000 so the card still reads as a surface.
+	colorInkDark    = "#F3F5F8"
+	colorBodyDark   = "#C6CCD6"
+	colorGroundDark = "#0B0F16"
+	colorPaperDark  = "#151B25"
+	colorLineDark   = "#2B3440"
+	colorAccentDark = "#C6A667" // brass, lightened for contrast on dark
+
 	fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
 )
 
@@ -32,15 +42,59 @@ const (
 // footer. Every Render* function in this package should return
 // renderEmailShell(...) rather than building its own <html> wrapper.
 func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
+	return renderEmailShellWithPreheader(b, topRuleColor, "", bodyHTML)
+}
+
+// renderEmailShellWithPreheader is renderEmailShell plus a hidden preheader:
+// the short line email clients show as the inbox preview next to the subject.
+// Without it, clients fall back to scraping the first visible text (often a
+// bare "Hello," or a fragment of markup). Pass "" to omit.
+func renderEmailShellWithPreheader(b Branding, topRuleColor string, preheader string, bodyHTML string) string {
 	b = normalizeBranding(b)
 	if strings.TrimSpace(topRuleColor) == "" {
 		topRuleColor = colorAccent
 	}
 
 	bodyHTML = addResponsiveContentClasses(bodyHTML)
-	responsiveCSS := "<style>body{margin:0!important;padding:0!important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}.wc-frame{width:100%!important;max-width:680px!important}.wc-content-pad{}.wc-button a{box-sizing:border-box}.wc-fluid-image{max-width:100%!important;height:auto!important}@media only screen and (max-width:700px){.wc-outer{padding:24px 14px!important}.wc-frame{max-width:100%!important}.wc-header{padding:30px 32px 24px!important}.wc-divider{padding-left:32px!important;padding-right:32px!important}.wc-content-pad,.wc-footer{padding-left:32px!important;padding-right:32px!important}}@media only screen and (max-width:480px){.wc-outer{padding:10px 8px!important}.wc-frame{border-radius:14px!important}.wc-header{padding:24px 20px 20px!important}.wc-divider{padding-left:20px!important;padding-right:20px!important}.wc-content-pad,.wc-footer{padding-left:20px!important;padding-right:20px!important}.wc-button,.wc-button tbody,.wc-button tr,.wc-button td{display:block!important;width:100%!important}.wc-button a{display:block!important;width:100%!important;text-align:center!important;padding:15px 18px!important}.wc-info-cell{display:block!important;width:100%!important;border-right:0!important;border-bottom:1px solid " + colorLine + "!important;padding:14px 0!important}.wc-social a{display:inline-block!important;margin:0 10px 8px 0!important}.wc-social-separator{display:none!important}h1{font-size:25px!important;line-height:1.25!important}} </style>"
+	responsiveCSS := "<style>" +
+		":root{color-scheme:light dark;supported-color-schemes:light dark}" +
+		"body{margin:0!important;padding:0!important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}" +
+		".wc-frame{width:100%!important;max-width:680px!important}.wc-content-pad{}.wc-button a{box-sizing:border-box}.wc-fluid-image{max-width:100%!important;height:auto!important}" +
+		"@media only screen and (max-width:700px){.wc-outer{padding:24px 14px!important}.wc-frame{max-width:100%!important}.wc-header{padding:30px 32px 24px!important}.wc-divider{padding-left:32px!important;padding-right:32px!important}.wc-content-pad,.wc-footer{padding-left:32px!important;padding-right:32px!important}}" +
+		"@media only screen and (max-width:480px){.wc-outer{padding:10px 8px!important}.wc-frame{border-radius:14px!important}.wc-header{padding:24px 20px 20px!important}.wc-divider{padding-left:20px!important;padding-right:20px!important}.wc-content-pad,.wc-footer{padding-left:20px!important;padding-right:20px!important}.wc-button,.wc-button tbody,.wc-button tr,.wc-button td{display:block!important;width:100%!important}.wc-button a{display:block!important;width:100%!important;text-align:center!important;padding:15px 18px!important}.wc-info-cell{display:block!important;width:100%!important;border-right:0!important;border-bottom:1px solid " + colorLine + "!important;padding:14px 0!important}.wc-social a{display:inline-block!important;margin:0 10px 8px 0!important}.wc-social-separator{display:none!important}h1{font-size:25px!important;line-height:1.25!important}}" +
+		// Dark mode: honoured by Apple Mail, iOS Mail and Outlook.com. Gmail
+		// ignores prefers-color-scheme and applies its own partial inversion,
+		// so this is best-effort — the light design is still the source of
+		// truth. Text elements re-colour via descendant selectors from the
+		// card, buttons and the brand tile are left alone.
+		"@media (prefers-color-scheme:dark){" +
+		"body,.wc-body-bg{background:" + colorGroundDark + "!important}" +
+		".wc-outer{background:" + colorGroundDark + "!important}" +
+		".wc-frame{background:" + colorPaperDark + "!important;border-color:" + colorLineDark + "!important}" +
+		".wc-frame h1,.wc-frame p,.wc-frame td,.wc-frame div,.wc-frame span{color:" + colorBodyDark + "!important}" +
+		".wc-frame strong{color:" + colorInkDark + "!important}" +
+		".wc-divider div{border-color:" + colorLineDark + "!important}" +
+		".wc-eyebrow,.wc-accent{color:" + colorAccentDark + "!important}" +
+		".wc-hairline{border-color:" + colorLineDark + "!important}" +
+		".wc-button td{background:#ECEEF2!important;border-color:#ECEEF2!important}.wc-button a{color:#151B25!important}" +
+		"}" +
+		"[data-ogsc] .wc-frame{background:" + colorPaperDark + "!important}" +
+		"[data-ogsc] .wc-frame h1,[data-ogsc] .wc-frame p,[data-ogsc] .wc-frame td,[data-ogsc] .wc-frame div{color:" + colorBodyDark + "!important}" +
+		" </style>"
+
+	preheaderBlock := ""
+	if p := strings.TrimSpace(preheader); p != "" {
+		preheaderBlock = "<div style=\"display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0;mso-hide:all;\">" +
+			html.EscapeString(p) +
+			strings.Repeat("&#847;&zwnj;&nbsp;", 60) +
+			"</div>"
+	}
+
 	return "<!DOCTYPE html>" +
-		"<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"x-apple-disable-message-reformatting\">" + responsiveCSS + "</head><body style=\"margin:0;padding:0;background:" + colorGround + ";font-family:" + fontStack + ";\">" +
+		"<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"x-apple-disable-message-reformatting\">" +
+		"<meta name=\"color-scheme\" content=\"light dark\"><meta name=\"supported-color-schemes\" content=\"light dark\">" + responsiveCSS + "</head>" +
+		"<body class=\"wc-body-bg\" style=\"margin:0;padding:0;background:" + colorGround + ";color-scheme:light dark;font-family:" + fontStack + ";\">" +
+		preheaderBlock +
 		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;background:" + colorGround + ";\"><tr><td class=\"wc-outer\" align=\"center\" style=\"padding:32px 20px;\">" +
 		"<table class=\"wc-frame\" role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:680px;background:" + colorPaper + ";border:1px solid " + colorLine + ";border-radius:20px;overflow:hidden;\">" +
 		"<tr><td style=\"height:3px;line-height:3px;font-size:0;background:" + topRuleColor + ";\">&nbsp;</td></tr>" +
@@ -88,24 +142,27 @@ func renderHeaderBlock(b Branding) string {
 	b = normalizeBranding(b)
 	logoURL := brandLogoURL(b)
 
-	logoCell := "<div style=\"width:56px;height:56px;background:" + colorInk + ";font-family:" + fontStack + ";font-size:22px;font-weight:800;line-height:56px;text-align:center;color:" + colorAccent + ";\">" + firstLetter(b.AppName) + "</div>"
+	logoCell := "<div style=\"width:52px;height:52px;background:" + colorInk + ";font-family:" + fontStack + ";font-size:22px;font-weight:800;line-height:52px;text-align:center;color:" + colorAccent + ";border-radius:13px;\">" + firstLetter(b.AppName) + "</div>"
 	if logoURL != "" {
-		logoCell = "<img src=\"" + html.EscapeString(logoURL) + "\" width=\"56\" height=\"56\" alt=\"" + html.EscapeString(b.AppName) + "\" style=\"display:block;width:56px;height:56px;border-radius:14px;object-fit:cover;\">"
+		logoCell = "<img src=\"" + html.EscapeString(logoURL) + "\" width=\"52\" height=\"52\" alt=\"" + html.EscapeString(b.AppName) + "\" style=\"display:block;width:52px;height:52px;border-radius:13px;object-fit:cover;\">"
 	}
 
-	return "<tr><td class=\"wc-header\" style=\"padding:38px 48px 30px;\">" +
+	// One clean wordmark on a single line — no stacked "The" eyebrow, and the
+	// full canonical AppName rendered as-is.
+	wordmark := html.EscapeString(strings.TrimSpace(b.AppName))
+
+	return "<tr><td class=\"wc-header\" style=\"padding:36px 48px 26px;\">" +
 		"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
-		"<td style=\"width:56px;vertical-align:middle;\">" + logoCell + "</td>" +
-		"<td style=\"width:1px;padding:0 10px;\">" +
-		"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr><td width=\"1\" height=\"52\" style=\"width:1px;font-size:0;line-height:0;background:" + colorLine + ";\">&nbsp;</td></tr></table>" +
+		"<td style=\"width:52px;vertical-align:middle;\">" + logoCell + "</td>" +
+		"<td style=\"width:1px;padding:0 16px;\">" +
+		"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\"><tr><td width=\"1\" height=\"30\" style=\"width:1px;font-size:0;line-height:0;background:" + colorLine + ";\">&nbsp;</td></tr></table>" +
 		"</td>" +
 		"<td style=\"vertical-align:middle;font-family:" + fontStack + ";\">" +
-		"<div style=\"font-size:13px;font-weight:400;color:" + colorMuted + ";line-height:1.3;\">The</div>" +
-		"<div style=\"font-size:18px;font-weight:800;letter-spacing:-.01em;color:" + colorInk + ";line-height:1.25;\">" + html.EscapeString(strings.TrimPrefix(strings.TrimSpace(b.AppName), "The ")) + "</div>" +
+		"<div style=\"font-size:17px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + colorInk + ";line-height:1.3;\">" + wordmark + "</div>" +
 		"</td>" +
 		"</tr></table>" +
 		"</td></tr>" +
-		"<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>"
+		"<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div class=\"wc-hairline\" style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>"
 }
 
 func firstLetter(s string) string {
@@ -124,7 +181,7 @@ func renderFooterBlock(b Branding) string {
 		contactLine = "<p style=\"margin:0 0 14px;font-size:12px;color:" + colorFaint + ";\">Need help? Contact <a href=\"mailto:" + html.EscapeString(b.SupportEmail) + "\" style=\"color:" + colorAccent + ";text-decoration:none;\">" + html.EscapeString(b.SupportEmail) + "</a></p>"
 	}
 
-	return "<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>" +
+	return "<tr><td class=\"wc-divider\" style=\"padding:0 48px;\"><div class=\"wc-hairline\" style=\"border-top:1px solid " + colorLine + ";\"></div></td></tr>" +
 		"<tr><td class=\"wc-footer\" style=\"padding:26px 48px 36px;font-family:" + fontStack + ";\">" +
 		"<p style=\"margin:0 0 4px;font-size:12px;color:" + colorFaint + ";\">" + html.EscapeString(b.AppName) + "</p>" +
 		contactLine +
@@ -219,7 +276,7 @@ func renderEyebrow(text, color string) string {
 	if strings.TrimSpace(color) == "" {
 		color = colorAccent
 	}
-	return "<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + color + ";margin-bottom:12px;\">" + html.EscapeString(text) + "</div>"
+	return "<div class=\"wc-eyebrow\" style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + color + ";margin-bottom:12px;\">" + html.EscapeString(text) + "</div>"
 }
 
 // infoItem is one label/value pair rendered by renderInfoGrid.

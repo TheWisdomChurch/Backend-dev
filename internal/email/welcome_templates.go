@@ -233,7 +233,7 @@ func normalizeBranding(b Branding) Branding {
 // brandLogoURL resolves the logo image URL for email templates. Prefers an
 // explicitly configured APP_LOGO_URL (e.g. a CDN asset); otherwise falls back
 // to this backend's own embedded logo, served at PublicURL+LogoAssetPath
-// (see embedded.go and the /assets/logo.webp route in cmd/api/router.go).
+// (see embedded.go and the /assets/logo.png route in cmd/api/router.go).
 func brandLogoURL(b Branding) string {
 	if logo := strings.TrimSpace(b.LogoURL); logo != "" {
 		return logo
