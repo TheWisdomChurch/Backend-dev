@@ -36,6 +36,10 @@ type WeddingAnniversaryRepository interface {
 	// filtered to people who are still reachable (active member / approved
 	// leader / serving worker with a non-empty email).
 	ListDueByMonthDay(ctx context.Context, month, day int) ([]models.WeddingAnniversaryView, error)
+	// ResolveSubjectByEmail finds the first member/leadership/workforce person
+	// with this email, so a spouse given only by email can be linked as an
+	// internal subject rather than an external contact.
+	ResolveSubjectByEmail(ctx context.Context, email string) (subjectType, subjectID string, found bool, err error)
 }
 
 type weddingAnniversaryRepository struct{ db *database.Database }
@@ -258,6 +262,32 @@ func (r *weddingAnniversaryRepository) Stats(ctx context.Context) (*models.Weddi
 	}
 	out.Archived = out.Total - out.Active
 	return out, nil
+}
+
+func (r *weddingAnniversaryRepository) ResolveSubjectByEmail(ctx context.Context, email string) (string, string, bool, error) {
+	addr := strings.ToLower(strings.TrimSpace(email))
+	if addr == "" {
+		return "", "", false, nil
+	}
+	var hit struct {
+		SubjectType string
+		SubjectID   string
+	}
+	q := `
+	  SELECT 'member' AS subject_type, id::text AS subject_id FROM members            WHERE LOWER(email) = ?
+	  UNION ALL
+	  SELECT 'leadership',              id::text            FROM leadership_members    WHERE LOWER(email) = ?
+	  UNION ALL
+	  SELECT 'workforce',               id::text            FROM workforce_members     WHERE LOWER(email) = ?
+	  LIMIT 1`
+	err := r.db.WithContext(ctx).Raw(q, addr, addr, addr).Scan(&hit).Error
+	if err != nil {
+		return "", "", false, err
+	}
+	if hit.SubjectID == "" {
+		return "", "", false, nil
+	}
+	return hit.SubjectType, hit.SubjectID, true, nil
 }
 
 func valueOrEmptyPtr(s *string) string {
