@@ -352,6 +352,23 @@ func renderParagraph(htmlContent string) string {
 	return "<p style=\"margin:0 0 16px;font-size:15px;line-height:1.65;color:" + colorBody + ";\">" + htmlContent + "</p>"
 }
 
+// renderQuoteBlock renders a pull quote with a brass left rule — used for a
+// scripture verse or a short blessing. quoteHTML is trusted HTML (caller
+// escapes); attribution is plain text and may be "".
+func renderQuoteBlock(quoteHTML, attribution string) string {
+	if strings.TrimSpace(quoteHTML) == "" {
+		return ""
+	}
+	out := "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:4px 0 18px;\"><tr>" +
+		"<td class=\"wc-hairline\" style=\"border-left:3px solid " + colorAccent + ";padding:2px 0 2px 16px;font-family:" + fontStack + ";\">" +
+		"<div style=\"font-size:15px;line-height:1.6;font-style:italic;color:" + colorBody + ";\">" + quoteHTML + "</div>"
+	if a := strings.TrimSpace(attribution); a != "" {
+		out += "<div class=\"wc-eyebrow\" style=\"margin-top:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:" + colorAccent + ";\">" + html.EscapeString(a) + "</div>"
+	}
+	out += "</td></tr></table>"
+	return out
+}
+
 // renderHeading renders the main headline for a body block.
 func renderHeading(text string) string {
 	text = strings.TrimSpace(text)
