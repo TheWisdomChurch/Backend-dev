@@ -93,6 +93,23 @@ func (h *EmailTemplateRegistryHandler) List(c *gin.Context) {
 	})
 }
 
+// Preview renders FormEmailContent through the exact same code the Response
+// Email Editor's save path uses, without persisting anything — this backs
+// the editor's live preview so it can never drift from what actually saves.
+func (h *EmailTemplateRegistryHandler) Preview(c *gin.Context) {
+	var content models.FormEmailContent
+	if !validation.BindJSON(c, &content) {
+		return
+	}
+
+	htmlBody, textBody := h.svc.Preview(content)
+
+	utils.SuccessResponse(c, http.StatusOK, "Email preview rendered", gin.H{
+		"htmlBody": htmlBody,
+		"textBody": textBody,
+	})
+}
+
 func (h *EmailTemplateRegistryHandler) Activate(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {

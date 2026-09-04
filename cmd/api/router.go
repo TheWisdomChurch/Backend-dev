@@ -484,6 +484,7 @@ func setupRouter(
 	admin.POST("/email/templates/send", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateHandler.SendTemplate)
 	admin.GET("/email/templates", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.List)
 	admin.POST("/email/templates", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Create)
+	admin.POST("/email/templates/preview", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Preview)
 	admin.GET("/email/templates/:id", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Get)
 	admin.PUT("/email/templates/:id", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Update)
 	admin.POST("/email/templates/:id/activate", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Activate)
