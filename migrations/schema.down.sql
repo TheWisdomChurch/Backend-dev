@@ -1,5 +1,7 @@
 BEGIN;
 
+-- rollback: 022_form_email_content.down.sql
+ALTER TABLE public.email_templates DROP COLUMN IF EXISTS content_json;
 -- rollback: 021_wedding_anniversaries.down.sql
 -- The legacy leadership_members/workforce_members anniversary_month/day columns
 -- were never dropped, so they remain the fallback after this rollback.

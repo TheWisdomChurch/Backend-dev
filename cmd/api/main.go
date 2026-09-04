@@ -397,9 +397,9 @@ func main() {
 	assetService := service.NewAssetService(assetRepo, assetUploader)
 	adminEmailService := service.NewAdminEmailService(formRepo, emailTemplateRepo, adminEmailDeliveryRepo, subscriberRepo, emailAudienceRepo, emailSender, branding, cfg.Auth.SecretKey)
 	adminEmailScheduleService := service.NewAdminEmailScheduleService(adminEmailScheduleRepo, adminEmailService)
-	weddingAnniversaryService := service.NewWeddingAnniversaryService(weddingAnniversaryRepo, subscriberRepo, emailSender, adminNotificationService, branding)
+	weddingAnniversaryService := service.NewWeddingAnniversaryService(weddingAnniversaryRepo, subscriberRepo, emailSender, adminNotificationService, branding, cfg.Auth.SecretKey)
 	celebrationAutomationService := service.NewCelebrationAutomationService(celebrationAutomationRepo, weddingAnniversaryRepo, subscriberRepo, emailSender, branding, cfg.Auth.SecretKey)
-	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo)
+	emailTemplateRegistryService := service.NewEmailTemplateRegistryService(emailTemplateRepo, branding)
 
 	workforceService := service.NewWorkforceService(workforceRepo, adminNotificationService, approvalService, emailSender, branding)
 	leadershipService := service.NewLeadershipService(leadershipRepo, formRepo, adminNotificationService, approvalService, emailSender, branding)

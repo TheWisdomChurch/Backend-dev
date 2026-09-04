@@ -418,6 +418,13 @@ ALTER TABLE public.forms
   ADD COLUMN IF NOT EXISTS report_access_token character varying(160),
   ADD COLUMN IF NOT EXISTS published_at timestamp with time zone;
 
+-- Structured content behind a form response email (heading, message, CTA,
+-- calendar/resource blocks, ...). When set, html_body/text_body are always
+-- regenerated from this by internal/email.RenderFormEmailContent, the single
+-- place that owns this design.
+ALTER TABLE public.email_templates
+  ADD COLUMN IF NOT EXISTS content_json jsonb;
+
 ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS federated_provider character varying(50),
   ADD COLUMN IF NOT EXISTS federated_subject character varying(255),

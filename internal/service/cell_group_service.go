@@ -15,7 +15,7 @@ type CellGroupService interface {
 	List(ctx context.Context, campusID *string, activeOnly bool, limit, offset int) ([]models.CellGroup, int64, error)
 	Delete(ctx context.Context, id string) error
 
-	AddMember(ctx context.Context, groupID, memberID, role string) error
+	AddMember(ctx context.Context, groupID, memberID, role string) (*models.CellGroupMember, error)
 	RemoveMember(ctx context.Context, groupID, memberID string) error
 	ListMembers(ctx context.Context, groupID string) ([]models.CellGroupMember, error)
 	MemberGroups(ctx context.Context, memberID string) ([]models.CellGroup, error)
@@ -58,7 +58,7 @@ func (s *cellGroupService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func (s *cellGroupService) AddMember(ctx context.Context, groupID, memberID, role string) error {
+func (s *cellGroupService) AddMember(ctx context.Context, groupID, memberID, role string) (*models.CellGroupMember, error) {
 	if role == "" {
 		role = "member"
 	}

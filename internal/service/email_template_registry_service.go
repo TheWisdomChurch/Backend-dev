@@ -2,10 +2,14 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"html/template"
 	"strings"
 
+	"gorm.io/datatypes"
+
+	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
@@ -17,14 +21,42 @@ type EmailTemplateRegistryService interface {
 	List(page, limit int, ownerType, ownerID, templateKey, status string) ([]models.EmailTemplate, int64, error)
 	Activate(id string) (*models.EmailTemplate, error)
 	RenderHTML(tpl *models.EmailTemplate, data any) (string, error)
+	// Preview renders content through the exact same code path Create/Update
+	// use to bake HTMLBody, without persisting anything — this is what the
+	// admin portal's live preview calls, so preview and saved output can
+	// never drift from each other.
+	Preview(content models.FormEmailContent) (htmlBody string, textBody string)
 }
 
 type emailTemplateRegistryService struct {
-	repo repository.EmailTemplateRepository
+	repo     repository.EmailTemplateRepository
+	branding email.Branding
 }
 
-func NewEmailTemplateRegistryService(repo repository.EmailTemplateRepository) EmailTemplateRegistryService {
-	return &emailTemplateRegistryService{repo: repo}
+func NewEmailTemplateRegistryService(repo repository.EmailTemplateRepository, branding email.Branding) EmailTemplateRegistryService {
+	return &emailTemplateRegistryService{repo: repo, branding: branding}
+}
+
+// applyContent renders req content via the shared theme and writes the
+// result into tpl.HTMLBody/TextBody/ContentJSON. It's the only path by which
+// HTMLBody is set for a content-driven template — callers never accept a
+// client-supplied HTMLBody alongside Content.
+func (s *emailTemplateRegistryService) applyContent(tpl *models.EmailTemplate, content models.FormEmailContent) error {
+	htmlBody, textBody := email.RenderFormEmailContent(s.branding, content)
+
+	contentBytes, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+
+	tpl.HTMLBody = htmlBody
+	tpl.TextBody = &textBody
+	tpl.ContentJSON = datatypes.JSON(contentBytes)
+	return nil
+}
+
+func (s *emailTemplateRegistryService) Preview(content models.FormEmailContent) (string, string) {
+	return email.RenderFormEmailContent(s.branding, content)
 }
 
 func (s *emailTemplateRegistryService) Create(req *models.CreateEmailTemplateRequest, createdBy *string) (*models.EmailTemplate, error) {
@@ -73,8 +105,14 @@ func (s *emailTemplateRegistryService) Create(req *models.CreateEmailTemplateReq
 		IsActive:    req.Activate,
 		CreatedByID: createdBy,
 	}
+
+	if req.Content != nil {
+		if err := s.applyContent(tpl, *req.Content); err != nil {
+			return nil, err
+		}
+	}
 	if tpl.HTMLBody == "" {
-		return nil, errors.New("htmlBody is required")
+		return nil, errors.New("htmlBody or content is required")
 	}
 
 	if req.Activate {
@@ -131,15 +169,30 @@ func (s *emailTemplateRegistryService) Update(id string, req *models.UpdateEmail
 	if req.Subject != nil {
 		tpl.Subject = cleanPtr(req.Subject)
 	}
-	if req.HTMLBody != nil {
-		body := strings.TrimSpace(*req.HTMLBody)
-		if body == "" {
-			return nil, errors.New("htmlBody cannot be empty")
+	if req.Content != nil {
+		// Content-driven templates are re-rendered from scratch, so a
+		// directly-supplied HTMLBody/TextBody alongside Content would be
+		// silently discarded and misleading — reject it instead.
+		if req.HTMLBody != nil || req.TextBody != nil {
+			return nil, errors.New("htmlBody/textBody cannot be set together with content")
 		}
-		tpl.HTMLBody = body
-	}
-	if req.TextBody != nil {
-		tpl.TextBody = cleanPtr(req.TextBody)
+		if err := s.applyContent(tpl, *req.Content); err != nil {
+			return nil, err
+		}
+	} else {
+		if req.HTMLBody != nil {
+			body := strings.TrimSpace(*req.HTMLBody)
+			if body == "" {
+				return nil, errors.New("htmlBody cannot be empty")
+			}
+			tpl.HTMLBody = body
+			// Switching to a hand-authored body: it no longer reflects
+			// structured content, so drop the stale snapshot.
+			tpl.ContentJSON = nil
+		}
+		if req.TextBody != nil {
+			tpl.TextBody = cleanPtr(req.TextBody)
+		}
 	}
 	if req.Status != nil {
 		tpl.Status = *req.Status

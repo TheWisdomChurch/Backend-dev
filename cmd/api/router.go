@@ -432,6 +432,13 @@ func setupRouter(
 	admin.POST("/ministries/:id/workforce", middleware.RequirePermission(middleware.PermissionWorkforceManage), ministryHandler.AssignWorkforceMember)
 	admin.PATCH("/ministries/:id/workforce/:workforce_id", middleware.RequirePermission(middleware.PermissionWorkforceManage), ministryHandler.UpdateWorkforceAssignment)
 	admin.DELETE("/ministries/:id/workforce/:workforce_id", middleware.RequirePermission(middleware.PermissionWorkforceManage), ministryHandler.RemoveWorkforceMember)
+	// General (non-workforce) ministry membership — handler methods already existed
+	// (AddMember/RemoveMember/ListMembers) but were never routed; the admin portal
+	// (src/lib/api.ts: listMinistryMembers/addMinistryMember/removeMinistryMember)
+	// has been calling these paths all along.
+	admin.GET("/ministries/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.ListMembers)
+	admin.POST("/ministries/:id/members", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.AddMember)
+	admin.DELETE("/ministries/:id/members/:member_id", middleware.RequirePermission(middleware.PermissionMembersManage), ministryHandler.RemoveMember)
 
 	// SSE — real-time event stream (requires auth, no CSRF needed for GET)
 	admin.GET("/events/stream", sseHandler.Stream)
@@ -477,6 +484,7 @@ func setupRouter(
 	admin.POST("/email/templates/send", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateHandler.SendTemplate)
 	admin.GET("/email/templates", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.List)
 	admin.POST("/email/templates", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Create)
+	admin.POST("/email/templates/preview", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Preview)
 	admin.GET("/email/templates/:id", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Get)
 	admin.PUT("/email/templates/:id", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Update)
 	admin.POST("/email/templates/:id/activate", middleware.RequirePermission(middleware.PermissionEmailManage), emailTemplateRegistryHandler.Activate)

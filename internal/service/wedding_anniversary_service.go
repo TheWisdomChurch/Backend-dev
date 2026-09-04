@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"wisdomHouse-backend/internal/authutil"
 	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
@@ -35,6 +37,7 @@ type weddingAnniversaryService struct {
 	sender    EmailSender
 	notifySvc AdminNotificationService
 	branding  email.Branding
+	protector *authutil.Protector
 }
 
 func NewWeddingAnniversaryService(
@@ -43,8 +46,26 @@ func NewWeddingAnniversaryService(
 	sender EmailSender,
 	notifySvc AdminNotificationService,
 	branding email.Branding,
+	authSecret string,
 ) WeddingAnniversaryService {
-	return &weddingAnniversaryService{repo: repo, suppress: suppress, sender: sender, notifySvc: notifySvc, branding: branding}
+	protector, _ := authutil.NewProtector(authSecret)
+	return &weddingAnniversaryService{repo: repo, suppress: suppress, sender: sender, notifySvc: notifySvc, branding: branding, protector: protector}
+}
+
+// unsubscribeURL mirrors notificationService.unsubscribeURL / celebrationAutomationService.unsubscribeURL
+// — same token scheme, same /notifications/unsubscribe endpoint, so any
+// address (member or an external spouse who never subscribed to anything
+// else) gets a working one-click unsubscribe.
+func (s *weddingAnniversaryService) unsubscribeURL(address string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
+	if base == "" || s.protector == nil {
+		return ""
+	}
+	token, err := s.protector.EncryptString("unsubscribe\n" + strings.ToLower(strings.TrimSpace(address)))
+	if err != nil {
+		return ""
+	}
+	return base + "/api/v1/notifications/unsubscribe?token=" + url.QueryEscape(token)
 }
 
 func (s *weddingAnniversaryService) UpsertForSubject(ctx context.Context, subjectType, subjectID string, in models.WeddingAnniversaryInput, source models.WeddingAnniversarySource, submissionID *string) (*models.WeddingAnniversary, error) {
@@ -235,7 +256,7 @@ func (s *weddingAnniversaryService) SendGreetingsForDay(ctx context.Context, mon
 				continue
 			}
 			sentTo[addr] = true
-			if sendErr := s.sender.SendHTML(addr, subject, body); sendErr != nil {
+			if sendErr := sendCelebrationEmail(s.sender, addr, subject, body, s.unsubscribeURL(addr)); sendErr != nil {
 				continue
 			}
 			anySent = true
