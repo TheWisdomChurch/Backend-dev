@@ -47,6 +47,7 @@ func setupRouter(
 	workforceHandler *handlers.WorkforceHandler,
 	leadershipHandler *handlers.LeadershipHandler,
 	memberHandler *handlers.MemberHandler,
+	weddingAnniversaryHandler *handlers.WeddingAnniversaryHandler,
 	newMemberWorkflowHandler *handlers.NewMemberWorkflowHandler,
 	emailTemplateHandler *handlers.EmailTemplateHandler,
 	emailTemplateRegistryHandler *handlers.EmailTemplateRegistryHandler,
@@ -547,6 +548,21 @@ func setupRouter(
 	admin.GET("/members/birthdays/stats", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdayStats)
 	admin.GET("/members/birthdays/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysByMonth)
 	admin.GET("/members/birthdays/today", middleware.RequirePermission(middleware.PermissionMembersManage), memberHandler.BirthdaysToday)
+
+	// Wedding anniversaries — unified across members / leadership / workforce.
+	// Collection routes use the plural path; single-record routes use the
+	// singular path so httprouter never sees a static/param sibling clash.
+	admin.GET("/wedding-anniversaries", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.List)
+	admin.POST("/wedding-anniversaries", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Upsert)
+	admin.GET("/wedding-anniversaries/stats", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Stats)
+	admin.GET("/wedding-anniversaries/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.ByMonth)
+	admin.GET("/wedding-anniversaries/today", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Today)
+	admin.POST("/wedding-anniversaries/send-today", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.SendToday)
+	admin.GET("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Get)
+	admin.PUT("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Upsert)
+	admin.DELETE("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Delete)
+	admin.POST("/wedding-anniversary/:id/archive", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Archive)
+	admin.POST("/wedding-anniversary/:id/unarchive", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Unarchive)
 
 	// Store admin
 	admin.GET("/store/products", middleware.RequirePermission(middleware.PermissionStoreManage), storeHandler.ListProductsAdmin)

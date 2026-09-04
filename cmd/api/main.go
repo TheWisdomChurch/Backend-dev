@@ -575,6 +575,7 @@ func main() {
 	)
 	leadershipHandler := handlers.NewLeadershipHandler(leadershipService, assetUploader, userRepo)
 	memberHandler := handlers.NewMemberHandler(memberService)
+	weddingAnniversaryHandler := handlers.NewWeddingAnniversaryHandler(weddingAnniversaryService)
 	newMemberWorkflowHandler := handlers.NewNewMemberWorkflowHandler(newMemberWorkflowService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(emailTemplateService)
 	emailTemplateRegistryHandler := handlers.NewEmailTemplateRegistryHandler(emailTemplateRegistryService)
@@ -665,6 +666,7 @@ func main() {
 		workforceHandler,
 		leadershipHandler,
 		memberHandler,
+		weddingAnniversaryHandler,
 		newMemberWorkflowHandler,
 		emailTemplateHandler,
 		emailTemplateRegistryHandler,
