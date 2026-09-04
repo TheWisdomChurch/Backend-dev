@@ -417,6 +417,7 @@ func main() {
 		memberService,
 		leadershipService,
 		testimonialService,
+		weddingAnniversaryService,
 		adminNotificationService,
 		emailSender,
 		branding,
