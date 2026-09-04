@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"gorm.io/datatypes"
 
+	applog "wisdomHouse-backend/internal/logger"
 	"wisdomHouse-backend/internal/models"
 )
 
@@ -188,7 +190,7 @@ func (s *formService) notifySubmissionTargetSyncFailure(form *models.Form, submi
 	})
 }
 
-func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any) error {
+func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, submissionID string) error {
 	target := resolveSubmissionTargetForForm(form, settings)
 	if target == "" {
 		return nil
@@ -204,8 +206,14 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		if err != nil {
 			return err
 		}
-		_, err = s.workforceSvc.CreateApplication(req)
-		return err
+		created, err := s.workforceSvc.CreateApplication(req)
+		if err != nil {
+			return err
+		}
+		if created != nil {
+			s.syncWeddingAnniversary(string(models.WeddingAnniversarySubjectWorkforce), created.ID, values, submissionID)
+		}
+		return nil
 	case "workforce_serving":
 		if s.workforceSvc == nil {
 			return errors.New("workforce service not configured")
@@ -214,8 +222,14 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		if err != nil {
 			return err
 		}
-		_, err = s.workforceSvc.RegisterExisting(req)
-		return err
+		created, err := s.workforceSvc.RegisterExisting(req)
+		if err != nil {
+			return err
+		}
+		if created != nil {
+			s.syncWeddingAnniversary(string(models.WeddingAnniversarySubjectWorkforce), created.ID, values, submissionID)
+		}
+		return nil
 	case "member":
 		if s.memberSvc == nil {
 			return errors.New("member service not configured")
@@ -224,8 +238,14 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		if err != nil {
 			return err
 		}
-		_, err = s.memberSvc.Create(req)
-		return err
+		created, err := s.memberSvc.Create(req)
+		if err != nil {
+			return err
+		}
+		if created != nil {
+			s.syncWeddingAnniversary(string(models.WeddingAnniversarySubjectMember), created.ID, values, submissionID)
+		}
+		return nil
 	case "leadership":
 		if s.leadershipSvc == nil {
 			return errors.New("leadership service not configured")
@@ -234,8 +254,14 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 		if err != nil {
 			return err
 		}
-		_, err = s.leadershipSvc.Apply(req)
-		return err
+		created, err := s.leadershipSvc.Apply(req)
+		if err != nil {
+			return err
+		}
+		if created != nil {
+			s.syncWeddingAnniversary(string(models.WeddingAnniversarySubjectLeadership), created.ID, values, submissionID)
+		}
+		return nil
 	case "testimonial":
 		if s.testimonialSvc == nil {
 			return errors.New("testimonial service not configured")
@@ -261,6 +287,70 @@ func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.F
 // key-lookup list.
 func BuildWorkforceRequestFromValues(values map[string]any) (*models.CreateWorkforceRequest, error) {
 	return buildWorkforceRequest(values, nil, false)
+}
+
+// buildWeddingAnniversaryInput pulls the wedding-anniversary + spouse answers
+// out of a submission's values map. ok is false when no anniversary date was
+// supplied (the common case for forms that don't ask). Recognised field keys:
+//
+//	anniversary date  : weddingAnniversary | wedding_anniversary | anniversary | anniversaryDate
+//	spouse name        : spouseName | spouse_name | spouseFullName | partnerName | spouse
+//	spouse email       : spouseEmail | spouse_email | partnerEmail
+//	consent to email   : spouseEmailConsent | spouseConsent | partnerConsentToEmail
+func buildWeddingAnniversaryInput(values map[string]any) (models.WeddingAnniversaryInput, bool) {
+	date := strings.TrimSpace(valueAsString(values,
+		"weddingAnniversary", "wedding_anniversary", "anniversary", "anniversaryDate", "anniversary_date",
+	))
+	if date == "" {
+		return models.WeddingAnniversaryInput{}, false
+	}
+	in := models.WeddingAnniversaryInput{Anniversary: &date}
+
+	in.SpouseName = strings.TrimSpace(valueAsString(values,
+		"spouseName", "spouse_name", "spouseFullName", "spouse_full_name", "partnerName", "partner_name", "spouse",
+	))
+	if email := strings.TrimSpace(valueAsString(values, "spouseEmail", "spouse_email", "partnerEmail", "partner_email")); email != "" {
+		in.SpouseEmail = &email
+		in.SpouseEmailConsent = parseFormBool(valueAsString(values,
+			"spouseEmailConsent", "spouse_email_consent", "spouseConsent", "spouse_consent", "partnerConsentToEmail", "partner_consent_to_email",
+		))
+	}
+	if raw := strings.TrimSpace(valueAsString(values, "spouseIsExternal", "spouse_is_external", "spouseAttendsAnotherChurch", "spouse_attends_another_church")); raw != "" {
+		ext := parseFormBool(raw)
+		in.SpouseIsExternal = &ext
+	}
+	return in, true
+}
+
+func parseFormBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes", "y", "on", "checked":
+		return true
+	default:
+		return false
+	}
+}
+
+// syncWeddingAnniversary upserts the marriage record for a person just created
+// from a form submission. Best-effort: a failure here never fails the
+// submission (the raw answers are already saved), it only surfaces to admins.
+func (s *formService) syncWeddingAnniversary(subjectType, subjectID string, values map[string]any, submissionID string) {
+	if s.weddingSvc == nil || strings.TrimSpace(subjectID) == "" {
+		return
+	}
+	in, ok := buildWeddingAnniversaryInput(values)
+	if !ok {
+		return
+	}
+	var subPtr *string
+	if strings.TrimSpace(submissionID) != "" {
+		v := strings.TrimSpace(submissionID)
+		subPtr = &v
+	}
+	if _, err := s.weddingSvc.UpsertForSubject(context.Background(), subjectType, subjectID, in, models.WeddingAnniversarySourceForm, subPtr); err != nil {
+		applog.L().Warn("wedding anniversary sync from form failed",
+			"subject_type", subjectType, "subject_id", subjectID, "error", err)
+	}
 }
 
 func buildWorkforceRequest(values map[string]any, settings *models.FormSettingsDTO, existing bool) (*models.CreateWorkforceRequest, error) {
