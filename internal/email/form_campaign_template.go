@@ -199,10 +199,10 @@ var formCampaignBodyTemplate = template.Must(template.New("form-campaign-body").
 {{if .FlyerImageURLs}}
 <tr><td style="padding:24px 40px 0;">
   <div style="font-family:` + fontStack + `;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:` + colorMuted + `;margin-bottom:12px;">Event flyers</div>
-  {{range .FlyerImageURLs}}
-  <div style="margin:0 0 12px;"><img src="{{.}}" alt="Event flyer" style="display:block;width:100%;height:auto;border:1px solid ` + colorLine + `;"></div>
-  {{end}}
 </td></tr>
+{{range .FlyerImageURLs}}
+<tr><td class="wc-hero-cell" style="padding:0;"><img src="{{.}}" alt="Event flyer" class="wc-hero" style="display:block;width:100%;max-width:100%;height:auto;border:0;margin:0 0 4px;"></td></tr>
+{{end}}
 {{end}}
 
 {{if .ClosingHTML}}
