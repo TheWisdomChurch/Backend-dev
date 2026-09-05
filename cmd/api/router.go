@@ -366,6 +366,9 @@ func setupRouter(
 	admin.GET("/security/overview", middleware.RequirePermission(middleware.PermissionSecurityRead), adminHandler.GetSecurityOverview)
 	admin.GET("/testimonials/pending", middleware.RequirePermission(middleware.PermissionAdminRead), adminHandler.GetPendingTestimonials)
 	admin.PUT("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.UpdateTestimonial)
+	// Super admins delete immediately; other admins get a removal request
+	// routed to the super-admin approval queue (handled inside DeleteTestimonial).
+	admin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
 	admin.GET("/audit-logs", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 	admin.GET("/audit", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 	admin.GET("/activity", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
@@ -608,7 +611,7 @@ func setupRouter(
 	superAdmin.POST("/leadership/:id/decline", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.Decline)
 	superAdmin.POST("/leadership/:id/delete/approve", middleware.RequirePermission(middleware.PermissionLeadershipManage), leadershipHandler.ApproveDelete)
 	superAdmin.PATCH("/testimonials/:id/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveTestimonial)
-	superAdmin.DELETE("/testimonials/:id", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.DeleteTestimonial)
+	superAdmin.POST("/testimonials/:id/delete/approve", middleware.RequirePermission(middleware.PermissionAdminWrite), testimonialHandler.ApproveDeleteTestimonial)
 	superAdmin.PATCH("/events/:id/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Approve)
 	superAdmin.POST("/events/:id/delete/approve", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.ApproveDeleteEvent)
 

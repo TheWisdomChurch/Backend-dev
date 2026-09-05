@@ -87,6 +87,9 @@ func presentApprovalRequest(req models.ApprovalRequest) approvalRequestResponse 
 	case models.ApprovalTypeTestimonial:
 		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve testimonial", Method: http.MethodPatch, URL: "/api/v1/admin/testimonials/" + entityID + "/approve"}
 		resp.DeleteAction = &approvalRequestActionLink{Label: "Reject/delete testimonial", Method: http.MethodDelete, URL: "/api/v1/admin/testimonials/" + entityID}
+	case models.ApprovalTypeTestimonialDelete:
+		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve testimonial removal", Method: http.MethodPost, URL: "/api/v1/admin/testimonials/" + entityID + "/delete/approve"}
+		resp.RejectAction = &approvalRequestActionLink{Label: "Reject testimonial removal", Method: http.MethodPost, URL: "/api/v1/admin/requests/" + req.ID + "/reject"}
 	case models.ApprovalTypeEvent:
 		resp.ApproveAction = &approvalRequestActionLink{Label: "Approve event", Method: http.MethodPatch, URL: "/api/v1/admin/events/" + entityID + "/approve"}
 		resp.DeleteAction = &approvalRequestActionLink{Label: "Reject/delete event", Method: http.MethodDelete, URL: "/api/v1/admin/events/" + entityID}
