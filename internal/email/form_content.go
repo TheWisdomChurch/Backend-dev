@@ -38,6 +38,9 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 		"{{if .UnsubscribeURL}}<a href=\"{{.UnsubscribeURL}}\" style=\"color:" + colorInk + ";font-weight:700;text-decoration:underline;\">unsubscribe</a>{{end}}" +
 		"</td></tr>"
 
+	// Section order mirrors the "Add New Member" reference template: greeting
+	// -> message -> scripture/spotlight callout -> a distinct "what happens
+	// next" section -> resources/registration/calendar -> a signed closing.
 	var body strings.Builder
 	body.WriteString(topLinks)
 	body.WriteString(renderHeroImageBlock(strings.TrimSpace(content.ImageURL), heading))
@@ -47,9 +50,9 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 	body.WriteString(renderParagraph("Hello {{.RecipientName}},"))
 	body.WriteString(renderBodyClose())
 
-	if rows := calendarSummaryItems(content.CalendarEvent); len(rows) > 0 {
-		body.WriteString(renderInfoGrid(rows))
-	}
+	body.WriteString(renderBodyOpen())
+	body.WriteString(renderMessageBlock(content))
+	body.WriteString(renderBodyClose())
 
 	if spotlight := strings.TrimSpace(content.SpotlightText); spotlight != "" {
 		body.WriteString(renderBodyOpen())
@@ -57,16 +60,16 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 		body.WriteString(renderBodyClose())
 	}
 
-	body.WriteString(renderBodyOpen())
-	body.WriteString(renderMessageBlock(content))
-	body.WriteString(renderBodyClose())
+	if rows := calendarSummaryItems(content.CalendarEvent); len(rows) > 0 {
+		body.WriteString(renderInfoGrid(rows))
+	}
+
+	if nextSteps := renderNextStepsBlock(content); nextSteps != "" {
+		body.WriteString(nextSteps)
+	}
 
 	if resources := renderResourceLinksBlock(content.ResourceLinks); resources != "" {
 		body.WriteString(resources)
-	}
-
-	if buttons := renderCTAButtons(content); buttons != "" {
-		body.WriteString(renderActionRow(buttons))
 	}
 
 	if content.IncludeRegistrationCode {
@@ -79,8 +82,63 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 		body.WriteString(renderCalendarOptInBlock(content))
 	}
 
+	if closing := renderClosingBlock(b, content); closing != "" {
+		body.WriteString(closing)
+	}
+
 	return renderEmailShellWithPreheader(b, "", strings.TrimSpace(content.Preheader), body.String()),
 		buildFormEmailText(content, heading)
+}
+
+// renderNextStepsBlock renders the "What happens next?" section: a
+// subheading, a paragraph, and — if a CTA is configured — the action button,
+// all folded into one section rather than a separate floating button. Any
+// piece may be present alone (e.g. just a CTA with no heading/text).
+func renderNextStepsBlock(content models.FormEmailContent) string {
+	heading := strings.TrimSpace(content.NextStepsHeading)
+	text := strings.TrimSpace(content.NextStepsText)
+	cta := renderCTAButtons(content)
+	if heading == "" && text == "" && cta == "" {
+		return ""
+	}
+
+	var out strings.Builder
+	out.WriteString(renderBodyOpen())
+	if heading != "" {
+		out.WriteString("<h3 style=\"margin:0 0 10px;font-size:16px;font-weight:700;color:" + colorInk + ";\">" + html.EscapeString(heading) + "</h3>")
+	}
+	if text != "" {
+		out.WriteString(renderParagraph(nl2br(html.EscapeString(text))))
+	}
+	if cta != "" {
+		out.WriteString("<div style=\"margin-top:6px;\">" + cta + "</div>")
+	}
+	out.WriteString(renderBodyClose())
+	return out.String()
+}
+
+// renderClosingBlock renders the final "Once again, welcome... God bless
+// you richly." style paragraph plus a signed valediction, just before the
+// standard footer.
+func renderClosingBlock(b Branding, content models.FormEmailContent) string {
+	message := strings.TrimSpace(content.ClosingMessage)
+	if message == "" {
+		return ""
+	}
+
+	signOff := strings.TrimSpace(content.SignOff)
+	if signOff == "" {
+		signOff = "With love,"
+	}
+	appName := strings.TrimSpace(b.AppName)
+	if appName == "" {
+		appName = "The Wisdom Church"
+	}
+
+	return renderBodyOpen() +
+		renderParagraph(nl2br(html.EscapeString(message))) +
+		"<p style=\"margin:14px 0 0;font-size:13px;color:" + colorMuted + ";\">" + html.EscapeString(signOff) + "<br>" + html.EscapeString(appName) + "</p>" +
+		renderBodyClose()
 }
 
 func renderMessageBlock(content models.FormEmailContent) string {
@@ -186,8 +244,8 @@ func renderResourceLinksBlock(links []models.FormEmailResourceLink) string {
 		return ""
 	}
 	return "<tr><td style=\"padding:0 40px 6px;\">" +
-		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";\">" +
-		"<div style=\"font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:" + colorFaint + ";margin-bottom:12px;\">Resources</div>" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td class=\"wc-callout\" style=\"background:" + colorAccentSurface + ";border:1px solid " + colorAccentBorder + ";border-radius:12px;padding:18px 20px;font-family:" + fontStack + ";\">" +
+		"<div style=\"font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:" + colorAccent + ";margin-bottom:12px;\">Resources</div>" +
 		items.String() +
 		"</td></tr></table></td></tr>"
 }
@@ -234,7 +292,7 @@ func renderCalendarOptInBlock(content models.FormEmailContent) string {
 	}
 
 	return "<tr><td style=\"padding:0 40px 30px;\">" + guardOpen +
-		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";\">" +
+		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td class=\"wc-callout\" style=\"background:" + colorAccentSurface + ";border:1px solid " + colorAccentBorder + ";border-radius:12px;padding:18px 20px;font-family:" + fontStack + ";\">" +
 		"<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorAccent + ";margin-bottom:10px;\">Save the date</div>" +
 		linkHTML +
 		"</td></tr></table>" + guardClose + "</td></tr>"
@@ -267,6 +325,17 @@ func buildFormEmailText(content models.FormEmailContent, heading string) string 
 		}
 	}
 
+	if heading := strings.TrimSpace(content.NextStepsHeading); heading != "" {
+		lines = append(lines, "", heading)
+	}
+	if text := strings.TrimSpace(content.NextStepsText); text != "" {
+		lines = append(lines, "", text)
+	}
+
+	if strings.TrimSpace(content.CTALabel) != "" && strings.TrimSpace(content.CTAURL) != "" {
+		lines = append(lines, "", content.CTALabel+": "+content.CTAURL)
+	}
+
 	for _, resource := range content.ResourceLinks {
 		if strings.TrimSpace(resource.Label) == "" || strings.TrimSpace(resource.URL) == "" {
 			continue
@@ -274,8 +343,8 @@ func buildFormEmailText(content models.FormEmailContent, heading string) string 
 		lines = append(lines, "", resource.Label+": "+resource.URL)
 	}
 
-	if strings.TrimSpace(content.CTALabel) != "" && strings.TrimSpace(content.CTAURL) != "" {
-		lines = append(lines, "", content.CTALabel+": "+content.CTAURL)
+	if content.IncludeRegistrationCode {
+		lines = append(lines, "", "{{if .RegistrationCode}}Registration Number: {{.RegistrationCode}}{{end}}")
 	}
 
 	if content.IncludeCalendarOptIn {
@@ -290,8 +359,12 @@ func buildFormEmailText(content models.FormEmailContent, heading string) string 
 		lines = append(lines, "", label+": "+calendarURL)
 	}
 
-	if content.IncludeRegistrationCode {
-		lines = append(lines, "", "{{if .RegistrationCode}}Registration Number: {{.RegistrationCode}}{{end}}")
+	if message := strings.TrimSpace(content.ClosingMessage); message != "" {
+		signOff := strings.TrimSpace(content.SignOff)
+		if signOff == "" {
+			signOff = "With love,"
+		}
+		lines = append(lines, "", message, "", signOff)
 	}
 
 	if footer := strings.TrimSpace(content.FooterNote); footer != "" {
