@@ -98,7 +98,18 @@ type FormEmailContent struct {
 	CalendarEvent  *FormEmailCalendarEvent `json:"calendarEvent,omitempty"`
 	ResourceLinks  []FormEmailResourceLink `json:"resourceLinks,omitempty"`
 	SpotlightLabel string                  `json:"spotlightLabel,omitempty"`
-	SpotlightText  string                  `json:"spotlightText,omitempty"`
+	// SpotlightText renders as a scripture/quote callout box after the main
+	// message — e.g. a verse backing up what the email just said.
+	SpotlightText string `json:"spotlightText,omitempty"`
+	// NextStepsHeading/Text render as a second, distinct section after the
+	// spotlight — "What happens next?" — for a follow-up explanation that
+	// doesn't belong in the main greeting/message paragraphs.
+	NextStepsHeading string `json:"nextStepsHeading,omitempty"`
+	NextStepsText    string `json:"nextStepsText,omitempty"`
+	// ClosingMessage/SignOff render as a final paragraph + signature line
+	// ("With love,\nThe Wisdom Church") just before the footer.
+	ClosingMessage string `json:"closingMessage,omitempty"`
+	SignOff        string `json:"signOff,omitempty"`
 	// FooterNote is form-specific context (e.g. "This confirms your
 	// children's ministry registration"), rendered above the standard
 	// footer. Social links are not configurable per form — they always come

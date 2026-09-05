@@ -6,22 +6,32 @@ import (
 	"strings"
 )
 
-// Shared visual language for all outbound email. Sharp corners throughout (no
-// border-radius anywhere), one restrained accent color, hairline rules in
-// place of filled panels. Every template in this package builds on the
-// helpers here instead of hand-rolling its own container/header/footer, so
-// there is exactly one place that defines what a Wisdom Church email looks
-// like.
+// Shared visual language for all outbound email: a warm amber accent family,
+// a rounded card (16px), and soft amber "callout" boxes (colorAccentSurface
+// fill + colorAccentBorder edge) for anything that should draw the eye —
+// a scripture/spotlight quote, a verification code, a calendar reminder,
+// a resource list. Structural hairlines (grid dividers, header/footer
+// rules) stay neutral gray so the amber reads as an accent, not a tint over
+// everything. Every template in this package builds on the helpers here
+// instead of hand-rolling its own container/header/footer, so there is
+// exactly one place that defines what a Wisdom Church email looks like.
 const (
-	colorInk    = "#0E1420" // primary text, headings, button backgrounds
+	colorInk    = "#111827" // primary text, headings, button backgrounds
 	colorPaper  = "#FFFFFF" // card background
-	colorGround = "#EEF0F3" // page background behind the card
-	colorAccent = "#8A6D2F" // brass — the one accent color; used sparingly
+	colorGround = "#F9FAFB" // page background behind the card
+	colorAccent = "#92400E" // amber-800 — text-safe accent: eyebrows, links, labels
 	colorDanger = "#B4432C" // muted red — security/alert top rule only
-	colorLine   = "#DADFE6" // hairline borders/dividers
-	colorMuted  = "#5B6472" // secondary text
-	colorFaint  = "#8A93A3" // footer/tertiary text
-	colorBody   = "#3A414D" // body copy
+	colorLine   = "#E5E7EB" // neutral hairline borders/dividers
+	colorMuted  = "#6B7280" // secondary text
+	colorFaint  = "#9CA3AF" // footer/tertiary text
+	colorBody   = "#374151" // body copy
+
+	// The amber "callout" family: a soft fill + a slightly deeper border,
+	// used together for any box meant to stand out (see renderQuoteBlock,
+	// renderCodeBlock, and the calendar/resource boxes in form_content.go).
+	colorAccentSurface = "#FFFBEB" // amber-50 — callout box fill
+	colorAccentBorder  = "#FDE68A" // amber-200 — callout box border, card border
+	colorAccentBar      = "#FACC15" // amber-400 — the bright top-of-card accent rule
 
 	// Dark-mode counterparts, applied only under prefers-color-scheme:dark
 	// (see the media block in renderEmailShellWithPreheader). Warm near-black
@@ -31,16 +41,17 @@ const (
 	colorGroundDark = "#0B0F16"
 	colorPaperDark  = "#151B25"
 	colorLineDark   = "#2B3440"
-	colorAccentDark = "#C6A667" // brass, lightened for contrast on dark
+	colorAccentDark = "#FBBF24" // amber-400, brightened for contrast on dark
 
 	fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
 )
 
 // renderEmailShell wraps bodyHTML in the standard chrome: page background,
-// sharp-cornered card, a thin top rule (topRuleColor — colorAccent for
-// ordinary mail, colorDanger for security alerts), the brand header, and the
-// footer. Every Render* function in this package should return
-// renderEmailShell(...) rather than building its own <html> wrapper.
+// rounded card with a soft amber border, a bright top rule (topRuleColor —
+// colorAccentBar for ordinary mail, colorDanger for security alerts), the
+// brand header, and the footer. Every Render* function in this package
+// should return renderEmailShell(...) rather than building its own <html>
+// wrapper.
 func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
 	return renderEmailShellWithPreheader(b, topRuleColor, "", bodyHTML)
 }
@@ -52,14 +63,14 @@ func renderEmailShell(b Branding, topRuleColor string, bodyHTML string) string {
 func renderEmailShellWithPreheader(b Branding, topRuleColor string, preheader string, bodyHTML string) string {
 	b = normalizeBranding(b)
 	if strings.TrimSpace(topRuleColor) == "" {
-		topRuleColor = colorAccent
+		topRuleColor = colorAccentBar
 	}
 
 	bodyHTML = addResponsiveContentClasses(bodyHTML)
 	responsiveCSS := "<style>" +
 		":root{color-scheme:light dark;supported-color-schemes:light dark}" +
 		"body{margin:0!important;padding:0!important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}" +
-		".wc-frame{width:100%!important;max-width:680px!important}.wc-content-pad{}.wc-button a{box-sizing:border-box}.wc-fluid-image{max-width:100%!important;height:auto!important}" +
+		".wc-frame{width:100%!important;max-width:640px!important}.wc-content-pad{}.wc-button a{box-sizing:border-box}.wc-fluid-image{max-width:100%!important;height:auto!important}" +
 		".wc-hero-cell{padding:0!important}.wc-hero{width:100%!important;max-width:100%!important;height:auto!important;border:0!important}" +
 		"@media only screen and (max-width:700px){.wc-outer{padding:24px 14px!important}.wc-frame{max-width:100%!important}.wc-header{padding:30px 32px 24px!important}.wc-divider{padding-left:32px!important;padding-right:32px!important}.wc-content-pad,.wc-footer{padding-left:32px!important;padding-right:32px!important}}" +
 		"@media only screen and (max-width:480px){.wc-outer{padding:10px 8px!important}.wc-frame{border-radius:14px!important}.wc-header{padding:24px 20px 20px!important}.wc-divider{padding-left:20px!important;padding-right:20px!important}.wc-content-pad,.wc-footer{padding-left:20px!important;padding-right:20px!important}.wc-button,.wc-button tbody,.wc-button tr,.wc-button td{display:block!important;width:100%!important}.wc-button a{display:block!important;width:100%!important;text-align:center!important;padding:15px 18px!important}.wc-info-cell{display:block!important;width:100%!important;border-right:0!important;border-bottom:1px solid " + colorLine + "!important;padding:14px 0!important}.wc-social a{display:inline-block!important;margin:0 10px 8px 0!important}.wc-social-separator{display:none!important}h1{font-size:25px!important;line-height:1.25!important}}" +
@@ -77,6 +88,10 @@ func renderEmailShellWithPreheader(b Branding, topRuleColor string, preheader st
 		".wc-divider div{border-color:" + colorLineDark + "!important}" +
 		".wc-eyebrow,.wc-accent{color:" + colorAccentDark + "!important}" +
 		".wc-hairline{border-color:" + colorLineDark + "!important}" +
+		// The amber callout boxes (quote, code, calendar/resource highlights)
+		// go neutral in dark mode — amber-50/amber-200 read as muddy on a
+		// dark card, so they fall back to the same surface as the card itself.
+		".wc-callout{background:" + colorPaperDark + "!important;border-color:" + colorLineDark + "!important}" +
 		".wc-button td{background:#ECEEF2!important;border-color:#ECEEF2!important}.wc-button a{color:#151B25!important}" +
 		"}" +
 		"[data-ogsc] .wc-frame{background:" + colorPaperDark + "!important}" +
@@ -97,7 +112,7 @@ func renderEmailShellWithPreheader(b Branding, topRuleColor string, preheader st
 		"<body class=\"wc-body-bg\" style=\"margin:0;padding:0;background:" + colorGround + ";color-scheme:light dark;font-family:" + fontStack + ";\">" +
 		preheaderBlock +
 		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;background:" + colorGround + ";\"><tr><td class=\"wc-outer\" align=\"center\" style=\"padding:32px 20px;\">" +
-		"<table class=\"wc-frame\" role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:680px;background:" + colorPaper + ";border:1px solid " + colorLine + ";border-radius:20px;overflow:hidden;\">" +
+		"<table class=\"wc-frame\" role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:640px;background:" + colorPaper + ";border:1px solid " + colorAccentBorder + ";border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(17,24,39,0.06);\">" +
 		"<tr><td style=\"height:3px;line-height:3px;font-size:0;background:" + topRuleColor + ";\">&nbsp;</td></tr>" +
 		renderHeaderBlock(b) +
 		bodyHTML +
@@ -143,7 +158,7 @@ func renderHeaderBlock(b Branding) string {
 	b = normalizeBranding(b)
 	logoURL := brandLogoURL(b)
 
-	logoCell := "<div style=\"width:52px;height:52px;background:" + colorInk + ";font-family:" + fontStack + ";font-size:22px;font-weight:800;line-height:52px;text-align:center;color:" + colorAccent + ";border-radius:13px;\">" + firstLetter(b.AppName) + "</div>"
+	logoCell := "<div style=\"width:52px;height:52px;background:" + colorInk + ";font-family:" + fontStack + ";font-size:22px;font-weight:800;line-height:52px;text-align:center;color:" + colorAccentBar + ";border-radius:13px;\">" + firstLetter(b.AppName) + "</div>"
 	if logoURL != "" {
 		logoCell = "<img src=\"" + html.EscapeString(logoURL) + "\" width=\"52\" height=\"52\" alt=\"" + html.EscapeString(b.AppName) + "\" style=\"display:block;width:52px;height:52px;border-radius:13px;object-fit:cover;\">"
 	}
@@ -338,8 +353,8 @@ func renderCodeBlock(label, code string) string {
 	if strings.TrimSpace(label) == "" {
 		label = "Code"
 	}
-	return "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:4px 0 0;\"><tr><td style=\"border:1px solid " + colorLine + ";padding:16px 22px;\">" +
-		"<div style=\"font-family:" + fontStack + ";font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorFaint + ";margin-bottom:6px;\">" + html.EscapeString(label) + "</div>" +
+	return "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:4px 0 0;\"><tr><td class=\"wc-callout\" style=\"background:" + colorAccentSurface + ";border:1px solid " + colorAccentBorder + ";border-radius:12px;padding:16px 22px;\">" +
+		"<div style=\"font-family:" + fontStack + ";font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorAccent + ";margin-bottom:6px;\">" + html.EscapeString(label) + "</div>" +
 		"<div style=\"font-family:" + fontStack + ";font-size:24px;font-weight:700;letter-spacing:.08em;color:" + colorInk + ";font-variant-numeric:tabular-nums;\">" + html.EscapeString(code) + "</div>" +
 		"</td></tr></table>"
 }
@@ -360,7 +375,7 @@ func renderQuoteBlock(quoteHTML, attribution string) string {
 		return ""
 	}
 	out := "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:4px 0 18px;\"><tr>" +
-		"<td class=\"wc-hairline\" style=\"border-left:3px solid " + colorAccent + ";padding:2px 0 2px 16px;font-family:" + fontStack + ";\">" +
+		"<td class=\"wc-callout\" style=\"background:" + colorAccentSurface + ";border:1px solid " + colorAccentBorder + ";border-radius:12px;padding:16px;font-family:" + fontStack + ";\">" +
 		"<div style=\"font-size:15px;line-height:1.6;font-style:italic;color:" + colorBody + ";\">" + quoteHTML + "</div>"
 	if a := strings.TrimSpace(attribution); a != "" {
 		out += "<div class=\"wc-eyebrow\" style=\"margin-top:8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:" + colorAccent + ";\">" + html.EscapeString(a) + "</div>"

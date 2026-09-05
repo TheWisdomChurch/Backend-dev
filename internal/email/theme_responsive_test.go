@@ -11,7 +11,7 @@ func TestResponsiveEmailShellHasFluidViewportAndMobileRules(t *testing.T) {
 		`name="viewport"`,
 		`class="wc-frame"`,
 		`width="100%"`,
-		`max-width:680px`,
+		`max-width:640px`,
 		`@media only screen and (max-width:480px)`,
 	} {
 		if !strings.Contains(html, required) {
