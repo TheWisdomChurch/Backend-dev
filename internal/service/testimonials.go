@@ -22,6 +22,11 @@ type TestimonialService interface {
 	GetTestimonialByID(id uuid.UUID) (*models.Testimonial, error)
 	UpdateTestimonial(id uuid.UUID, req *models.UpdateTestimonialRequest) (*models.Testimonial, error)
 	DeleteTestimonial(id uuid.UUID, approver *models.User) error
+	// RequestDelete routes a testimonial removal through the super-admin
+	// approval queue — the path a non-super-admin takes. ApproveDelete is the
+	// super admin acting on that request.
+	RequestDelete(id uuid.UUID, reason string, requestedBy *models.User) (*models.ApprovalRequest, error)
+	ApproveDelete(idOrRequestID string, approver *models.User) error
 	GetPaginatedTestimonials(page, limit int, approved bool) ([]models.Testimonial, int64, error)
 	ApproveTestimonial(id uuid.UUID, approver *models.User) (*models.Testimonial, error)
 }
@@ -186,7 +191,11 @@ func (s *testimonialService) DeleteTestimonial(id uuid.UUID, approver *models.Us
 		return err
 	}
 	if s.approvalSvc != nil {
+		// Close whichever request drove this removal: a still-pending
+		// "new testimonial" ticket (declined before it was ever published),
+		// or a "testimonial_delete" ticket for an already-approved one.
 		_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeTestimonial, id.String(), models.ApprovalStatusDeleted, approver)
+		_, _ = s.approvalSvc.CompleteRequest(models.ApprovalTypeTestimonialDelete, id.String(), models.ApprovalStatusApproved, approver)
 	}
 	if s.notifySvc != nil {
 		title := "Testimonial removed"
@@ -201,6 +210,93 @@ func (s *testimonialService) DeleteTestimonial(id uuid.UUID, approver *models.Us
 		})
 	}
 	return nil
+}
+
+func (s *testimonialService) RequestDelete(id uuid.UUID, reason string, requestedBy *models.User) (*models.ApprovalRequest, error) {
+	if s.approvalSvc == nil {
+		return nil, errors.New("approval service not configured")
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, fmt.Errorf("%w: a reason is required", ErrInvalidTestimonialInput)
+	}
+
+	testimonial, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	label := strings.TrimSpace(testimonial.FullName)
+	if label == "" {
+		label = id.String()
+	}
+	entityID := id.String()
+
+	requestedByID, requestedByName, requestedByEmail := requestedBy.ApprovalRequesterFields()
+
+	req, err := s.approvalSvc.CreateRequest(CreateApprovalRequest{
+		Type:             models.ApprovalTypeTestimonialDelete,
+		EntityID:         &entityID,
+		EntityLabel:      &label,
+		Reason:           &reason,
+		RequestedByID:    requestedByID,
+		RequestedByName:  requestedByName,
+		RequestedByEmail: requestedByEmail,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if s.notifySvc != nil {
+		message := fmt.Sprintf("A testimonial removal is awaiting approval. Ticket %s.", req.TicketCode)
+		_ = s.notifySvc.NotifyRoles(AdminNotificationInput{
+			Type:       "testimonial_delete_request",
+			Title:      "Testimonial removal approval request",
+			Message:    message,
+			TicketCode: &req.TicketCode,
+			EntityType: func() *string { t := "testimonial"; return &t }(),
+			EntityID:   &entityID,
+			Roles:      []string{"super_admin"},
+		})
+	}
+
+	return req, nil
+}
+
+func (s *testimonialService) ApproveDelete(idOrRequestID string, approver *models.User) error {
+	if s.approvalSvc == nil {
+		return errors.New("approval service not configured")
+	}
+
+	entityID := strings.TrimSpace(idOrRequestID)
+	if entityID == "" {
+		return errors.New("testimonial id or approval request id is required")
+	}
+
+	// Accept either the testimonial id or the approval-request id.
+	if _, err := uuid.Parse(entityID); err != nil {
+		req, reqErr := s.approvalSvc.GetRequest(entityID)
+		if reqErr != nil {
+			return reqErr
+		}
+		if req.Type != models.ApprovalTypeTestimonialDelete {
+			return errors.New("approval request is not for testimonial removal")
+		}
+		if req.EntityID == nil || strings.TrimSpace(*req.EntityID) == "" {
+			return errors.New("approval request has no testimonial id")
+		}
+		entityID = strings.TrimSpace(*req.EntityID)
+	}
+
+	testimonialID, err := uuid.Parse(entityID)
+	if err != nil {
+		return fmt.Errorf("%w: invalid testimonial id", ErrInvalidTestimonialInput)
+	}
+
+	// DeleteTestimonial completes the pending testimonial_delete request and
+	// fires the removal notification.
+	return s.DeleteTestimonial(testimonialID, approver)
 }
 
 func (s *testimonialService) GetPaginatedTestimonials(page, limit int, approved bool) ([]models.Testimonial, int64, error) {

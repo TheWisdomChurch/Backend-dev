@@ -137,16 +137,65 @@ func (h *TestimonialHandler) DeleteTestimonial(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.DeleteTestimonial(id, h.currentUser(c)); err != nil {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if !validation.BindJSON(c, &body) {
+		return
+	}
+
+	actor := h.currentUser(c)
+
+	// Super admins remove immediately; everyone else routes the removal
+	// through the super-admin approval queue (same procedure as leadership,
+	// workforce and event deletions).
+	if actor != nil && actor.Role == "super_admin" {
+		if err := h.svc.DeleteTestimonial(id, actor); err != nil {
+			if err == gorm.ErrRecordNotFound {
+				utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
+				return
+			}
+			utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete testimonial")
+			return
+		}
+		utils.SuccessResponse(c, http.StatusOK, "Testimonial deleted successfully", gin.H{"deleted": true})
+		return
+	}
+
+	req, err := h.svc.RequestDelete(id, body.Reason, actor)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidTestimonialInput) {
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err == gorm.ErrRecordNotFound {
 			utils.ErrorResponse(c, http.StatusNotFound, "Testimonial not found")
 			return
 		}
-		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete testimonial")
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to submit removal request")
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Testimonial deleted successfully", nil)
+	utils.SuccessResponse(c, http.StatusAccepted, "Testimonial removal sent for super admin approval", req)
+}
+
+func (h *TestimonialHandler) ApproveDeleteTestimonial(c *gin.Context) {
+	id := c.Param("id")
+
+	if err := h.svc.ApproveDelete(id, h.currentUser(c)); err != nil {
+		if errors.Is(err, service.ErrInvalidTestimonialInput) {
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err == gorm.ErrRecordNotFound {
+			utils.ErrorResponse(c, http.StatusNotFound, "Testimonial or request not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to approve testimonial removal")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Testimonial removal approved", gin.H{"deleted": true})
 }
 
 func (h *TestimonialHandler) ApproveTestimonial(c *gin.Context) {

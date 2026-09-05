@@ -198,6 +198,8 @@ func (s *approvalService) ticketPrefix(t models.ApprovalRequestType, now time.Ti
 	switch t {
 	case models.ApprovalTypeTestimonial:
 		label = "Testimonials"
+	case models.ApprovalTypeTestimonialDelete:
+		label = "TestimonialDelete"
 	case models.ApprovalTypeEvent:
 		label = "Events"
 	case models.ApprovalTypeEventDelete:
