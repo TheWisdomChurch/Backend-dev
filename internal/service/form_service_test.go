@@ -49,8 +49,9 @@ func TestBuildLeadershipRequestFromFormBuilderValues(t *testing.T) {
 	if req.Phone != "+2348012345678" {
 		t.Fatalf("phone = %q, want +2348012345678", req.Phone)
 	}
-	if req.Role != models.LeadershipRoleSeniorPastor {
-		t.Fatalf("role = %q, want %q", req.Role, models.LeadershipRoleSeniorPastor)
+	// Role is stored exactly as the applicant typed it — never forced to a slug.
+	if req.Role != models.LeadershipRole("Senior Pastor") {
+		t.Fatalf("role = %q, want %q", req.Role, "Senior Pastor")
 	}
 	if req.ImageURL == nil || *req.ImageURL != "https://cdn.example.com/ada.webp" {
 		t.Fatalf("imageURL = %v, want profile image", req.ImageURL)
@@ -95,7 +96,7 @@ func TestBuildLeadershipRequestFromLeadershipPreset(t *testing.T) {
 	values := map[string]any{
 		"full_name":       "Grace Hopper",
 		"email":           "grace@example.com",
-		"leadership_role": "pastor",
+		"leadership_role": "Head of Ushering",
 		"photo":           "https://cdn.example.com/grace.webp",
 	}
 
@@ -103,8 +104,9 @@ func TestBuildLeadershipRequestFromLeadershipPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildLeadershipRequest returned error: %v", err)
 	}
-	if req.Role != models.LeadershipRoleSeniorPastor {
-		t.Fatalf("role = %q, want %q", req.Role, models.LeadershipRoleSeniorPastor)
+	// An arbitrary role the applicant typed is preserved verbatim.
+	if req.Role != models.LeadershipRole("Head of Ushering") {
+		t.Fatalf("role = %q, want %q", req.Role, "Head of Ushering")
 	}
 	if req.ImageURL == nil || *req.ImageURL != "https://cdn.example.com/grace.webp" {
 		t.Fatalf("imageURL = %v, want preset photo", req.ImageURL)

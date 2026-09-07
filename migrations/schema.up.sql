@@ -2263,3 +2263,12 @@ SELECT 'workforce', id, anniversary_month, anniversary_day, 'import', 'active'
 FROM workforce_members
 WHERE anniversary_month IS NOT NULL AND anniversary_day IS NOT NULL
 ON CONFLICT (subject_type, subject_id) DO NOTHING;
+
+-- migration: 022_leadership_freeform_role.up.sql
+-- Leadership role is now free text entered by the applicant — not one of five
+-- fixed options. Drop the CHECK constraint and widen the column so any title
+-- ("Pastor", "Cell Leader", "Head of Ushering", …) can be stored verbatim.
+ALTER TABLE leadership_members
+  DROP CONSTRAINT IF EXISTS leadership_members_role_check;
+ALTER TABLE leadership_members
+  ALTER COLUMN role TYPE varchar(120);

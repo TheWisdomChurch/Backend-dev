@@ -116,10 +116,11 @@ func (s *leadershipService) Update(id string, req *models.UpdateLeadershipReques
 		updates["phone"] = strings.TrimSpace(*req.Phone)
 	}
 	if req.Role != nil {
-		if !isValidLeadershipRole(*req.Role) {
-			return nil, errors.New("invalid leadership role")
+		role := models.LeadershipRole(strings.TrimSpace(string(*req.Role)))
+		if !isValidLeadershipRole(role) {
+			return nil, errors.New("leadership role is required")
 		}
-		updates["role"] = *req.Role
+		updates["role"] = role
 	}
 	if req.Status != nil {
 		if !isValidLeadershipStatus(*req.Status) {
@@ -552,8 +553,9 @@ func (s *leadershipService) createWithStatus(
 	if firstName == "" || lastName == "" {
 		return nil, errors.New("firstName and lastName are required")
 	}
+	req.Role = models.LeadershipRole(strings.TrimSpace(string(req.Role)))
 	if !isValidLeadershipRole(req.Role) {
-		return nil, errors.New("invalid leadership role")
+		return nil, errors.New("leadership role is required")
 	}
 	if !isValidLeadershipStatus(status) {
 		return nil, errors.New("invalid leadership status")
@@ -763,17 +765,10 @@ func (s *leadershipService) sendLeadershipStatusEmail(member *models.LeadershipM
 	_ = s.sender.SendHTML(addr, subject, body)
 }
 
+// isValidLeadershipRole now only rejects an empty role — the role is free text
+// entered by the applicant, not one of a fixed set.
 func isValidLeadershipRole(role models.LeadershipRole) bool {
-	switch role {
-	case models.LeadershipRoleSeniorPastor,
-		models.LeadershipRoleAssociatePastor,
-		models.LeadershipRoleDeacon,
-		models.LeadershipRoleDeaconess,
-		models.LeadershipRoleReverend:
-		return true
-	default:
-		return false
-	}
+	return strings.TrimSpace(string(role)) != ""
 }
 
 func isValidLeadershipStatus(status models.LeadershipStatus) bool {

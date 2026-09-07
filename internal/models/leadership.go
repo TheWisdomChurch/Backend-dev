@@ -11,6 +11,10 @@ const (
 	LeadershipStatusDeclined                   LeadershipStatus = "declined"
 )
 
+// LeadershipRole is free text supplied by the applicant. The constants below
+// are the canonical slugs for the founding pastors / board (seeded data and
+// the public directory group on them), but any non-empty value is accepted
+// and stored verbatim.
 type LeadershipRole string
 
 const (
@@ -27,7 +31,7 @@ type LeadershipMember struct {
 	LastName  string           `gorm:"size:100;not null" json:"lastName"`
 	Email     *string          `gorm:"size:255;index:idx_leadership_members_email" json:"email,omitempty"`
 	Phone     *string          `gorm:"size:50" json:"phone,omitempty"`
-	Role      LeadershipRole   `gorm:"size:30;not null;index:idx_leadership_role_status" json:"role"`
+	Role      LeadershipRole   `gorm:"size:120;not null;index:idx_leadership_role_status" json:"role"`
 	Status    LeadershipStatus `gorm:"size:40;not null;default:'pending';index:idx_leadership_role_status;index:idx_leadership_status" json:"status"`
 	Bio       *string          `gorm:"type:text" json:"bio,omitempty"`
 	ImageURL  *string          `gorm:"type:text" json:"imageUrl,omitempty"`
@@ -51,7 +55,7 @@ type CreateLeadershipRequest struct {
 	LastName  string           `json:"lastName" binding:"required"`
 	Email     string           `json:"email" binding:"omitempty,email"`
 	Phone     string           `json:"phone"`
-	Role      LeadershipRole   `json:"role" binding:"required,oneof=senior_pastor associate_pastor deacon deaconess reverend"`
+	Role      LeadershipRole   `json:"role" binding:"required"`
 	Status    LeadershipStatus `json:"status" binding:"omitempty,oneof=pending awaiting_super_admin_approval approved declined"`
 	Bio       *string          `json:"bio,omitempty"`
 	ImageURL  *string          `json:"imageUrl,omitempty"`
@@ -70,7 +74,7 @@ type UpdateLeadershipRequest struct {
 	LastName  *string           `json:"lastName,omitempty"`
 	Email     *string           `json:"email,omitempty" binding:"omitempty,email"`
 	Phone     *string           `json:"phone,omitempty"`
-	Role      *LeadershipRole   `json:"role,omitempty" binding:"omitempty,oneof=senior_pastor associate_pastor deacon deaconess reverend"`
+	Role      *LeadershipRole   `json:"role,omitempty"`
 	Status    *LeadershipStatus `json:"status,omitempty" binding:"omitempty,oneof=pending awaiting_super_admin_approval approved declined"`
 	Bio       *string           `json:"bio,omitempty"`
 	ImageURL  *string           `json:"imageUrl,omitempty"`
