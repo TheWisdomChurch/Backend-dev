@@ -760,26 +760,14 @@ func buildLenientTestimonialRequest(values map[string]any) *models.CreateTestimo
 	return req
 }
 
+// normalizeLeadershipRoleInput returns exactly the role the applicant typed,
+// trimmed of surrounding whitespace and collapsed internal spacing. It never
+// forces the value into a fixed set or substitutes a default — a leadership
+// form always asks for the role, so it is the applicant's own words that are
+// stored and shown.
 func normalizeLeadershipRoleInput(value string) models.LeadershipRole {
-	clean := strings.ToLower(strings.TrimSpace(value))
-	clean = strings.NewReplacer("-", "_", " ", "_").Replace(clean)
-	clean = regexp.MustCompile(`_+`).ReplaceAllString(clean, "_")
-	clean = strings.Trim(clean, "_")
-
-	switch clean {
-	case string(models.LeadershipRoleSeniorPastor), "pastor", "senior", "lead_pastor", "head_pastor":
-		return models.LeadershipRoleSeniorPastor
-	case string(models.LeadershipRoleAssociatePastor), "associate", "assistant_pastor", "assistant":
-		return models.LeadershipRoleAssociatePastor
-	case string(models.LeadershipRoleDeacon):
-		return models.LeadershipRoleDeacon
-	case string(models.LeadershipRoleDeaconess):
-		return models.LeadershipRoleDeaconess
-	case string(models.LeadershipRoleReverend), "rev":
-		return models.LeadershipRoleReverend
-	default:
-		return models.LeadershipRoleAssociatePastor
-	}
+	clean := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	return models.LeadershipRole(clean)
 }
 
 func truncateWords(value string, maxWords int) string {
