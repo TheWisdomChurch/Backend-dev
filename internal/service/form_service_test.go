@@ -112,3 +112,40 @@ func TestBuildLeadershipRequestFromLeadershipPreset(t *testing.T) {
 		t.Fatalf("imageURL = %v, want preset photo", req.ImageURL)
 	}
 }
+
+func TestNormalizePublicFormDateValue(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		fullYear bool
+		want     string
+		wantErr  bool
+	}{
+		{"day-month keeps only DD-MM", "24-12-1990", false, "24-12", false},
+		{"day-month from slashes", "07/03", false, "07-03", false},
+		{"full keeps the year", "24-12-1990", true, "24-12-1990", false},
+		{"full from slashes", "01/06/2018", true, "01-06-2018", false},
+		{"full from ISO", "2016-09-05", true, "05-09-2016", false},
+		{"full two-digit year expands", "1-1-19", true, "01-01-2019", false},
+		{"full requires a year", "24-12", true, "", true},
+		{"invalid month", "24-13-2000", true, "", true},
+		{"garbage", "not a date", false, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizePublicFormDateValue(tc.in, tc.fullYear)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got %q", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Fatalf("normalize(%q, full=%v) = %q, want %q", tc.in, tc.fullYear, got, tc.want)
+			}
+		})
+	}
+}
