@@ -223,6 +223,19 @@ func normalizeValidationRules(fieldType string, v *models.FormFieldValidation) (
 		}
 	}
 
+	// dateMode is only meaningful on `date` fields, and only "full" changes
+	// anything (day-month is the default). Drop it otherwise so it doesn't
+	// keep an empty validation blob alive.
+	if rules.DateMode != nil {
+		mode := strings.TrimSpace(strings.ToLower(*rules.DateMode))
+		if fieldType == string(models.FieldDate) && mode == "full" {
+			full := "full"
+			rules.DateMode = &full
+		} else {
+			rules.DateMode = nil
+		}
+	}
+
 	if !hasAnyValidationRule(&rules) {
 		return datatypes.JSON([]byte("null")), nil
 	}
@@ -313,7 +326,8 @@ func hasAnyValidationRule(v *models.FormFieldValidation) bool {
 			v.MaxWords != nil ||
 			v.Pattern != nil ||
 			v.Min != nil ||
-			v.Max != nil)
+			v.Max != nil ||
+			v.DateMode != nil)
 }
 
 func decodeVisibility(j datatypes.JSON) *models.FormFieldVisibility {

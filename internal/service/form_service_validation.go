@@ -197,8 +197,13 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 					return nil, fmt.Errorf("field '%s' must be a valid phone number", f.Key)
 				}
 			case models.FieldDate:
-				normalizedDate, err := normalizePublicFormDateValue(sv)
+				fullYear := rules != nil && rules.DateMode != nil &&
+					strings.EqualFold(strings.TrimSpace(*rules.DateMode), "full")
+				normalizedDate, err := normalizePublicFormDateValue(sv, fullYear)
 				if err != nil {
+					if fullYear {
+						return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM-YYYY)", f.Key)
+					}
 					return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM)", f.Key)
 				}
 				sv = normalizedDate
@@ -244,46 +249,68 @@ func countWords(s string) int {
 	return len(strings.Fields(s))
 }
 
-func normalizePublicFormDateValue(value string) (string, error) {
+// normalizePublicFormDateValue canonicalises a submitted date. When fullYear is
+// false (the default for `date` fields) it returns "DD-MM" — the church only
+// needs day+month for recurring birthday/anniversary automation. When fullYear
+// is true (validation.dateMode == "full", e.g. a child's date of birth) it
+// returns "DD-MM-YYYY" and a year is required.
+func normalizePublicFormDateValue(value string, fullYear bool) (string, error) {
 	val := strings.TrimSpace(value)
 	if val == "" {
 		return "", errors.New("date is empty")
 	}
 
-	// Preferred user-facing format: DD-MM or DD-MM-YYYY.
-	if m := ddDashRe.FindStringSubmatch(val); len(m) >= 3 {
-		day, _ := strconv.Atoi(m[1])
-		month, _ := strconv.Atoi(m[2])
-		if month < 1 || month > 12 {
-			return "", errors.New("month out of range")
+	var day, month, year int
+	matched := false
+
+	if m := ddDashRe.FindStringSubmatch(val); len(m) >= 3 { // DD-MM[-YYYY]
+		day, _ = strconv.Atoi(m[1])
+		month, _ = strconv.Atoi(m[2])
+		if len(m) >= 4 && m[3] != "" {
+			year, _ = strconv.Atoi(m[3])
 		}
-		maxDay := daysInMonth(month)
-		if day < 1 || day > maxDay {
-			return "", errors.New("day out of range")
+		matched = true
+	} else if m := ddSlashRe.FindStringSubmatch(val); len(m) >= 3 { // DD/MM[/YYYY]
+		day, _ = strconv.Atoi(m[1])
+		month, _ = strconv.Atoi(m[2])
+		if len(m) >= 4 && m[3] != "" {
+			year, _ = strconv.Atoi(m[3])
 		}
-		return fmt.Sprintf("%02d-%02d", day, month), nil
+		matched = true
+	} else if t, err := time.Parse("2006-01-02", val); err == nil { // YYYY-MM-DD
+		day, month, year = t.Day(), int(t.Month()), t.Year()
+		matched = true
 	}
 
-	// Backward-compatible: DD/MM or DD/MM/YYYY.
-	if m := ddSlashRe.FindStringSubmatch(val); len(m) >= 3 {
-		day, _ := strconv.Atoi(m[1])
-		month, _ := strconv.Atoi(m[2])
-		if month < 1 || month > 12 {
-			return "", errors.New("month out of range")
-		}
-		maxDay := daysInMonth(month)
-		if day < 1 || day > maxDay {
-			return "", errors.New("day out of range")
-		}
-		return fmt.Sprintf("%02d-%02d", day, month), nil
+	if !matched {
+		return "", errors.New("invalid date format")
 	}
 
-	// Backward-compatible: YYYY-MM-DD (legacy clients).
-	if t, err := time.Parse("2006-01-02", val); err == nil {
-		return fmt.Sprintf("%02d-%02d", t.Day(), int(t.Month())), nil
+	if month < 1 || month > 12 {
+		return "", errors.New("month out of range")
+	}
+	if day < 1 || day > daysInMonth(month) {
+		return "", errors.New("day out of range")
 	}
 
-	return "", errors.New("invalid date format")
+	if year > 0 && year < 100 {
+		// two-digit year → assume 19xx/20xx window
+		if year <= 30 {
+			year += 2000
+		} else {
+			year += 1900
+		}
+	}
+
+	if fullYear {
+		nextYear := time.Now().Year() + 1
+		if year < 1900 || year > nextYear {
+			return "", errors.New("year is required and must be realistic")
+		}
+		return fmt.Sprintf("%02d-%02d-%04d", day, month, year), nil
+	}
+
+	return fmt.Sprintf("%02d-%02d", day, month), nil
 }
 
 func daysInMonth(month int) int {

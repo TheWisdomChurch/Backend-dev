@@ -31,6 +31,10 @@ type FormFieldValidation struct {
 	Pattern   *string  `json:"pattern,omitempty"`
 	Min       *float64 `json:"min,omitempty"`
 	Max       *float64 `json:"max,omitempty"`
+	// DateMode is the admin's per-field choice of how a `date` field is
+	// captured and stored: "day-month" (default) keeps only DD-MM; "full"
+	// keeps the year too, as DD-MM-YYYY.
+	DateMode *string `json:"dateMode,omitempty"`
 }
 
 // FormFieldVisibility controls conditional display logic for fields.
