@@ -2272,3 +2272,25 @@ ALTER TABLE leadership_members
   DROP CONSTRAINT IF EXISTS leadership_members_role_check;
 ALTER TABLE leadership_members
   ALTER COLUMN role TYPE varchar(120);
+
+-- migration: 023_birthdate_fields_full.up.sql
+-- Any existing `date` field that is obviously a date of birth should keep the
+-- year (DD-MM-YYYY). Set validation.dateMode = 'full' on those fields so forms
+-- built before the "Captured as" option existed (e.g. the Register Child form)
+-- start capturing the year without an admin re-editing them. Plain "birthday"
+-- fields are left alone — they feed recurring-greeting automation (day+month).
+UPDATE form_fields
+SET validation = jsonb_set(
+      COALESCE(NULLIF(validation, 'null'::jsonb), '{}'::jsonb),
+      '{dateMode}',
+      '"full"'::jsonb,
+      true
+    ),
+    updated_at = now()
+WHERE deleted_at IS NULL
+  AND type = 'date'
+  AND (COALESCE(validation ->> 'dateMode', '') <> 'day-month')
+  AND (
+    key   ~* '\y(d\.?o\.?b|date[[:space:]_-]*of[[:space:]_-]*birth|birth[[:space:]_-]*date)\y'
+    OR label ~* '\y(d\.?o\.?b|date[[:space:]_-]*of[[:space:]_-]*birth|birth[[:space:]_-]*date)\y'
+  );

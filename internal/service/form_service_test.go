@@ -113,6 +113,33 @@ func TestBuildLeadershipRequestFromLeadershipPreset(t *testing.T) {
 	}
 }
 
+func TestDateFieldKeepsYear(t *testing.T) {
+	full := "full"
+	dayMonth := "day-month"
+	cases := []struct {
+		name  string
+		rules *models.FormFieldValidation
+		key   string
+		label string
+		want  bool
+	}{
+		{"explicit full", &models.FormFieldValidation{DateMode: &full}, "x", "x", true},
+		{"explicit day-month overrides a DOB label", &models.FormFieldValidation{DateMode: &dayMonth}, "child_date_of_birth", "Date of Birth", false},
+		{"DOB label auto-detects", nil, "child_date_of_birth", "Child's date of birth", true},
+		{"dob key auto-detects", nil, "dob", "When were they born", true},
+		{"birth date auto-detects", nil, "birthdate", "Birth Date", true},
+		{"plain birthday stays day-month", nil, "birthday", "Birthday", false},
+		{"anniversary stays day-month", nil, "anniversary", "Wedding anniversary", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dateFieldKeepsYear(tc.rules, tc.key, tc.label); got != tc.want {
+				t.Fatalf("dateFieldKeepsYear = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizePublicFormDateValue(t *testing.T) {
 	cases := []struct {
 		name     string
