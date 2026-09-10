@@ -215,6 +215,16 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 			case models.FieldDate:
 				fullYear := dateFieldKeepsYear(rules, f.Key, f.Label)
 				normalizedDate, err := normalizePublicFormDateValue(sv, fullYear)
+				if err != nil && fullYear {
+					// A full-date field that was sent day+month only (e.g. an
+					// older client, or the field's mode changed after the form
+					// went live) — accept it rather than 400, storing what we
+					// got. The renderer now always captures the year, so this
+					// is only a migration cushion.
+					if dm, dmErr := normalizePublicFormDateValue(sv, false); dmErr == nil {
+						normalizedDate, err = dm, nil
+					}
+				}
 				if err != nil {
 					expected := "DD-MM"
 					if fullYear {
@@ -226,6 +236,10 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 					)
 				}
 				sv = normalizedDate
+				// Date values are canonicalised above; free-text rules
+				// (pattern / min / max length) never apply to them.
+				clean[f.Key] = sv
+				continue
 			}
 
 			if err := applyStringRules(f.Key, sv, rules); err != nil {
@@ -255,9 +269,9 @@ func applyStringRules(key, value string, rules *models.FormFieldValidation) erro
 			return fmt.Errorf("field '%s' must be at most %d words", key, *rules.MaxWords)
 		}
 	}
-	if rules.Pattern != nil {
-		re := regexp.MustCompile(*rules.Pattern)
-		if !re.MatchString(value) {
+	if rules.Pattern != nil && strings.TrimSpace(*rules.Pattern) != "" {
+		// A malformed stored pattern must not panic the submission handler.
+		if re, err := regexp.Compile(*rules.Pattern); err == nil && !re.MatchString(value) {
 			return fmt.Errorf("field '%s' does not match the required format", key)
 		}
 	}
