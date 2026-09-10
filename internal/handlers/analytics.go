@@ -25,6 +25,7 @@ import (
 type AnalyticsHandler struct {
 	svc            service.AnalyticsService
 	decisionEngine service.DecisionSupportService
+	overview       service.ChurchOverviewService
 }
 
 var analyticsIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$`)
@@ -34,7 +35,31 @@ func NewAnalyticsHandler(db *database.Database, redisCache *cache.RedisClient) *
 	return &AnalyticsHandler{
 		svc:            service.NewAnalyticsService(repo),
 		decisionEngine: service.NewDecisionSupportService(db, redisCache),
+		overview:       service.NewChurchOverviewService(db, redisCache),
 	}
+}
+
+// GetChurchOverview returns the single church-wide analytics payload. Accepts
+// ?range=month|last30|year (default last30).
+func (h *AnalyticsHandler) GetChurchOverview(c *gin.Context) {
+	started := time.Now()
+	if h.overview == nil {
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Church overview engine is unavailable")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+	defer cancel()
+
+	result, err := h.overview.GetOverview(ctx, c.Query("range"))
+	if err != nil {
+		applog.L().Error("church overview query failed", "error", err)
+		metrics.RecordAnalyticsQuery("overview", "error", time.Since(started))
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to compute church overview")
+		return
+	}
+	metrics.RecordAnalyticsQuery("overview", "success", time.Since(started))
+	utils.OKMsg(c, "Church overview retrieved successfully", result)
 }
 
 func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {

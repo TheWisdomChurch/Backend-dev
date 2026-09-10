@@ -197,8 +197,7 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 					return nil, fmt.Errorf("field '%s' must be a valid phone number", f.Key)
 				}
 			case models.FieldDate:
-				fullYear := rules != nil && rules.DateMode != nil &&
-					strings.EqualFold(strings.TrimSpace(*rules.DateMode), "full")
+				fullYear := dateFieldKeepsYear(rules, f.Key, f.Label)
 				normalizedDate, err := normalizePublicFormDateValue(sv, fullYear)
 				if err != nil {
 					if fullYear {
@@ -247,6 +246,26 @@ func applyStringRules(key, value string, rules *models.FormFieldValidation) erro
 
 func countWords(s string) int {
 	return len(strings.Fields(s))
+}
+
+// birthDateFieldRe matches a field key/label that clearly means a date of birth
+// and therefore needs the year kept. Plain "birthday" is deliberately excluded —
+// that feeds recurring-greeting automation which only wants day+month.
+var birthDateFieldRe = regexp.MustCompile(`(?i)\b(d\.?o\.?b|date[\s_-]*of[\s_-]*birth|birth[\s_-]*date)\b`)
+
+// dateFieldKeepsYear decides whether a `date` field stores DD-MM-YYYY: the
+// admin's explicit dateMode wins, otherwise an obvious date-of-birth field
+// keeps the year automatically.
+func dateFieldKeepsYear(rules *models.FormFieldValidation, key, label string) bool {
+	if rules != nil && rules.DateMode != nil {
+		switch strings.ToLower(strings.TrimSpace(*rules.DateMode)) {
+		case "full":
+			return true
+		case "day-month":
+			return false
+		}
+	}
+	return birthDateFieldRe.MatchString(key + " " + label)
 }
 
 // normalizePublicFormDateValue canonicalises a submitted date. When fullYear is

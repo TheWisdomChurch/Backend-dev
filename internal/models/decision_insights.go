@@ -33,5 +33,9 @@ type DecisionSignalMetrics struct {
 	VolunteerCoverageRate  float64 `json:"volunteerCoverageRate"`
 	UpcomingEventLoadRate  float64 `json:"upcomingEventLoadRate"`
 	SubmissionDeltaPercent float64 `json:"submissionDeltaPercent"`
+	// Added 2026-09: broader signals feeding the readiness score.
+	GivingDeltaPercent     float64 `json:"givingDeltaPercent"`
+	AttendanceDeltaPercent float64 `json:"attendanceDeltaPercent"`
+	BacklogPressure        float64 `json:"backlogPressure"` // 0..1, higher = more unactioned queues
 	DecisionReadinessScore float64 `json:"decisionReadinessScore"`
 }
