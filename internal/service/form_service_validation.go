@@ -19,6 +19,22 @@ import (
 )
 
 /* =========================
+   Date regexes (self-contained)
+   — delete these if identical names already exist elsewhere
+========================= */
+
+var (
+	// D-M or DD-MM (also accepts / and . as separators)
+	dateDayMonthRe = regexp.MustCompile(`^(\d{1,2})[-/.](\d{1,2})$`)
+
+	// D-M-YYYY or DD-MM-YYYY (also accepts / and . ; 2- or 4-digit years)
+	dateFullRe = regexp.MustCompile(`^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$`)
+
+	// ISO date or datetime: YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fff]][Z|±HH:MM]
+	dateISORe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$`)
+)
+
+/* =========================
    Submission validation
 ========================= */
 
@@ -200,10 +216,14 @@ func validateSubmission(fields []models.FormField, values map[string]any) (map[s
 				fullYear := dateFieldKeepsYear(rules, f.Key, f.Label)
 				normalizedDate, err := normalizePublicFormDateValue(sv, fullYear)
 				if err != nil {
+					expected := "DD-MM"
 					if fullYear {
-						return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM-YYYY)", f.Key)
+						expected = "DD-MM-YYYY"
 					}
-					return nil, fmt.Errorf("field '%s' must be a valid date (DD-MM)", f.Key)
+					return nil, fmt.Errorf(
+						"field '%s' must be a valid date (%s): %s",
+						f.Key, expected, err.Error(),
+					)
 				}
 				sv = normalizedDate
 			}
@@ -268,11 +288,21 @@ func dateFieldKeepsYear(rules *models.FormFieldValidation, key, label string) bo
 	return birthDateFieldRe.MatchString(key + " " + label)
 }
 
-// normalizePublicFormDateValue canonicalises a submitted date. When fullYear is
-// false (the default for `date` fields) it returns "DD-MM" — the church only
-// needs day+month for recurring birthday/anniversary automation. When fullYear
-// is true (validation.dateMode == "full", e.g. a child's date of birth) it
-// returns "DD-MM-YYYY" and a year is required.
+// normalizePublicFormDateValue canonicalises a submitted date.
+//
+//   - fullYear == false → returns "DD-MM" (day + month only; used for recurring
+//     birthday/anniversary automation).
+//   - fullYear == true  → returns "DD-MM-YYYY"; a realistic year is required.
+//
+// Accepted input formats (all zero-padding is applied on output):
+//
+//	"D-M", "DD-MM"                                -> "DD-MM"
+//	"D-M-YY", "D-M-YYYY", "DD-MM-YYYY"            -> "DD-MM" or "DD-MM-YYYY"
+//	"D/M", "D/M/YYYY", "D.M.YYYY"                 -> same
+//	"YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS(.sss)Z"    -> same
+//
+// The returned error always includes the offending value so the API surface
+// stays useful when a client sends something we can't parse.
 func normalizePublicFormDateValue(value string, fullYear bool) (string, error) {
 	val := strings.TrimSpace(value)
 	if val == "" {
@@ -280,40 +310,41 @@ func normalizePublicFormDateValue(value string, fullYear bool) (string, error) {
 	}
 
 	var day, month, year int
-	matched := false
+	var hasYear bool
 
-	if m := ddDashRe.FindStringSubmatch(val); len(m) >= 3 { // DD-MM[-YYYY]
+	switch {
+	case dateFullRe.MatchString(val):
+		m := dateFullRe.FindStringSubmatch(val)
 		day, _ = strconv.Atoi(m[1])
 		month, _ = strconv.Atoi(m[2])
-		if len(m) >= 4 && m[3] != "" {
-			year, _ = strconv.Atoi(m[3])
-		}
-		matched = true
-	} else if m := ddSlashRe.FindStringSubmatch(val); len(m) >= 3 { // DD/MM[/YYYY]
+		year, _ = strconv.Atoi(m[3])
+		hasYear = true
+
+	case dateDayMonthRe.MatchString(val):
+		m := dateDayMonthRe.FindStringSubmatch(val)
 		day, _ = strconv.Atoi(m[1])
 		month, _ = strconv.Atoi(m[2])
-		if len(m) >= 4 && m[3] != "" {
-			year, _ = strconv.Atoi(m[3])
-		}
-		matched = true
-	} else if t, err := time.Parse("2006-01-02", val); err == nil { // YYYY-MM-DD
-		day, month, year = t.Day(), int(t.Month()), t.Year()
-		matched = true
-	}
 
-	if !matched {
-		return "", errors.New("invalid date format")
+	case dateISORe.MatchString(val):
+		m := dateISORe.FindStringSubmatch(val)
+		year, _ = strconv.Atoi(m[1])
+		month, _ = strconv.Atoi(m[2])
+		day, _ = strconv.Atoi(m[3])
+		hasYear = true
+
+	default:
+		return "", fmt.Errorf("unrecognised date format %q", val)
 	}
 
 	if month < 1 || month > 12 {
-		return "", errors.New("month out of range")
+		return "", fmt.Errorf("month out of range in %q", val)
 	}
-	if day < 1 || day > daysInMonth(month) {
-		return "", errors.New("day out of range")
+	if day < 1 || day > daysInMonth(month, year) {
+		return "", fmt.Errorf("day out of range in %q", val)
 	}
 
-	if year > 0 && year < 100 {
-		// two-digit year → assume 19xx/20xx window
+	// Expand a two-digit year (e.g. "05" -> 2005, "85" -> 1985).
+	if hasYear && year >= 0 && year < 100 {
 		if year <= 30 {
 			year += 2000
 		} else {
@@ -322,25 +353,51 @@ func normalizePublicFormDateValue(value string, fullYear bool) (string, error) {
 	}
 
 	if fullYear {
-		nextYear := time.Now().Year() + 1
-		if year < 1900 || year > nextYear {
-			return "", errors.New("year is required and must be realistic")
+		if !hasYear {
+			return "", fmt.Errorf("year required in %q for a full date", val)
+		}
+		maxYear := time.Now().Year() + 1
+		if year < 1900 || year > maxYear {
+			return "", fmt.Errorf("year %d out of range in %q", year, val)
+		}
+		if err := validCalendarDate(day, month, year); err != nil {
+			return "", fmt.Errorf("%s in %q", err.Error(), val)
 		}
 		return fmt.Sprintf("%02d-%02d-%04d", day, month, year), nil
 	}
 
+	// Day+month mode: ignore any year that was supplied (frontends often send
+	// the current year for "birthday"-style fields).
 	return fmt.Sprintf("%02d-%02d", day, month), nil
 }
 
-func daysInMonth(month int) int {
+// daysInMonth returns the maximum valid day for the given month. When year is
+// 0 it allows 29 for February so leap-day birthdays are accepted in day-month
+// mode. When a real year is supplied it applies the Gregorian leap rule.
+func daysInMonth(month, year int) int {
 	switch month {
 	case 2:
-		return 29
+		if year == 0 || isLeapYear(year) {
+			return 29
+		}
+		return 28
 	case 4, 6, 9, 11:
 		return 30
 	default:
 		return 31
 	}
+}
+
+func isLeapYear(y int) bool {
+	return (y%4 == 0 && y%100 != 0) || y%400 == 0
+}
+
+func validCalendarDate(day, month, year int) error {
+	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+	if t.Day() != day || int(t.Month()) != month || t.Year() != year {
+		return errors.New("invalid calendar date")
+	}
+	return nil
 }
 
 func validateImageFieldValue(value string) error {
@@ -403,7 +460,6 @@ func toStringSlice(v any) ([]string, bool) {
 		}
 		return out, true
 	case string:
-		// allow single selection serialized as string
 		if strings.TrimSpace(raw) == "" {
 			return []string{}, true
 		}
@@ -548,7 +604,6 @@ func extractCommonFields(fields []models.FormField, values map[string]any) (*str
 			}
 		}
 
-		// Legacy fallback: some older forms used "email" key for first-name text input.
 		legacy := lookup("email")
 		if legacy != nil {
 			v := strings.TrimSpace(*legacy)
