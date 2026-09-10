@@ -381,6 +381,7 @@ func setupRouter(
 
 	admin.GET("/analytics", middleware.RequirePermission(middleware.PermissionAnalyticsRead), analyticsHandler.GetAdminAnalytics)
 	admin.GET("/analytics/insights", middleware.RequirePermission(middleware.PermissionAnalyticsRead), analyticsHandler.GetDecisionInsights)
+	admin.GET("/analytics/overview", middleware.RequirePermission(middleware.PermissionAnalyticsRead), analyticsHandler.GetChurchOverview)
 	admin.GET("/content/homepage-ad", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.GetAdminHomepageAd)
 	admin.PUT("/content/homepage-ad", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.UpdateAdminHomepageAd)
 	admin.GET("/content/confession-popup", middleware.RequirePermission(middleware.PermissionContentManage), siteContentHandler.GetAdminConfessionPopup)
