@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -35,10 +37,10 @@ func (h *MinistryHandler) Create(c *gin.Context) {
 	}
 	m.CampusID = req.CampusID
 	if err := h.svc.Create(c.Request.Context(), &m); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, m)
+	utils.SuccessResponse(c, http.StatusCreated, "Ministry created", m)
 }
 
 func (h *MinistryHandler) Update(c *gin.Context) {
@@ -68,10 +70,10 @@ func (h *MinistryHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Update(c.Request.Context(), id, updates); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OKMsg(c, "ministry updated", nil)
+	utils.SuccessResponse(c, http.StatusOK, "ministry updated", nil)
 }
 
 func (h *MinistryHandler) Structure(c *gin.Context) {
@@ -81,10 +83,14 @@ func (h *MinistryHandler) Structure(c *gin.Context) {
 	}
 	structure, err := h.svc.Structure(c.Request.Context(), id)
 	if err != nil {
-		utils.Err(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Ministry not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load ministry structure")
 		return
 	}
-	utils.OK(c, structure)
+	utils.SuccessResponse(c, http.StatusOK, "Ministry structure retrieved", structure)
 }
 
 func (h *MinistryHandler) AssignWorkforceMember(c *gin.Context) {
@@ -100,7 +106,7 @@ func (h *MinistryHandler) AssignWorkforceMember(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OKMsg(c, "workforce member assigned", nil)
+	utils.SuccessResponse(c, http.StatusOK, "workforce member assigned", nil)
 }
 
 func (h *MinistryHandler) UpdateWorkforceAssignment(c *gin.Context) {
@@ -120,7 +126,7 @@ func (h *MinistryHandler) UpdateWorkforceAssignment(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OKMsg(c, "ministry assignment updated", nil)
+	utils.SuccessResponse(c, http.StatusOK, "ministry assignment updated", nil)
 }
 
 func (h *MinistryHandler) RemoveWorkforceMember(c *gin.Context) {
@@ -133,20 +139,24 @@ func (h *MinistryHandler) RemoveWorkforceMember(c *gin.Context) {
 		return
 	}
 	if err := h.svc.RemoveWorkforceMember(c.Request.Context(), id, workforceID); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to remove workforce member")
 		return
 	}
-	utils.OKMsg(c, "workforce member removed", nil)
+	utils.SuccessResponse(c, http.StatusOK, "workforce member removed", nil)
 }
 
 func (h *MinistryHandler) Get(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	m, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
-		utils.Err(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Ministry not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load ministry")
 		return
 	}
-	utils.OK(c, m)
+	utils.SuccessResponse(c, http.StatusOK, "Ministry retrieved", m)
 }
 
 func (h *MinistryHandler) List(c *gin.Context) {
@@ -165,19 +175,19 @@ func (h *MinistryHandler) List(c *gin.Context) {
 	}
 	rows, total, err := h.svc.List(c.Request.Context(), campusID, category, activeOnly, limit, (page-1)*limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load ministries")
 		return
 	}
-	utils.OKPage(c, rows, utils.BuildPageMeta(page, limit, total))
+	utils.PaginatedSuccessResponse(c, http.StatusOK, rows, page, limit, int(total))
 }
 
 func (h *MinistryHandler) Delete(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete ministry")
 		return
 	}
-	utils.OKMsg(c, "ministry deleted", nil)
+	utils.SuccessResponse(c, http.StatusOK, "ministry deleted", nil)
 }
 
 func (h *MinistryHandler) AddMember(c *gin.Context) {
@@ -192,38 +202,38 @@ func (h *MinistryHandler) AddMember(c *gin.Context) {
 	}
 	member, err := h.svc.AddMember(c.Request.Context(), id, body.MemberID, body.Role)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, member)
+	utils.SuccessResponse(c, http.StatusCreated, "member added", member)
 }
 
 func (h *MinistryHandler) RemoveMember(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	memberID := strings.TrimSpace(c.Param("member_id"))
 	if err := h.svc.RemoveMember(c.Request.Context(), id, memberID); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to remove member")
 		return
 	}
-	utils.OKMsg(c, "member removed", nil)
+	utils.SuccessResponse(c, http.StatusOK, "member removed", nil)
 }
 
 func (h *MinistryHandler) ListMembers(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	members, err := h.svc.ListMembers(c.Request.Context(), id)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load ministry members")
 		return
 	}
-	utils.OK(c, members)
+	utils.SuccessResponse(c, http.StatusOK, "Ministry members retrieved", members)
 }
 
 func (h *MinistryHandler) MemberMinistries(c *gin.Context) {
 	memberID := strings.TrimSpace(c.Param("member_id"))
 	rows, err := h.svc.MemberMinistries(c.Request.Context(), memberID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load member's ministries")
 		return
 	}
-	utils.OK(c, rows)
+	utils.SuccessResponse(c, http.StatusOK, "Member's ministries retrieved", rows)
 }
