@@ -181,16 +181,6 @@ func (h *MemberHandler) BirthdaysToday(c *gin.Context) {
 	})
 }
 
-func (h *MemberHandler) SendBirthdaysToday(c *gin.Context) {
-	now := time.Now()
-	result, err := h.svc.SendBirthdayGreetings(int(now.Month()), now.Day())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
-}
-
 func (h *MemberHandler) SendAnnouncement(c *gin.Context) {
 	var req models.SendMemberEmailRequest
 	if !validation.BindJSON(c, &req) {

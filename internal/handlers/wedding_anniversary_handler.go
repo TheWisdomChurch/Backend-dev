@@ -151,13 +151,3 @@ func (h *WeddingAnniversaryHandler) Today(c *gin.Context) {
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Today's wedding anniversaries retrieved", gin.H{"data": rows})
 }
-
-func (h *WeddingAnniversaryHandler) SendToday(c *gin.Context) {
-	now := time.Now()
-	result, err := h.svc.SendGreetingsForDay(c.Request.Context(), int(now.Month()), now.Day())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Wedding anniversary emails queued/sent", result)
-}
