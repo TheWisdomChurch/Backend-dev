@@ -107,9 +107,3 @@ type BirthdayStatsResponse struct {
 	Total   int64                `json:"total"`
 	ByMonth []BirthdayMonthCount `json:"byMonth"`
 }
-
-type BirthdaySendResult struct {
-	Targeted int `json:"targeted"`
-	Sent     int `json:"sent"`
-	Skipped  int `json:"skipped"`
-}
