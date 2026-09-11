@@ -343,16 +343,6 @@ func (h *LeadershipHandler) BirthdaysToday(c *gin.Context) {
 	})
 }
 
-func (h *LeadershipHandler) SendBirthdaysToday(c *gin.Context) {
-	now := time.Now()
-	result, err := h.svc.SendBirthdayGreetings(int(now.Month()), now.Day())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
-}
-
 func (h *LeadershipHandler) AnniversaryStats(c *gin.Context) {
 	stats, err := h.svc.AnniversaryStats()
 	if err != nil {
@@ -391,14 +381,4 @@ func (h *LeadershipHandler) AnniversariesToday(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Today's anniversaries retrieved", gin.H{
 		"data": items,
 	})
-}
-
-func (h *LeadershipHandler) SendAnniversariesToday(c *gin.Context) {
-	now := time.Now()
-	result, err := h.svc.SendAnniversaryGreetings(int(now.Month()), now.Day())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Anniversary emails queued/sent", result)
 }

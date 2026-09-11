@@ -26,15 +26,15 @@ func NewGivingPaymentsHandler(svc service.GivingService) *GivingPaymentsHandler 
 // @Summary List giving categories
 // @Tags Giving
 // @Produce json
-// @Success 200 {object} utils.APIResponse
+// @Success 200 {object} utils.Response
 // @Router /giving/categories [get]
 func (h *GivingPaymentsHandler) ListCategories(c *gin.Context) {
 	cats, err := h.svc.ListCategories(c.Request.Context())
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving categories")
 		return
 	}
-	utils.OK(c, cats)
+	utils.SuccessResponse(c, http.StatusOK, "Giving categories retrieved", cats)
 }
 
 // Initiate godoc
@@ -44,7 +44,7 @@ func (h *GivingPaymentsHandler) ListCategories(c *gin.Context) {
 // @Produce json
 // @Param provider path string true "Payment provider (paystack|stripe)"
 // @Param body body service.InitiateGivingRequest true "Giving request"
-// @Success 200 {object} utils.APIResponse
+// @Success 200 {object} utils.Response
 // @Router /giving/initiate/{provider} [post]
 func (h *GivingPaymentsHandler) Initiate(c *gin.Context) {
 	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
@@ -55,10 +55,10 @@ func (h *GivingPaymentsHandler) Initiate(c *gin.Context) {
 	}
 	resp, err := h.svc.Initiate(c.Request.Context(), provider, req)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OK(c, resp)
+	utils.SuccessResponse(c, http.StatusOK, "Giving transaction initiated", resp)
 }
 
 // Verify godoc
@@ -67,17 +67,17 @@ func (h *GivingPaymentsHandler) Initiate(c *gin.Context) {
 // @Produce json
 // @Param provider   path string true "Payment provider"
 // @Param reference  path string true "Payment reference"
-// @Success 200 {object} utils.APIResponse
+// @Success 200 {object} utils.Response
 // @Router /giving/verify/{provider}/{reference} [get]
 func (h *GivingPaymentsHandler) Verify(c *gin.Context) {
 	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
 	reference := strings.TrimSpace(c.Param("reference"))
 	tx, err := h.svc.VerifyAndRecord(c.Request.Context(), provider, reference)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OK(c, tx)
+	utils.SuccessResponse(c, http.StatusOK, "Giving transaction verified", tx)
 }
 
 // Webhook godoc
@@ -122,7 +122,7 @@ func (h *GivingPaymentsHandler) Webhook(c *gin.Context) {
 // @Param to          query string false "To date (RFC3339)"
 // @Param page        query int    false "Page number (default 1)"
 // @Param limit       query int    false "Page size (default 20, max 100)"
-// @Success 200 {object} utils.APIResponse
+// @Success 200 {object} utils.Response
 // @Router /admin/giving [get]
 func (h *GivingPaymentsHandler) List(c *gin.Context) {
 	filter := repository.GivingFilter{}
@@ -160,10 +160,10 @@ func (h *GivingPaymentsHandler) List(c *gin.Context) {
 
 	txs, total, err := h.svc.List(c.Request.Context(), filter, limit, (page-1)*limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving transactions")
 		return
 	}
-	utils.OKPage(c, txs, utils.BuildPageMeta(page, limit, total))
+	utils.PaginatedSuccessResponse(c, http.StatusOK, txs, page, limit, int(total))
 }
 
 // MonthlySummary godoc
@@ -173,7 +173,7 @@ func (h *GivingPaymentsHandler) List(c *gin.Context) {
 // @Param year      query int    false "Year (e.g. 2025)"
 // @Param month     query int    false "Month 1-12"
 // @Param campus_id query string false "Campus filter"
-// @Success 200 {object} utils.APIResponse
+// @Success 200 {object} utils.Response
 // @Router /admin/giving/summary [get]
 func (h *GivingPaymentsHandler) MonthlySummary(c *gin.Context) {
 	year, _ := strconv.Atoi(c.Query("year"))
@@ -184,8 +184,8 @@ func (h *GivingPaymentsHandler) MonthlySummary(c *gin.Context) {
 	}
 	rows, err := h.svc.MonthlySummary(c.Request.Context(), year, month, campusID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load giving monthly summary")
 		return
 	}
-	utils.OK(c, rows)
+	utils.SuccessResponse(c, http.StatusOK, "Giving monthly summary retrieved", rows)
 }

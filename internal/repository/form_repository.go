@@ -9,6 +9,7 @@ import (
 	"wisdomHouse-backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type FormRepository interface {
@@ -30,6 +31,10 @@ type FormRepository interface {
 
 	CountSubmissions(formID string) (int64, error)
 	CreateSubmission(sub *models.FormSubmission) error
+	// UpsertFormBirthdaySubject records/updates the one birthday-capturing date
+	// field on a submission, keyed by submission ID, so the celebration
+	// automation's daily run can find it (see form_service_target_sync.go).
+	UpsertFormBirthdaySubject(subject *models.FormBirthdaySubject) error
 	ListEmailSubmissions(formID string) ([]models.FormSubmission, error)
 	CreateCampaignDelivery(item *models.FormCampaignDelivery) error
 	ListCampaignDeliveries(formID string, offset, limit int) ([]models.FormCampaignDelivery, int64, error)
@@ -300,6 +305,16 @@ func (r *formRepository) CountSubmissions(formID string) (int64, error) {
 
 func (r *formRepository) CreateSubmission(sub *models.FormSubmission) error {
 	return r.db.DB.Create(sub).Error
+}
+
+func (r *formRepository) UpsertFormBirthdaySubject(subject *models.FormBirthdaySubject) error {
+	return r.db.DB.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "submission_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"form_id", "field_key", "first_name", "last_name", "email",
+			"birthday_month", "birthday_day", "updated_at",
+		}),
+	}).Create(subject).Error
 }
 
 func (r *formRepository) ListEmailSubmissions(formID string) ([]models.FormSubmission, error) {

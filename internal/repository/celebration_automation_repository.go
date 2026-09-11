@@ -156,6 +156,10 @@ func (r *celebrationAutomationRepository) ListCandidates(ctx context.Context, mo
 			{`SELECT 'member' source,id::text source_id,first_name,last_name,email,'birthday' kind FROM members WHERE is_active=true AND birthday_month=? AND birthday_day=?`, []any{month, day}},
 			{`SELECT 'workforce' source,id::text source_id,first_name,last_name,email,'birthday' kind FROM workforce_members WHERE status='serving' AND birthday_month=? AND birthday_day=?`, []any{month, day}},
 			{`SELECT 'leadership' source,id::text source_id,first_name,last_name,email,'birthday' kind FROM leadership_members WHERE status='approved' AND birthday_month=? AND birthday_day=?`, []any{month, day}},
+			// Any public form's date-of-birth field, not just the dedicated
+			// member/workforce/leadership intake forms — see
+			// form_service_target_sync.go syncFormBirthdaySubject.
+			{`SELECT 'form' source,id::text source_id,first_name,last_name,email,'birthday' kind FROM form_birthday_subjects WHERE birthday_month=? AND birthday_day=?`, []any{month, day}},
 		}
 		for _, q := range queries {
 			var part []CelebrationCandidate

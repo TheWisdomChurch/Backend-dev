@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -79,7 +78,9 @@ func (r *ministryRepository) WorkforceMemberMinistries(ctx context.Context, work
 }
 
 func (r *ministryRepository) SyncDepartmentAssignment(ctx context.Context, workforceMemberID, department string) error {
-	department = strings.TrimSpace(department)
+	// Slug-shaped department values ("wisdom-house-choir") become a readable
+	// ministry name ("Wisdom House Choir") instead of being stored verbatim.
+	department = humanizeSlug(department)
 	if department == "" {
 		return errors.New("department is required")
 	}

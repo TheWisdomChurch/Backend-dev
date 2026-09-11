@@ -2294,3 +2294,45 @@ WHERE deleted_at IS NULL
     key   ~* '\y(d\.?o\.?b|date[[:space:]_-]*of[[:space:]_-]*birth|birth[[:space:]_-]*date)\y'
     OR label ~* '\y(d\.?o\.?b|date[[:space:]_-]*of[[:space:]_-]*birth|birth[[:space:]_-]*date)\y'
   );
+
+-- migration: 024_form_birthday_subjects.up.sql
+-- A birthday captured on ANY public form (not just the dedicated member /
+-- workforce / leadership intake forms) should feed the celebration
+-- automation's daily birthday run. One row per submission, written by
+-- syncFormBirthdaySubject at submission time; the automation's ListCandidates
+-- reads this alongside members / workforce_members / leadership_members.
+CREATE TABLE IF NOT EXISTS form_birthday_subjects (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    submission_id uuid NOT NULL,
+    form_id uuid NOT NULL,
+    field_key varchar(120) NOT NULL,
+    first_name varchar(120) NOT NULL DEFAULT '',
+    last_name varchar(120) NOT NULL DEFAULT '',
+    email varchar(255) NOT NULL DEFAULT '',
+    birthday_month smallint NOT NULL,
+    birthday_day smallint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_form_birthday_subjects_submission
+    ON form_birthday_subjects (submission_id);
+CREATE INDEX IF NOT EXISTS idx_form_birthday_subjects_month_day
+    ON form_birthday_subjects (birthday_month, birthday_day);
+CREATE INDEX IF NOT EXISTS idx_form_birthday_subjects_email
+    ON form_birthday_subjects (email);
+
+-- migration: 025_humanize_department_ministry_names.up.sql
+-- Ministries auto-created from a workforce member's `department` value used
+-- to store that value verbatim, so a slug-shaped department ("wisdom-house-
+-- choir-wave-city-music") became the ministry's display name. Humanize any
+-- department-sourced ministry name that still looks like a raw slug (has a
+-- hyphen/underscore, no spaces) — matches the humanizeSlug() the sync code
+-- now applies going forward, so future syncs land on the same renamed row
+-- instead of creating a duplicate.
+UPDATE ministries
+SET name = initcap(regexp_replace(name, '[-_]+', ' ', 'g')),
+    updated_at = now()
+WHERE deleted_at IS NULL
+  AND category = 'department'
+  AND name ~ '[-_]'
+  AND name !~ ' ';

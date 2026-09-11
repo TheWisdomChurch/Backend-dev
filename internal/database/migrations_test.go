@@ -52,10 +52,10 @@ func TestRepositoryContainsOnlyCanonicalSchemaPair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(units) != 14 {
-		t.Fatalf("expected 14 ordered logical migrations, got %d", len(units))
+	if len(units) != 16 {
+		t.Fatalf("expected 16 ordered logical migrations, got %d", len(units))
 	}
-	if units[0].Name != "schema.up.sql" || units[len(units)-1].Name != "023_birthdate_fields_full.up.sql" {
+	if units[0].Name != "schema.up.sql" || units[len(units)-1].Name != "025_humanize_department_ministry_names.up.sql" {
 		t.Fatalf("unexpected migration boundaries: first=%q last=%q", units[0].Name, units[len(units)-1].Name)
 	}
 }

@@ -340,16 +340,6 @@ func (h *WorkforceHandler) BirthdaysToday(c *gin.Context) {
 	})
 }
 
-func (h *WorkforceHandler) SendBirthdaysToday(c *gin.Context) {
-	now := time.Now()
-	result, err := h.svc.SendBirthdayGreetings(int(now.Month()), now.Day())
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Birthday emails queued/sent", result)
-}
-
 func (h *WorkforceHandler) sendWorkforceConfirmation(member models.WorkforceMember, templateKey string, statusLabel string) {
 	if h.sender == nil {
 		return

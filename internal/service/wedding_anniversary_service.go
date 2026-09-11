@@ -4,21 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"gorm.io/gorm"
 
-	"wisdomHouse-backend/internal/authutil"
-	"wisdomHouse-backend/internal/email"
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/repository"
 )
 
 // WeddingAnniversaryService owns everything about "who is married to whom, when
 // is their anniversary, may we email them, and are we still allowed to". It is
-// the single source for the celebration automation's "anniversary" kind and for
-// the manual admin send.
+// the single source of truth the celebration automation pipeline
+// (CelebrationAutomationService) reads from for its "anniversary" kind —
+// sending greetings is that pipeline's job exclusively, on purpose: a second
+// send path here would duplicate its per-recipient dedup and let the same
+// couple be emailed twice.
 type WeddingAnniversaryService interface {
 	UpsertForSubject(ctx context.Context, subjectType, subjectID string, in models.WeddingAnniversaryInput, source models.WeddingAnniversarySource, submissionID *string) (*models.WeddingAnniversary, error)
 	Get(ctx context.Context, id string) (*models.WeddingAnniversary, error)
@@ -28,44 +28,18 @@ type WeddingAnniversaryService interface {
 	Unarchive(ctx context.Context, id string) error
 	Stats(ctx context.Context) (*models.WeddingAnniversaryStats, error)
 	DueOn(ctx context.Context, month, day int) ([]models.WeddingAnniversaryView, error)
-	SendGreetingsForDay(ctx context.Context, month, day int) (*models.BirthdaySendResult, error)
 }
 
 type weddingAnniversaryService struct {
 	repo      repository.WeddingAnniversaryRepository
-	suppress  *repository.SubscriberRepository
-	sender    EmailSender
 	notifySvc AdminNotificationService
-	branding  email.Branding
-	protector *authutil.Protector
 }
 
 func NewWeddingAnniversaryService(
 	repo repository.WeddingAnniversaryRepository,
-	suppress *repository.SubscriberRepository,
-	sender EmailSender,
 	notifySvc AdminNotificationService,
-	branding email.Branding,
-	authSecret string,
 ) WeddingAnniversaryService {
-	protector, _ := authutil.NewProtector(authSecret)
-	return &weddingAnniversaryService{repo: repo, suppress: suppress, sender: sender, notifySvc: notifySvc, branding: branding, protector: protector}
-}
-
-// unsubscribeURL mirrors notificationService.unsubscribeURL / celebrationAutomationService.unsubscribeURL
-// — same token scheme, same /notifications/unsubscribe endpoint, so any
-// address (member or an external spouse who never subscribed to anything
-// else) gets a working one-click unsubscribe.
-func (s *weddingAnniversaryService) unsubscribeURL(address string) string {
-	base := strings.TrimRight(strings.TrimSpace(s.branding.PublicURL), "/")
-	if base == "" || s.protector == nil {
-		return ""
-	}
-	token, err := s.protector.EncryptString("unsubscribe\n" + strings.ToLower(strings.TrimSpace(address)))
-	if err != nil {
-		return ""
-	}
-	return base + "/api/v1/notifications/unsubscribe?token=" + url.QueryEscape(token)
+	return &weddingAnniversaryService{repo: repo, notifySvc: notifySvc}
 }
 
 func (s *weddingAnniversaryService) UpsertForSubject(ctx context.Context, subjectType, subjectID string, in models.WeddingAnniversaryInput, source models.WeddingAnniversarySource, submissionID *string) (*models.WeddingAnniversary, error) {
@@ -208,66 +182,6 @@ func (s *weddingAnniversaryService) DueOn(ctx context.Context, month, day int) (
 		return nil, errors.New("invalid month or day")
 	}
 	return s.repo.ListDueByMonthDay(ctx, month, day)
-}
-
-func (s *weddingAnniversaryService) SendGreetingsForDay(ctx context.Context, month, day int) (*models.BirthdaySendResult, error) {
-	if s.sender == nil {
-		return nil, errors.New("email sender is not configured")
-	}
-	views, err := s.DueOn(ctx, month, day)
-	if err != nil {
-		return nil, err
-	}
-
-	suppressed := map[string]bool{}
-	if s.suppress != nil {
-		if emails, listErr := s.suppress.ListUnsubscribedEmails(); listErr == nil {
-			for _, e := range emails {
-				suppressed[strings.ToLower(strings.TrimSpace(e))] = true
-			}
-		}
-	}
-
-	appName := strings.TrimSpace(s.branding.AppName)
-	if appName == "" {
-		appName = "The Wisdom Church"
-	}
-	subject := fmt.Sprintf("Happy Wedding Anniversary from %s", appName)
-	heroURL := email.TemplateAssetURL(s.branding, "anniversary", "hero.png")
-	dateLabel := fmt.Sprintf("%02d/%02d", day, month)
-
-	result := &models.BirthdaySendResult{Targeted: len(views)}
-	sentTo := map[string]bool{}
-
-	for i := range views {
-		greeting := coupleGreetingName(views[i])
-		body := email.RenderAnniversaryEmail(email.AnniversaryTemplateData{
-			Branding:        s.branding,
-			RecipientName:   greeting,
-			SpouseName:      titleCaseName(views[i].SpouseName),
-			AnniversaryDate: dateLabel,
-			HeroImageURL:    heroURL,
-		})
-
-		anySent := false
-		for _, addr := range coupleAddresses(views[i]) {
-			addr = strings.ToLower(strings.TrimSpace(addr))
-			if addr == "" || suppressed[addr] || sentTo[addr] {
-				continue
-			}
-			sentTo[addr] = true
-			if sendErr := sendCelebrationEmail(s.sender, addr, subject, body, s.unsubscribeURL(addr)); sendErr != nil {
-				continue
-			}
-			anySent = true
-		}
-		if anySent {
-			result.Sent++
-		} else {
-			result.Skipped++
-		}
-	}
-	return result, nil
 }
 
 // coupleGreetingName renders "David & Sarah" when a spouse name is known, else

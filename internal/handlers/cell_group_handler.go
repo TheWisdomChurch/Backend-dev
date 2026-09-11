@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -27,10 +29,10 @@ func (h *CellGroupHandler) Create(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Create(c.Request.Context(), &g); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, g)
+	utils.SuccessResponse(c, http.StatusCreated, "Cell group created", g)
 }
 
 func (h *CellGroupHandler) Update(c *gin.Context) {
@@ -41,20 +43,24 @@ func (h *CellGroupHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Update(c.Request.Context(), id, body); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OKMsg(c, "group updated", nil)
+	utils.SuccessResponse(c, http.StatusOK, "group updated", nil)
 }
 
 func (h *CellGroupHandler) Get(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	g, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
-		utils.Err(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Cell group not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load cell group")
 		return
 	}
-	utils.OK(c, g)
+	utils.SuccessResponse(c, http.StatusOK, "Cell group retrieved", g)
 }
 
 func (h *CellGroupHandler) List(c *gin.Context) {
@@ -70,19 +76,19 @@ func (h *CellGroupHandler) List(c *gin.Context) {
 	}
 	groups, total, err := h.svc.List(c.Request.Context(), campusID, activeOnly, limit, (page-1)*limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load cell groups")
 		return
 	}
-	utils.OKPage(c, groups, utils.BuildPageMeta(page, limit, total))
+	utils.PaginatedSuccessResponse(c, http.StatusOK, groups, page, limit, int(total))
 }
 
 func (h *CellGroupHandler) Delete(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete cell group")
 		return
 	}
-	utils.OKMsg(c, "group deleted", nil)
+	utils.SuccessResponse(c, http.StatusOK, "group deleted", nil)
 }
 
 func (h *CellGroupHandler) AddMember(c *gin.Context) {
@@ -97,40 +103,40 @@ func (h *CellGroupHandler) AddMember(c *gin.Context) {
 	}
 	member, err := h.svc.AddMember(c.Request.Context(), groupID, body.MemberID, body.Role)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, member)
+	utils.SuccessResponse(c, http.StatusCreated, "member added", member)
 }
 
 func (h *CellGroupHandler) RemoveMember(c *gin.Context) {
 	groupID := strings.TrimSpace(c.Param("id"))
 	memberID := strings.TrimSpace(c.Param("member_id"))
 	if err := h.svc.RemoveMember(c.Request.Context(), groupID, memberID); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to remove member")
 		return
 	}
-	utils.OKMsg(c, "member removed", nil)
+	utils.SuccessResponse(c, http.StatusOK, "member removed", nil)
 }
 
 func (h *CellGroupHandler) ListMembers(c *gin.Context) {
 	groupID := strings.TrimSpace(c.Param("id"))
 	members, err := h.svc.ListMembers(c.Request.Context(), groupID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load cell group members")
 		return
 	}
-	utils.OK(c, members)
+	utils.SuccessResponse(c, http.StatusOK, "Cell group members retrieved", members)
 }
 
 func (h *CellGroupHandler) MemberGroups(c *gin.Context) {
 	memberID := strings.TrimSpace(c.Param("member_id"))
 	groups, err := h.svc.MemberGroups(c.Request.Context(), memberID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load member's cell groups")
 		return
 	}
-	utils.OK(c, groups)
+	utils.SuccessResponse(c, http.StatusOK, "Member's cell groups retrieved", groups)
 }
 
 func (h *CellGroupHandler) CreateMeeting(c *gin.Context) {
@@ -142,10 +148,10 @@ func (h *CellGroupHandler) CreateMeeting(c *gin.Context) {
 	}
 	m.GroupID = groupID
 	if err := h.svc.CreateMeeting(c.Request.Context(), &m); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, m)
+	utils.SuccessResponse(c, http.StatusCreated, "Cell group meeting created", m)
 }
 
 func (h *CellGroupHandler) ListMeetings(c *gin.Context) {
@@ -157,8 +163,8 @@ func (h *CellGroupHandler) ListMeetings(c *gin.Context) {
 	}
 	meetings, total, err := h.svc.ListMeetings(c.Request.Context(), groupID, limit, (page-1)*limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load cell group meetings")
 		return
 	}
-	utils.OKPage(c, meetings, utils.BuildPageMeta(page, limit, total))
+	utils.PaginatedSuccessResponse(c, http.StatusOK, meetings, page, limit, int(total))
 }

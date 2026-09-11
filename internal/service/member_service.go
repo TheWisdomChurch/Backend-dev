@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,7 +26,6 @@ type MemberService interface {
 	BirthdayStats() (*models.BirthdayStatsResponse, error)
 	BirthdaysByMonth(month int) ([]models.Member, error)
 	BirthdaysToday(now time.Time) ([]models.Member, error)
-	SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error)
 
 	BulkImport(rows []CSVMemberRow) (*BulkImportResult, error)
 }
@@ -392,73 +390,6 @@ func (s *memberService) BirthdaysToday(now time.Time) ([]models.Member, error) {
 	}
 	s.decryptMembers(members)
 	return members, nil
-}
-
-func (s *memberService) SendBirthdayGreetings(month, day int) (*models.BirthdaySendResult, error) {
-	if s.sender == nil {
-		return nil, errors.New("email sender is not configured")
-	}
-	if month < 1 || month > 12 {
-		return nil, errors.New("month must be 1-12")
-	}
-	if day < 1 || day > 31 {
-		return nil, errors.New("day must be 1-31")
-	}
-
-	members, err := s.repo.ListByMonthDay(month, day, true)
-	if err != nil {
-		return nil, err
-	}
-
-	appName := strings.TrimSpace(s.branding.AppName)
-	if appName == "" {
-		appName = "The Wisdom Church"
-	}
-
-	dateLabel := fmt.Sprintf("%02d/%02d", day, month)
-	subject := fmt.Sprintf("Happy Birthday from %s", appName)
-	heroURL := email.TemplateAssetURL(s.branding, "birthday", "hero.png")
-
-	result := &models.BirthdaySendResult{Targeted: len(members)}
-	var tplStore *email.TemplateStore
-	if store, err := email.NewTemplateStoreFromEnv(); err == nil {
-		tplStore = store
-	}
-
-	for i := range members {
-		addr := strings.TrimSpace(members[i].Email)
-		if addr == "" {
-			result.Skipped++
-			continue
-		}
-		fullName := strings.TrimSpace(strings.Join([]string{members[i].FirstName, members[i].LastName}, " "))
-		data := email.BirthdayTemplateData{
-			Branding:      s.branding,
-			RecipientName: fullName,
-			BirthdayDate:  dateLabel,
-			HeroImageURL:  heroURL,
-		}
-		body := ""
-		if tplStore != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			_, htmlOut, _, err := tplStore.RenderWithData(ctx, "birthday", data)
-			cancel()
-			if err == nil && strings.TrimSpace(htmlOut) != "" {
-				body = htmlOut
-			}
-		}
-		if strings.TrimSpace(body) == "" {
-			body = email.RenderBirthdayEmail(data)
-		}
-
-		if err := s.sender.SendHTML(addr, subject, body); err != nil {
-			result.Skipped++
-			continue
-		}
-		result.Sent++
-	}
-
-	return result, nil
 }
 
 // CSVMemberRow represents a single row parsed from a CSV import file.

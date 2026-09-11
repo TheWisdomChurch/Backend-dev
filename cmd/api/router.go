@@ -569,7 +569,14 @@ func setupRouter(
 	admin.GET("/wedding-anniversaries/stats", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Stats)
 	admin.GET("/wedding-anniversaries/month/:month", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.ByMonth)
 	admin.GET("/wedding-anniversaries/today", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Today)
-	admin.POST("/wedding-anniversaries/send-today", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.SendToday)
+	// No admin-triggered "send today" route here on purpose: sending wedding
+	// anniversary greetings is handled exclusively by the celebration
+	// automation pipeline (POST /admin/automations/celebrations/run and its
+	// scheduled worker) via CelebrationAutomationService, which already
+	// covers wedding anniversaries with per-recipient dedup and retry. A
+	// second, untracked send path here would let the same couple be emailed
+	// twice — once from each pipeline — with no way for either to know the
+	// other had already sent it.
 	admin.GET("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Get)
 	admin.PUT("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Upsert)
 	admin.DELETE("/wedding-anniversary/:id", middleware.RequirePermission(middleware.PermissionMembersManage), weddingAnniversaryHandler.Delete)

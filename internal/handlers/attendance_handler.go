@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/models"
 	"wisdomHouse-backend/internal/service"
@@ -28,10 +30,10 @@ func (h *AttendanceHandler) ListServiceTypes(c *gin.Context) {
 	}
 	rows, err := h.svc.ListServiceTypes(c.Request.Context(), campusID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load service types")
 		return
 	}
-	utils.OK(c, rows)
+	utils.SuccessResponse(c, http.StatusOK, "Service types retrieved", rows)
 }
 
 func (h *AttendanceHandler) CreateServiceType(c *gin.Context) {
@@ -41,10 +43,10 @@ func (h *AttendanceHandler) CreateServiceType(c *gin.Context) {
 		return
 	}
 	if err := h.svc.CreateServiceType(c.Request.Context(), &st); err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, st)
+	utils.SuccessResponse(c, http.StatusCreated, "Service type created", st)
 }
 
 func (h *AttendanceHandler) CreateSession(c *gin.Context) {
@@ -61,10 +63,10 @@ func (h *AttendanceHandler) CreateSession(c *gin.Context) {
 	}
 	session, err := h.svc.CreateSession(c.Request.Context(), req, createdByID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, session)
+	utils.SuccessResponse(c, http.StatusCreated, "Attendance session created", session)
 }
 
 func (h *AttendanceHandler) UpdateSession(c *gin.Context) {
@@ -75,20 +77,28 @@ func (h *AttendanceHandler) UpdateSession(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpdateSession(c.Request.Context(), id, body); err != nil {
-		utils.Err(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Attendance session not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.OKMsg(c, "session updated", nil)
+	utils.SuccessResponse(c, http.StatusOK, "session updated", nil)
 }
 
 func (h *AttendanceHandler) GetSession(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	session, err := h.svc.GetSession(c.Request.Context(), id)
 	if err != nil {
-		utils.Err(c, err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "Attendance session not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load attendance session")
 		return
 	}
-	utils.OK(c, session)
+	utils.SuccessResponse(c, http.StatusOK, "Attendance session retrieved", session)
 }
 
 func (h *AttendanceHandler) ListSessions(c *gin.Context) {
@@ -117,10 +127,10 @@ func (h *AttendanceHandler) ListSessions(c *gin.Context) {
 	}
 	sessions, total, err := h.svc.ListSessions(c.Request.Context(), campusID, from, to, limit, (page-1)*limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load attendance sessions")
 		return
 	}
-	utils.OKPage(c, sessions, utils.BuildPageMeta(page, limit, total))
+	utils.PaginatedSuccessResponse(c, http.StatusOK, sessions, page, limit, int(total))
 }
 
 func (h *AttendanceHandler) CheckIn(c *gin.Context) {
@@ -131,20 +141,20 @@ func (h *AttendanceHandler) CheckIn(c *gin.Context) {
 	}
 	rec, err := h.svc.CheckIn(c.Request.Context(), req)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	utils.Created(c, rec)
+	utils.SuccessResponse(c, http.StatusCreated, "Checked in", rec)
 }
 
 func (h *AttendanceHandler) ListRecords(c *gin.Context) {
 	sessionID := strings.TrimSpace(c.Param("id"))
 	records, err := h.svc.ListRecords(c.Request.Context(), sessionID)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load attendance records")
 		return
 	}
-	utils.OK(c, records)
+	utils.SuccessResponse(c, http.StatusOK, "Attendance records retrieved", records)
 }
 
 func (h *AttendanceHandler) MemberHistory(c *gin.Context) {
@@ -152,8 +162,8 @@ func (h *AttendanceHandler) MemberHistory(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	records, err := h.svc.MemberHistory(c.Request.Context(), memberID, limit)
 	if err != nil {
-		utils.Err(c, err)
+		utils.ErrorResponse(c, http.StatusInternalServerError, "Failed to load member attendance history")
 		return
 	}
-	utils.OK(c, records)
+	utils.SuccessResponse(c, http.StatusOK, "Member attendance history retrieved", records)
 }
