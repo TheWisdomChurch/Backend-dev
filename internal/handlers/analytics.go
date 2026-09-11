@@ -59,7 +59,7 @@ func (h *AnalyticsHandler) GetChurchOverview(c *gin.Context) {
 		return
 	}
 	metrics.RecordAnalyticsQuery("overview", "success", time.Since(started))
-	utils.OKMsg(c, "Church overview retrieved successfully", result)
+	utils.SuccessResponse(c, http.StatusOK, "Church overview retrieved successfully", result)
 }
 
 func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
@@ -75,7 +75,7 @@ func (h *AnalyticsHandler) GetAdminAnalytics(c *gin.Context) {
 		return
 	}
 	metrics.RecordAnalyticsQuery("admin", "success", time.Since(started))
-	utils.OKMsg(c, "Analytics retrieved successfully", result)
+	utils.SuccessResponse(c, http.StatusOK, "Analytics retrieved successfully", result)
 }
 
 func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
@@ -96,7 +96,7 @@ func (h *AnalyticsHandler) GetDecisionInsights(c *gin.Context) {
 		return
 	}
 	metrics.RecordAnalyticsQuery("insights", "success", time.Since(started))
-	utils.OKMsg(c, "Decision insights retrieved successfully", insights)
+	utils.SuccessResponse(c, http.StatusOK, "Decision insights retrieved successfully", insights)
 }
 
 func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
@@ -195,7 +195,7 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 	if err := h.svc.IngestBatch(ctx, batch, normalized); err != nil {
 		if errors.Is(err, repository.ErrDuplicateAnalyticsBatch) {
 			metrics.RecordAnalyticsIngest("duplicate", 0)
-			utils.OKMsg(c, "Analytics batch already ingested", gin.H{
+			utils.SuccessResponse(c, http.StatusOK, "Analytics batch already ingested", gin.H{
 				"batchId": req.BatchID, "eventsProcessed": 0, "duplicate": true,
 			})
 			return
@@ -206,7 +206,7 @@ func (h *AnalyticsHandler) IngestEvents(c *gin.Context) {
 	}
 	metrics.RecordAnalyticsIngest("accepted", len(normalized))
 
-	utils.OKMsg(c, "Analytics events ingested", gin.H{
+	utils.SuccessResponse(c, http.StatusOK, "Analytics events ingested", gin.H{
 		"batchId":         req.BatchID,
 		"eventsProcessed": len(req.Events),
 	})

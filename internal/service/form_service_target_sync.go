@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,6 +189,71 @@ func (s *formService) notifySubmissionTargetSyncFailure(form *models.Form, submi
 		EntityID:   &entityID,
 		Roles:      []string{"admin", "super_admin"},
 	})
+}
+
+// syncFormBirthdaySubject feeds the celebration automation's daily birthday
+// run from ANY form that captures a date of birth — not only the dedicated
+// member / workforce / leadership intake forms handled by
+// syncSubmissionTarget below. It looks for the first `date` field whose mode
+// keeps the year (explicit dateMode:'full', or the birth-date heuristic),
+// and — if the submission has that value plus an email — upserts one row
+// keyed by submission ID. Best-effort: errors are logged, never surfaced to
+// the submitter.
+func (s *formService) syncFormBirthdaySubject(form *models.Form, values map[string]any, name *string, emailAddr *string, submissionID string) {
+	if s.repo == nil {
+		return
+	}
+	subject := extractFormBirthdaySubject(form, values, name, emailAddr, submissionID)
+	if subject == nil {
+		return
+	}
+	if err := s.repo.UpsertFormBirthdaySubject(subject); err != nil {
+		applog.L().Warn("form birthday subject sync failed",
+			"form_id", strings.TrimSpace(form.ID),
+			"submission_id", strings.TrimSpace(submissionID),
+			"error", err)
+	}
+}
+
+// extractFormBirthdaySubject finds the first `date` field on the form whose
+// mode keeps the year (explicit dateMode:'full', or the birth-date
+// heuristic) with a valid value on this submission, and — given an email —
+// returns the row to upsert. Pure: no I/O, easy to unit test.
+func extractFormBirthdaySubject(form *models.Form, values map[string]any, name *string, emailAddr *string, submissionID string) *models.FormBirthdaySubject {
+	if form == nil || emailAddr == nil || strings.TrimSpace(*emailAddr) == "" {
+		return nil
+	}
+	for _, f := range form.Fields {
+		if f.Type != models.FieldDate {
+			continue
+		}
+		rules := decodeValidation(f.Validation)
+		if !dateFieldKeepsYear(rules, f.Key, f.Label) {
+			continue
+		}
+		raw, _ := values[f.Key].(string)
+		parts := strings.Split(strings.TrimSpace(raw), "-")
+		if len(parts) != 3 {
+			continue
+		}
+		day, dErr := strconv.Atoi(parts[0])
+		month, mErr := strconv.Atoi(parts[1])
+		if dErr != nil || mErr != nil || month < 1 || month > 12 || day < 1 || day > 31 {
+			continue
+		}
+		first, last := splitName(strings.TrimSpace(valueOrEmpty(name)))
+		return &models.FormBirthdaySubject{
+			SubmissionID:  submissionID,
+			FormID:        form.ID,
+			FieldKey:      f.Key,
+			FirstName:     first,
+			LastName:      last,
+			Email:         normalizeEmail(*emailAddr),
+			BirthdayMonth: month,
+			BirthdayDay:   day,
+		}
+	}
+	return nil
 }
 
 func (s *formService) syncSubmissionTarget(form *models.Form, settings *models.FormSettingsDTO, values map[string]any, submissionID string) error {

@@ -249,6 +249,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		)
 		s.notifySubmissionTargetSyncFailure(form, sub.ID, target, err)
 	}
+	// Independent of submissionTarget — any form's date-of-birth field feeds
+	// the birthday automation.
+	s.syncFormBirthdaySubject(form, cleanValues, name, email, sub.ID)
 
 	return nil
 }

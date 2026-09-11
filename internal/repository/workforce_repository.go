@@ -2,7 +2,6 @@ package repository
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -101,7 +100,9 @@ func (r *workforceRepository) Update(id string, updates map[string]interface{}) 
 }
 
 func syncWorkforceDepartment(tx *gorm.DB, workforceMemberID, department string) error {
-	department = strings.TrimSpace(department)
+	// Slug-shaped department values ("wisdom-house-choir") become a readable
+	// ministry name ("Wisdom House Choir") instead of being stored verbatim.
+	department = humanizeSlug(department)
 	if department == "" {
 		return errors.New("department is required")
 	}

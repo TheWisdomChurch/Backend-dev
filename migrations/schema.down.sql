@@ -255,6 +255,7 @@ DROP INDEX IF EXISTS public.idx_giving_intents_created_at;
 
 DROP TABLE IF EXISTS public.email_templates CASCADE;
 DROP TABLE IF EXISTS public.assets CASCADE;
+DROP TABLE IF EXISTS public.form_birthday_subjects CASCADE;
 DROP TABLE IF EXISTS public.form_calendar_reminders CASCADE;
 DROP TABLE IF EXISTS public.form_submissions CASCADE;
 DROP TABLE IF EXISTS public.form_fields CASCADE;
