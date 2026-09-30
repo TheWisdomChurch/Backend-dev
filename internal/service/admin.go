@@ -13,4 +13,5 @@ type AdminService interface {
 	DeleteUser(id string) error
 	ApproveUser(id string) (interface{}, error)
 	RejectUser(id string, reason string) (interface{}, error)
+	ResetUser2FA(id string) error
 }

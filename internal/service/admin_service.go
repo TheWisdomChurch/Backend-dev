@@ -272,6 +272,22 @@ func (s *adminServiceImpl) RejectUser(id string, reason string) (interface{}, er
 	return sanitizeAdminUser(user), nil
 }
 
+func (s *adminServiceImpl) ResetUser2FA(id string) error {
+	user, _, err := s.findAdminUserOrRequest(id)
+	if err != nil {
+		return err
+	}
+
+	user.TOTPEnabled = false
+	user.TOTPSecretEnc = nil
+	user.TOTPPendingEnc = nil
+	user.TOTPRecoveryCodesEnc = nil
+	user.PreferredMFAMethod = "email_otp"
+	user.UpdatedAt = time.Now().UTC()
+
+	return s.userRepo.Update(user)
+}
+
 func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (interface{}, error) {
 	if s.userRepo == nil {
 		return nil, errors.New("user repository not configured")

@@ -2336,3 +2336,9 @@ WHERE deleted_at IS NULL
   AND category = 'department'
   AND name ~ '[-_]'
   AND name !~ ' ';
+
+-- migration: 026_mfa_recovery_codes.up.sql
+-- Store encrypted backup recovery codes for authenticator MFA so admins can
+-- regain access if they lose their 2FA device.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_recovery_codes_enc text;
+
