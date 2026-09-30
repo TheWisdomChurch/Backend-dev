@@ -180,8 +180,10 @@ func (s *authServiceImpl) VerifyLoginMFA(email, code, purpose, method string, me
 
 	method = normalizeMFAMethod(method)
 	if isAdminRole(user.Role) && user.TOTPEnabled {
-		// Admin sessions must be bound to a TOTP verification.
-		method = "totp"
+		// Admin sessions must be bound to a TOTP verification or recovery code verification.
+		if method != "recovery_code" {
+			method = "totp"
+		}
 	}
 	if method == "" {
 		if strings.HasPrefix(strings.TrimSpace(purpose), loginOTPPurposePrefix) {
@@ -193,10 +195,19 @@ func (s *authServiceImpl) VerifyLoginMFA(email, code, purpose, method string, me
 		}
 	}
 
+	// Auto-detect recovery code entered in the TOTP field
+	if method == "totp" && authutil.LooksLikeRecoveryCode(code) {
+		method = "recovery_code"
+	}
+
 	switch method {
 	case "totp":
 		if !s.verifyStoredTOTP(user, code) {
 			return nil, "", errors.New("invalid code")
+		}
+	case "recovery_code":
+		if !s.verifyAndConsumeRecoveryCode(user, code) {
+			return nil, "", errors.New("invalid or already used recovery code")
 		}
 	case "email_otp":
 		if s.disableOTP || s.disableLoginOTP {

@@ -22,9 +22,14 @@ type AuthService interface {
 	ResendLoginOTP(email string, meta LoginMetadata) (*LoginResult, error)
 	GetSecurityProfile(userID string) (*models.AuthSecurityProfile, error)
 	BeginTOTPSetup(userID string) (*models.TOTPSetupResponse, error)
+	ReconfigureTOTP(userID string) (*models.TOTPSetupResponse, error)
 	EnableTOTP(userID, code string) (*models.AuthSecurityProfile, error)
 	DisableTOTP(userID, code string) (*models.AuthSecurityProfile, error)
 	SetPreferredMFAMethod(userID, method string) (*models.AuthSecurityProfile, error)
+	GenerateRecoveryCodes(userID string) ([]string, error)
+	RequestEmergencyMFAReset(email string) error
+	ConfirmEmergencyMFAReset(email, code, password string) (*models.User, error)
+	AdminResetUser2FA(targetUserID string) error
 	CompleteGoogleLogin(googleSubject, email, firstName, lastName string, meta LoginMetadata) (*LoginResult, error)
 }
 

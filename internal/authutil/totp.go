@@ -118,3 +118,50 @@ func normalizeNumericCode(value string) string {
 	}
 	return builder.String()
 }
+
+// GenerateRecoveryCodes generates count random alphanumeric recovery codes formatted as XXXX-XXXX.
+func GenerateRecoveryCodes(count int) ([]string, error) {
+	if count <= 0 {
+		count = 8
+	}
+	// Use Crockford-like base32 characters to avoid visual ambiguity (no 0/O, 1/I).
+	const charset = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	codes := make([]string, count)
+	buf := make([]byte, 8)
+	for i := 0; i < count; i++ {
+		if _, err := rand.Read(buf); err != nil {
+			return nil, err
+		}
+		var sb strings.Builder
+		for j := 0; j < 8; j++ {
+			if j == 4 {
+				sb.WriteByte('-')
+			}
+			idx := int(buf[j]) % len(charset)
+			sb.WriteByte(charset[idx])
+		}
+		codes[i] = sb.String()
+	}
+	return codes, nil
+}
+
+// NormalizeRecoveryCode strips hyphens, whitespace, and uppercases.
+func NormalizeRecoveryCode(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	var sb strings.Builder
+	for _, r := range code {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}
+
+// LooksLikeRecoveryCode returns true if the input looks like a recovery code rather than a 6-digit TOTP.
+func LooksLikeRecoveryCode(code string) bool {
+	norm := NormalizeRecoveryCode(code)
+	return len(norm) == 8 && strings.IndexFunc(norm, func(r rune) bool {
+		return r < '0' || (r > '9' && (r < 'A' || r > 'Z'))
+	}) == -1
+}
+

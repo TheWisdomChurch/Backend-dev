@@ -159,6 +159,8 @@ func setupRouter(
 	auth.POST("/register", loginRateLimiter, authHandler.Register)
 	auth.POST("/password-reset/request", loginRateLimiter, authHandler.RequestPasswordReset)
 	auth.POST("/password-reset/confirm", loginRateLimiter, authHandler.ConfirmPasswordReset)
+	auth.POST("/mfa/emergency-reset/request", loginRateLimiter, authHandler.RequestEmergencyMFAReset)
+	auth.POST("/mfa/emergency-reset/confirm", loginRateLimiter, authHandler.ConfirmEmergencyMFAReset)
 	auth.POST("/otp/verify", loginRateLimiter, authHandler.VerifyLoginOTP)
 	auth.POST("/otp/resend", loginRateLimiter, authHandler.ResendLoginOTP)
 	auth.GET("/oauth/google/start", authHandler.StartGoogleOAuth)
@@ -181,8 +183,10 @@ func setupRouter(
 	authProtected.POST("/logout", authHandler.Logout)
 	authProtected.GET("/mfa", authHandler.GetMFASecurityProfile)
 	authProtected.POST("/mfa/totp/setup", authHandler.BeginTOTPSetup)
+	authProtected.POST("/mfa/totp/reconfigure", authHandler.ReconfigureTOTP)
 	authProtected.POST("/mfa/totp/enable", authHandler.EnableTOTP)
 	authProtected.POST("/mfa/totp/disable", authHandler.DisableTOTP)
+	authProtected.POST("/mfa/recovery-codes/generate", authHandler.GenerateRecoveryCodes)
 	authProtected.PATCH("/mfa/method", authHandler.SetPreferredMFAMethod)
 
 	// OTP
@@ -612,6 +616,7 @@ func setupRouter(
 	superAdmin.Use(middleware.RoleMiddleware("super_admin"))
 	superAdmin.POST("/users/:id/approve", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ApproveUser)
 	superAdmin.POST("/users/:id/reject", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.RejectUser)
+	superAdmin.POST("/users/:id/reset-2fa", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ResetUser2FA)
 	superAdmin.POST("/workforce/:id/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.Approve)
 	superAdmin.POST("/workforce/:id/registration/reject", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.RejectRegistration)
 	superAdmin.POST("/workforce/:id/delete/approve", middleware.RequirePermission(middleware.PermissionWorkforceManage), workforceHandler.ApproveDelete)

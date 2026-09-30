@@ -19,8 +19,9 @@ type User struct {
 	FederatedLinkedAt  *time.Time     `json:"federated_linked_at,omitempty"`
 	PreferredMFAMethod string         `gorm:"size:30;not null;default:'email_otp'" json:"preferred_mfa_method"`
 	TOTPEnabled        bool           `gorm:"default:false;not null" json:"totp_enabled"`
-	TOTPSecretEnc      *string        `gorm:"type:text" json:"-"`
-	TOTPPendingEnc     *string        `gorm:"type:text" json:"-"`
+	TOTPSecretEnc        *string        `gorm:"type:text" json:"-"`
+	TOTPPendingEnc       *string        `gorm:"type:text" json:"-"`
+	TOTPRecoveryCodesEnc *string        `gorm:"type:text" json:"-"`
 	Role               string         `gorm:"size:50;not null;default:'admin'" json:"role"`
 	IsActive           bool           `gorm:"default:true;not null" json:"is_active"` // ADD THIS LINE
 	AdminApproved      bool           `gorm:"default:true;not null" json:"admin_approved"`

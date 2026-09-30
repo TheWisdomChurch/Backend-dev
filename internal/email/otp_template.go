@@ -63,6 +63,8 @@ func otpPurposeCopy(purpose string) (headline string, line string) {
 		return "Reset your password", "Use the verification code below to reset your password."
 	case "login":
 		return "Approve sign-in", "Use the verification code below to approve your sign-in."
+	case "mfa_reset", "mfa_device_reset":
+		return "Reset your authenticator device", "Use the verification code below to reset your Google Authenticator setup so you can register a new phone."
 	default:
 		return "Verification code", "Use the verification code below to complete your request."
 	}

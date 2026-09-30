@@ -160,7 +160,7 @@ func RequireAdminMFA(userRepo repository.UserRepository) gin.HandlerFunc {
 				authMethod = strings.ToLower(strings.TrimSpace(value))
 			}
 		}
-		if authMethod != "totp" {
+		if authMethod != "totp" && authMethod != "recovery_code" {
 			adminSecurityError(c, http.StatusForbidden, "Admin routes require a TOTP-verified session.", "admin_totp_session_required", gin.H{
 				"nextStep":        "/verify-otp",
 				"requiredMethod":  "totp",

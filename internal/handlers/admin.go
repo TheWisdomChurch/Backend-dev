@@ -320,6 +320,23 @@ func (h *AdminHandler) RejectUser(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "User rejected", presentAdminUser(*rejected, isSuperAdmin(c)))
 }
 
+func (h *AdminHandler) ResetUser2FA(c *gin.Context) {
+	if !isSuperAdmin(c) {
+		utils.ErrorResponse(c, http.StatusForbidden, "Only super admins can reset user two-factor authentication")
+		return
+	}
+	id, ok := userIDParam(c)
+	if !ok {
+		return
+	}
+
+	if err := h.svc.ResetUser2FA(id); err != nil {
+		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "User two-factor authentication has been reset. They will be prompted to register their new device on next login.", nil)
+}
+
 type adminUserResponse struct {
 	ID                 string     `json:"id"`
 	FirstName          string     `json:"first_name"`

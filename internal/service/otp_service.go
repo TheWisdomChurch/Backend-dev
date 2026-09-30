@@ -196,6 +196,8 @@ func otpSubject(appName, purpose string) string {
 		return fmt.Sprintf("Reset your %s password", name)
 	case "login":
 		return fmt.Sprintf("Approve sign-in to %s", name)
+	case "mfa_reset", "mfa_device_reset":
+		return fmt.Sprintf("Reset your %s authenticator device", name)
 	default:
 		return fmt.Sprintf("Your %s verification code", name)
 	}

@@ -76,3 +76,42 @@ func TestVerifyTOTPGeneratedCodeWithSkew(t *testing.T) {
 		t.Fatalf("expected code outside skew window to fail")
 	}
 }
+
+func TestGenerateAndNormalizeRecoveryCodes(t *testing.T) {
+	t.Parallel()
+
+	codes, err := GenerateRecoveryCodes(8)
+	if err != nil {
+		t.Fatalf("expected recovery codes generation to succeed: %v", err)
+	}
+	if len(codes) != 8 {
+		t.Fatalf("expected 8 recovery codes, got %d", len(codes))
+	}
+
+	seen := make(map[string]bool)
+	for _, code := range codes {
+		if len(code) != 9 || code[4] != '-' {
+			t.Fatalf("unexpected recovery code format: %q", code)
+		}
+		norm := NormalizeRecoveryCode(code)
+		if len(norm) != 8 {
+			t.Fatalf("expected normalized length 8, got %d for %q", len(norm), norm)
+		}
+		if seen[norm] {
+			t.Fatalf("expected unique recovery codes, found duplicate: %q", code)
+		}
+		seen[norm] = true
+
+		if !LooksLikeRecoveryCode(code) {
+			t.Fatalf("expected LooksLikeRecoveryCode to return true for %q", code)
+		}
+		if !LooksLikeRecoveryCode(norm) {
+			t.Fatalf("expected LooksLikeRecoveryCode to return true for %q", norm)
+		}
+	}
+
+	if LooksLikeRecoveryCode("123456") {
+		t.Fatalf("6-digit TOTP should not look like recovery code")
+	}
+}
+
