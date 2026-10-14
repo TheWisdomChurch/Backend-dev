@@ -95,3 +95,74 @@ func TestEncodeSettingsDoesNotAllowConsentToBeDisabled(t *testing.T) {
 		t.Fatal("all forms must retain required consent")
 	}
 }
+
+func TestEncodeSettingsValidatesAndNormalizesFlyerAndAttendingBadge(t *testing.T) {
+	far := "PORTRAIT_4_5"
+	enabled := true
+	style := "POLAROID"
+	badgeText := "  I Will Be Attending  "
+	accentColor := "#FF5500"
+	customFlyer := "https://wisdomchurchhq.org/flyers/easter.jpg"
+	shape := "ROUNDED"
+
+	settings := &models.FormSettingsDTO{
+		FlyerAspectRatio: &far,
+		AttendingBadge: &models.FormAttendingBadgeSettingsDTO{
+			Enabled:        &enabled,
+			TemplateStyle:  &style,
+			BadgeText:      &badgeText,
+			AccentColor:    &accentColor,
+			CustomFlyerURL: &customFlyer,
+			PhotoShape:     &shape,
+		},
+	}
+
+	encoded, err := encodeSettings(settings)
+	if err != nil {
+		t.Fatalf("encode settings failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal encoded settings: %v", err)
+	}
+
+	if payload["flyerAspectRatio"] != "portrait_4_5" {
+		t.Fatalf("expected flyerAspectRatio 'portrait_4_5', got %v", payload["flyerAspectRatio"])
+	}
+
+	badge, ok := payload["attendingBadge"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected attendingBadge in payload, got %v", payload["attendingBadge"])
+	}
+	if badge["templateStyle"] != "polaroid" {
+		t.Fatalf("expected templateStyle 'polaroid', got %v", badge["templateStyle"])
+	}
+	if badge["badgeText"] != "I Will Be Attending" {
+		t.Fatalf("expected badgeText trimmed, got %v", badge["badgeText"])
+	}
+	if badge["photoShape"] != "rounded" {
+		t.Fatalf("expected photoShape 'rounded', got %v", badge["photoShape"])
+	}
+	if badge["accentColor"] != "#ff5500" {
+		t.Fatalf("expected accentColor lowercase hex, got %v", badge["accentColor"])
+	}
+}
+
+func TestCanonicalizeFormPresentationSettingsMigratesFlyerAspectRatio(t *testing.T) {
+	legacyRatio := "square_1_1"
+	settings := &models.FormSettingsDTO{
+		Design: &models.FormDesignSettingsDTO{
+			FlyerAspectRatio: &legacyRatio,
+		},
+	}
+
+	canonicalizeFormPresentationSettings(settings)
+	if settings.FlyerAspectRatio == nil || *settings.FlyerAspectRatio != "square_1_1" {
+		t.Fatalf("expected flyerAspectRatio to be migrated to root, got %v", settings.FlyerAspectRatio)
+	}
+	if settings.Design.FlyerAspectRatio != nil {
+		t.Fatal("legacy design.flyerAspectRatio must be cleared after canonicalization")
+	}
+}
+

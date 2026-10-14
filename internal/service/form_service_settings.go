@@ -650,6 +650,65 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 		}
 	}
 
+	if s.FlyerAspectRatio != nil {
+		far := strings.ToLower(strings.TrimSpace(*s.FlyerAspectRatio))
+		switch far {
+		case "portrait_4_5", "landscape_16_9", "square_1_1":
+			s.FlyerAspectRatio = &far
+		case "":
+			s.FlyerAspectRatio = nil
+		default:
+			return nil, fmt.Errorf("flyerAspectRatio must be portrait_4_5, landscape_16_9, or square_1_1")
+		}
+	}
+
+	if s.AttendingBadge != nil {
+		ab := s.AttendingBadge
+		if ab.BadgeText, err = normalizeText("attendingBadge.badgeText", ab.BadgeText, 120); err != nil {
+			return nil, err
+		}
+		if ab.Tagline, err = normalizeText("attendingBadge.tagline", ab.Tagline, 200); err != nil {
+			return nil, err
+		}
+		if ab.TemplateStyle != nil {
+			style := strings.ToLower(strings.TrimSpace(*ab.TemplateStyle))
+			switch style {
+			case "polaroid", "badge", "minimal":
+				ab.TemplateStyle = &style
+			case "":
+				ab.TemplateStyle = nil
+			default:
+				return nil, fmt.Errorf("attendingBadge.templateStyle must be polaroid, badge, or minimal")
+			}
+		}
+		if ab.PhotoShape != nil {
+			shape := strings.ToLower(strings.TrimSpace(*ab.PhotoShape))
+			switch shape {
+			case "rounded", "square", "circle":
+				ab.PhotoShape = &shape
+			case "":
+				ab.PhotoShape = nil
+			default:
+				return nil, fmt.Errorf("attendingBadge.photoShape must be rounded, square, or circle")
+			}
+		}
+		if ab.AccentColor, err = normalizeColor("attendingBadge.accentColor", ab.AccentColor); err != nil {
+			return nil, err
+		}
+		if ab.CustomFlyerURL != nil {
+			raw := strings.TrimSpace(*ab.CustomFlyerURL)
+			if raw == "" {
+				ab.CustomFlyerURL = nil
+			} else {
+				normalized, parseErr := normalizeAbsoluteTemplateURL(raw)
+				if parseErr != nil {
+					return nil, fmt.Errorf("attendingBadge.customFlyerUrl is invalid")
+				}
+				ab.CustomFlyerURL = &normalized
+			}
+		}
+	}
+
 	if s.IntroBullets != nil {
 		clean := make([]string, 0, len(*s.IntroBullets))
 		for _, b := range *s.IntroBullets {
@@ -848,6 +907,17 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 			}
 			d.IntroBulletSubtext = &clean
 		}
+		if d.FlyerAspectRatio != nil {
+			far := strings.ToLower(strings.TrimSpace(*d.FlyerAspectRatio))
+			switch far {
+			case "portrait_4_5", "landscape_16_9", "square_1_1":
+				d.FlyerAspectRatio = &far
+			case "":
+				d.FlyerAspectRatio = nil
+			default:
+				return nil, fmt.Errorf("design.flyerAspectRatio must be portrait_4_5, landscape_16_9, or square_1_1")
+			}
+		}
 	}
 
 	canonicalizeFormPresentationSettings(s)
@@ -917,6 +987,7 @@ func canonicalizeFormPresentationSettings(s *models.FormSettingsDTO) {
 	copyString(&s.LayoutMode, &d.LayoutMode)
 	copyString(&s.DateFormat, &d.DateFormat)
 	copyString(&s.FormHeaderNote, &d.FormHeaderNote)
+	copyString(&s.FlyerAspectRatio, &d.FlyerAspectRatio)
 }
 
 func applyCurrentFormArchitectureDefaults(s *models.FormSettingsDTO) {

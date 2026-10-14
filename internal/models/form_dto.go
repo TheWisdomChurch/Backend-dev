@@ -51,6 +51,17 @@ type FormDesignSettingsDTO struct {
 	LayoutMode         *string   `json:"layoutMode,omitempty"` // split|stack
 	DateFormat         *string   `json:"dateFormat,omitempty"` // yyyy-mm-dd etc
 	FormHeaderNote     *string   `json:"formHeaderNote,omitempty"`
+	FlyerAspectRatio   *string   `json:"flyerAspectRatio,omitempty"` // portrait_4_5 | landscape_16_9 | square_1_1
+}
+
+type FormAttendingBadgeSettingsDTO struct {
+	Enabled        *bool   `json:"enabled,omitempty"`
+	TemplateStyle  *string `json:"templateStyle,omitempty"` // polaroid, badge, minimal
+	BadgeText      *string `json:"badgeText,omitempty"`
+	CustomFlyerURL *string `json:"customFlyerUrl,omitempty"`
+	PhotoShape     *string `json:"photoShape,omitempty"` // rounded, square, circle
+	AccentColor    *string `json:"accentColor,omitempty"`
+	Tagline        *string `json:"tagline,omitempty"`
 }
 
 type FormContentSectionItemDTO struct {
@@ -140,6 +151,8 @@ type FormSettingsDTO struct {
 	SubmitButtonTextColor *string                        `json:"submitButtonTextColor,omitempty"`
 	SubmitButtonIcon      *string                        `json:"submitButtonIcon,omitempty"`
 	FormHeaderNote        *string                        `json:"formHeaderNote,omitempty"`
+	FlyerAspectRatio      *string                        `json:"flyerAspectRatio,omitempty"`
+	AttendingBadge        *FormAttendingBadgeSettingsDTO `json:"attendingBadge,omitempty"`
 	Consent               *FormConsentSettingsDTO        `json:"consent,omitempty"`
 }
 
