@@ -681,11 +681,17 @@ const publicFormPageHTML = `<!DOCTYPE html>
 
       const dpBtn = document.getElementById('dp-generator-btn');
       if (dpBtn) {
-        const attendeeName = firstValue(values || {}, ['full_name', 'fullName', 'name']) ||
-          [firstValue(values || {}, ['first_name', 'firstName', 'firstname']), firstValue(values || {}, ['last_name', 'lastName', 'lastname'])].filter(Boolean).join(' ');
-        if (attendeeName) {
-          const base = {{printf "%q" .DPGeneratorURL}};
-          dpBtn.href = base + (base.includes('?') ? '&' : '?') + 'name=' + encodeURIComponent(attendeeName);
+        const firstName = firstValue(values || {}, ['first_name', 'firstName', 'firstname']);
+        const rawFullName = firstValue(values || {}, ['full_name', 'fullName', 'name']) ||
+          [firstName, firstValue(values || {}, ['last_name', 'lastName', 'lastname'])].filter(Boolean).join(' ');
+        const displayName = firstName || (rawFullName ? rawFullName.trim().split(/\s+/)[0] : '');
+        const base = {{printf "%q" .DPGeneratorURL}};
+        const urlParams = new URLSearchParams();
+        if (displayName) urlParams.set('name', displayName);
+        if (rawFullName && rawFullName !== displayName) urlParams.set('fullName', rawFullName);
+        const queryStr = urlParams.toString();
+        if (queryStr) {
+          dpBtn.href = base + (base.includes('?') ? '&' : '?') + queryStr;
         }
       }
 
