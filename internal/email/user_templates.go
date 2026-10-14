@@ -124,6 +124,7 @@ type FormResponseTemplateData struct {
 	RegistrationCode  string
 	Message           string
 	HeroImageURL      string
+	AttendingBadgeURL string
 	CalendarOptInURL  string
 	GoogleCalendarURL string
 	CalendarICSURL    string
@@ -295,7 +296,16 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 
 	codeBlock := ""
 	if code := strings.TrimSpace(data.RegistrationCode); code != "" {
-		codeBlock = "<tr><td style=\"padding:16px 40px 0;\">" + renderCodeBlock("Registration number", code) + "</td></tr>"
+		codeBlock = "<tr><td style=\"padding:16px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";border-radius:12px;background:#f8fafc;\"><tr><td style=\"padding:16px 20px;\">" + renderCodeBlock("Registration number", code) + "</td></tr></table></td></tr>"
+	}
+
+	attendeeBadgeBlock := ""
+	if badgeURL := strings.TrimSpace(data.AttendingBadgeURL); badgeURL != "" {
+		attendeeBadgeBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";background:" + colorAccentSurface + ";border-radius:12px;\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";text-align:center;\">" +
+			"<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorAccent + ";margin-bottom:8px;\">Official Attendee Flyer</div>" +
+			"<p style=\"margin:0 0 14px;font-size:14px;font-weight:600;color:" + colorInk + ";\">Personalize your 'I Will Be Attending' status flyer & share to WhatsApp or Instagram</p>" +
+			renderButton("Get Your Personalized Flyer", badgeURL, colorAccent, "#ffffff") +
+			"</td></tr></table></td></tr>"
 	}
 
 	calendarBlock := ""
@@ -313,7 +323,7 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		if strings.TrimSpace(data.CalendarICSURL) != "" {
 			inner.WriteString("<p style=\"margin:10px 0 0;font-size:12px;color:" + colorFaint + ";\">Apple/Outlook: " + renderTextLink("Download .ics", strings.TrimSpace(data.CalendarICSURL)) + "</p>")
 		}
-		calendarBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";\">" + inner.String() + "</td></tr></table></td></tr>"
+		calendarBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";border-radius:12px;\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";\">" + inner.String() + "</td></tr></table></td></tr>"
 	}
 
 	body := topLinks +
@@ -323,6 +333,7 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		renderParagraph(message) +
 		renderBodyClose() +
 		codeBlock +
+		attendeeBadgeBlock +
 		calendarBlock
 
 	return renderEmailShell(b, "", body)

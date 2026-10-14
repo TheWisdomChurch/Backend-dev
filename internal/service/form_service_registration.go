@@ -197,6 +197,20 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		hero = strings.TrimSpace(*event.Image)
 	}
 
+	attendingBadgeURL := ""
+	badgeEnabled := false
+	if settings != nil && settings.AttendingBadge != nil && settings.AttendingBadge.Enabled != nil && *settings.AttendingBadge.Enabled {
+		badgeEnabled = true
+	}
+	if form != nil && form.Slug != nil && (badgeEnabled || formTitle != "") {
+		if u := s.buildPublicURL(*form.Slug); u != nil && *u != "" {
+			attendingBadgeURL = strings.TrimRight(*u, "/") + "/dp"
+			if recipient != "" {
+				attendingBadgeURL += "?name=" + url.QueryEscape(recipient)
+			}
+		}
+	}
+
 	now := time.Now().UTC()
 	templateData := map[string]any{
 		"Branding":          s.branding,
@@ -216,12 +230,15 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		"CalendarOptInURL":  calendarOptInURL,
 		"GoogleCalendarURL": googleCalendarURL,
 		"CalendarICSURL":    calendarICSURL,
+		"AttendingBadgeURL": attendingBadgeURL,
+		"AttendingFlyerURL": attendingBadgeURL,
 		"FormTitle":         formTitle,
 		"EventTitle":        strings.TrimSpace(event.Title),
 		"EventDate":         strings.TrimSpace(event.Date),
 		"EventTime":         strings.TrimSpace(event.Time),
 		"EventLocation":     strings.TrimSpace(event.Location),
 		"HeroImageURL":      hero,
+		"FlyerImageURL":     hero,
 		"TemplateImageURL":  templateImageURL,
 		"SubmittedAt":       now.Format(time.RFC3339),
 		"SubmittedAtText":   now.Format("Mon, 02 Jan 2006 15:04 MST"),
@@ -279,6 +296,11 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			message = strings.TrimSpace(*settings.SuccessMessage)
 		}
 
+		badgeURLToRender := ""
+		if badgeEnabled {
+			badgeURLToRender = attendingBadgeURL
+		}
+
 		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
 			Branding:          s.branding,
 			RecipientName:     recipient,
@@ -286,6 +308,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			RegistrationCode:  code,
 			Message:           message,
 			HeroImageURL:      hero,
+			AttendingBadgeURL: badgeURLToRender,
 			CalendarOptInURL:  calendarOptInURL,
 			GoogleCalendarURL: googleCalendarURL,
 			CalendarICSURL:    calendarICSURL,
