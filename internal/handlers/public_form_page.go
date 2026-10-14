@@ -34,6 +34,8 @@ type publicFormPageData struct {
 	SubmissionType string
 	IsLeadership   bool
 	HomeURL        string
+	CoverImageUrl  string
+	DPGeneratorURL string
 }
 
 func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
@@ -58,6 +60,18 @@ func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
 
 	settings := decodeFormSettings(payload.Form.Settings)
 	submissionType := resolveFormSubmissionType(payload.Form, settings)
+
+	var coverImageUrl string
+	if settings != nil {
+		if settings.Design != nil && settings.Design.CoverImageURL != nil && strings.TrimSpace(*settings.Design.CoverImageURL) != "" {
+			coverImageUrl = strings.TrimSpace(*settings.Design.CoverImageURL)
+		} else if settings.AttendingBadge != nil && settings.AttendingBadge.CustomFlyerURL != nil && strings.TrimSpace(*settings.AttendingBadge.CustomFlyerURL) != "" {
+			coverImageUrl = strings.TrimSpace(*settings.AttendingBadge.CustomFlyerURL)
+		}
+	}
+
+	dpURL := "/forms/" + slug + "/dp"
+
 	data := publicFormPageData{
 		Form:           payload.Form,
 		Settings:       settings,
@@ -68,6 +82,8 @@ func (h *FormHandler) ViewPublicFormPage(c *gin.Context) {
 		SubmissionType: submissionType,
 		IsLeadership:   submissionType == "leadership",
 		HomeURL:        "/",
+		CoverImageUrl:  coverImageUrl,
+		DPGeneratorURL: dpURL,
 	}
 	if settings != nil && settings.SuccessMessage != nil && strings.TrimSpace(*settings.SuccessMessage) != "" {
 		data.SuccessMessage = strings.TrimSpace(*settings.SuccessMessage)
@@ -284,85 +300,108 @@ const publicFormPageHTML = `<!DOCTYPE html>
     :root {
       --ink: #0f172a;
       --muted: #475569;
-      --line: #dbe3ef;
+      --line: #e2e8f0;
       --surface: #ffffff;
       --soft: #f8fafc;
       --brand: #0f4c81;
       --brand-soft: #e9f2f9;
+      --gold: #d97706;
+      --gold-dark: #b45309;
+      --gold-soft: #fef3c7;
       --success: #166534;
       --danger: #b42318;
-      --bg: linear-gradient(180deg, #eef4fb 0%, #f9fbfd 100%);
+      --bg: radial-gradient(circle at 50% 0%, #edf3fb 0%, #f8fafc 100%);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: "Segoe UI", Tahoma, Arial, sans-serif; color: var(--ink); background: var(--bg); }
-    .shell { max-width: 1180px; margin: 0 auto; padding: 40px 20px 64px; }
-    .hero { background: rgba(15, 76, 129, 0.96); color: #fff; border-radius: 28px; padding: 34px; box-shadow: 0 24px 70px rgba(15,23,42,.18); }
-    .hero h1 { margin: 0 0 10px; font-size: clamp(32px, 5vw, 46px); line-height: 1.05; }
-    .hero p { margin: 0; max-width: 760px; line-height: 1.75; color: rgba(255,255,255,.9); }
-    .note { margin-top: 18px; padding: 14px 16px; border-radius: 18px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); }
-    .grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 24px; margin-top: 26px; align-items: start; }
-    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 24px; box-shadow: 0 12px 40px rgba(15,23,42,.06); }
-    h2 { margin: 0 0 14px; font-size: 24px; }
-    .muted { color: var(--muted); line-height: 1.7; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+    .shell { max-width: 1140px; margin: 0 auto; padding: 36px 20px 64px; }
+    .banner-box { width: 100%; max-height: 420px; border-radius: 24px; overflow: hidden; margin-bottom: 24px; box-shadow: 0 16px 40px rgba(15,23,42,.12); border: 1px solid rgba(226,232,240,0.8); background: #0f172a; }
+    .banner-img { width: 100%; height: 100%; max-height: 420px; object-fit: cover; display: block; }
+    .hero { background: linear-gradient(135deg, #0b1f3a 0%, #0f4c81 50%, #173860 100%); color: #fff; border-radius: 26px; padding: 36px; box-shadow: 0 20px 60px rgba(11,31,58,.22); position: relative; overflow: hidden; }
+    .hero::after { content: ""; position: absolute; top: -60px; right: -60px; width: 220px; height: 220px; border-radius: 999px; background: radial-gradient(circle, rgba(217,119,6,0.2) 0%, transparent 70%); pointer-events: none; }
+    .badge-tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #fde68a; margin-bottom: 12px; }
+    .hero h1 { margin: 0 0 10px; font-size: clamp(30px, 4.5vw, 44px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+    .hero p { margin: 0; max-width: 760px; line-height: 1.7; color: rgba(255,255,255,.9); font-size: 15px; }
+    .note { margin-top: 18px; padding: 14px 18px; border-radius: 16px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); font-size: 14px; line-height: 1.6; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 24px; margin-top: 24px; align-items: start; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 28px; box-shadow: 0 12px 35px rgba(15,23,42,.05); }
+    h2 { margin: 0 0 14px; font-size: 22px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink); }
+    .muted { color: var(--muted); line-height: 1.65; font-size: 14px; }
     .bullet-list, .section-items { display: grid; gap: 14px; margin-top: 18px; }
     .bullet-item, .section-item { padding: 16px 18px; border-radius: 18px; background: var(--soft); border: 1px solid var(--line); }
     .section-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .section-stack { display: grid; gap: 14px; }
     .section-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .section-timeline { display: grid; gap: 14px; border-left: 2px solid var(--brand-soft); padding-left: 16px; }
-    .eyebrow { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand); font-weight: 700; }
-    .section-item h3, .bullet-item h3 { margin: 0 0 6px; font-size: 18px; }
+    .eyebrow { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); font-weight: 800; }
+    .section-item h3, .bullet-item h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
     .section-item a { color: var(--brand); font-weight: 700; text-decoration: none; }
     form { display: grid; gap: 18px; }
-    .field { display: grid; gap: 10px; }
-    .field-label { font-size: 14px; font-weight: 700; color: var(--ink); }
-    .required { color: var(--danger); }
-    .field-control { width: 100%; border: 1px solid #cbd5e1; border-radius: 16px; padding: 14px 16px; font: inherit; background: #fff; color: var(--ink); }
+    .field { display: grid; gap: 8px; }
+    .field-label { font-size: 13px; font-weight: 700; color: var(--ink); }
+    .required { color: var(--danger); font-weight: 800; }
+    .field-control { width: 100%; border: 1px solid #cbd5e1; border-radius: 14px; padding: 13px 16px; font: inherit; font-size: 14px; background: #fff; color: var(--ink); transition: border-color .15s ease, box-shadow .15s ease; }
+    .field-control:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.15); }
     select.field-control { appearance: none; background-image: linear-gradient(45deg, transparent 50%, #64748b 50%), linear-gradient(135deg, #64748b 50%, transparent 50%); background-position: calc(100% - 20px) calc(1em + 1px), calc(100% - 14px) calc(1em + 1px); background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; padding-right: 42px; }
     select.field-control option { color: #0f172a; background: #ffffff; }
-    .textarea { min-height: 120px; resize: vertical; }
-    .choice-group { display: grid; gap: 12px; }
-    .choice { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--soft); }
+    .textarea { min-height: 110px; resize: vertical; }
+    .choice-group { display: grid; gap: 10px; }
+    .choice { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); font-size: 14px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+    .choice:hover { background: #f1f5f9; border-color: #cbd5e1; }
     .choice.single { background: transparent; padding: 0; border: 0; }
     .field.invalid .field-control, .field.invalid .choice-group, .field.invalid .choice.single { border-color: #f04438; }
-    .field-error { min-height: 18px; margin: -2px 0 0; color: var(--danger); font-size: 13px; }
-    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-    button { border: 0; border-radius: 999px; padding: 14px 22px; background: var(--brand); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    .field-error { min-height: 18px; margin: -2px 0 0; color: var(--danger); font-size: 12px; font-weight: 600; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 6px; }
+    button { border: 0; border-radius: 999px; padding: 14px 26px; background: linear-gradient(135deg, #0b1f3a 0%, #0f4c81 100%); color: #fff; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; box-shadow: 0 8px 20px rgba(15,76,129,0.25); transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease; }
+    button:hover:not([disabled]) { transform: translateY(-1px); box-shadow: 0 12px 24px rgba(15,76,129,0.32); }
     button[disabled] { opacity: .6; cursor: wait; }
-    .status { display: none; padding: 14px 16px; border-radius: 16px; font-size: 14px; line-height: 1.6; }
+    .status { display: none; padding: 14px 16px; border-radius: 14px; font-size: 14px; line-height: 1.6; }
     .status.error { display: block; background: #fef3f2; color: var(--danger); border: 1px solid #fecdca; }
     .status.success { display: block; background: #ecfdf3; color: var(--success); border: 1px solid #abefc6; }
     .hidden-field { display: none !important; }
-    .success-overlay { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(2, 8, 23, 0.65); backdrop-filter: blur(4px); }
+    .success-overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(2, 8, 23, 0.7); backdrop-filter: blur(6px); }
     .success-overlay.open { display: flex; }
-    .success-modal { width: min(560px, 100%); border-radius: 24px; border: 1px solid #cbd5e1; background: #fff; box-shadow: 0 30px 70px rgba(15, 23, 42, 0.35); overflow: hidden; }
-    .success-head { padding: 24px; background: linear-gradient(130deg, #0f4c81 0%, #0b2f50 100%); color: #fff; }
-    .success-head h3 { margin: 0; font-size: 26px; line-height: 1.2; }
-    .success-head p { margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); }
-    .success-body { padding: 20px 24px 24px; display: grid; gap: 14px; }
-    .lead-card { border: 1px solid #cbd5e1; border-radius: 18px; background: linear-gradient(180deg, #f8fafc, #eef4fb); padding: 16px; display: grid; grid-template-columns: 88px 1fr; gap: 14px; align-items: center; }
-    .lead-avatar { width: 88px; height: 88px; border-radius: 999px; overflow: hidden; border: 2px solid #dbe3ef; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; color: #1e293b; text-transform: uppercase; }
+    .success-modal { width: min(580px, 100%); border-radius: 26px; border: 1px solid #cbd5e1; background: #fff; box-shadow: 0 35px 80px rgba(15, 23, 42, 0.4); overflow: hidden; animation: modalPop 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes modalPop { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .success-head { padding: 28px 28px 24px; background: linear-gradient(135deg, #0b1f3a 0%, #0f4c81 100%); color: #fff; position: relative; }
+    .success-head h3 { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
+    .success-head p { margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 14px; line-height: 1.6; }
+    .success-body { padding: 24px 28px 28px; display: grid; gap: 16px; }
+    .lead-card { border: 1px solid #cbd5e1; border-radius: 18px; background: linear-gradient(180deg, #f8fafc, #eef4fb); padding: 16px; display: grid; grid-template-columns: 80px 1fr; gap: 14px; align-items: center; }
+    .lead-avatar { width: 80px; height: 80px; border-radius: 999px; overflow: hidden; border: 2px solid #dbe3ef; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 800; color: #1e293b; text-transform: uppercase; }
     .lead-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .lead-meta p { margin: 0; }
-    .lead-name { font-size: 20px; font-weight: 800; color: #0f172a; }
-    .lead-role { margin-top: 4px; font-size: 14px; color: #334155; font-weight: 700; }
-    .prompt-box { border-radius: 14px; border: 1px solid #dbe3ef; background: #f8fafc; padding: 12px 14px; color: #334155; }
+    .lead-name { font-size: 18px; font-weight: 800; color: #0f172a; }
+    .lead-role { margin-top: 4px; font-size: 13px; color: #334155; font-weight: 700; }
+    .prompt-box { border-radius: 14px; border: 1px solid #e2e8f0; background: #f8fafc; padding: 14px 16px; color: #334155; font-size: 14px; line-height: 1.6; }
+    .dp-cta-box { border-radius: 18px; border: 1.5px solid rgba(217,119,6,0.3); background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); padding: 18px; text-align: center; }
+    .dp-cta-box h4 { margin: 0 0 4px; font-size: 16px; font-weight: 800; color: #92400e; }
+    .dp-cta-box p { margin: 0 0 14px; font-size: 13px; color: #b45309; line-height: 1.5; }
     .success-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
-    .link-btn { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 12px 20px; text-decoration: none; font-weight: 700; background: var(--brand); color: #fff; }
+    .link-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; padding: 12px 22px; text-decoration: none; font-size: 13px; font-weight: 700; background: var(--brand); color: #fff; transition: transform .15s ease; }
+    .link-btn:hover { transform: translateY(-1px); }
+    .gold-btn { background: linear-gradient(135deg, #d97706 0%, #b45309 100%); color: #fff; box-shadow: 0 8px 20px rgba(217,119,6,0.3); }
     .ghost-btn { border: 1px solid #cbd5e1; background: #fff; color: #0f172a; }
     @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
     @media (max-width: 720px) {
       .section-grid, .section-split { grid-template-columns: 1fr; }
       .lead-card { grid-template-columns: 1fr; text-align: center; }
       .lead-avatar { margin: 0 auto; }
-      .success-actions { justify-content: stretch; }
-      .success-actions .link-btn { width: 100%; }
+      .success-actions { flex-direction: column; }
+      .success-actions .link-btn { width: 100%; text-align: center; }
     }
   </style>
 </head>
 <body>
   <div class="shell">
+    {{if .CoverImageUrl}}
+    <div class="banner-box">
+      <img src="{{.CoverImageUrl}}" alt="{{.Form.Title}}" class="banner-img" onerror="this.parentElement.style.display='none'" />
+    </div>
+    {{end}}
+
     <section class="hero">
+      <div class="badge-tag">✨ Official Registration</div>
       <h1>{{.Form.Title}}</h1>
       {{if .Form.Description}}<p>{{.Form.Description}}</p>{{end}}
       {{if and .Settings (hasText .Settings.FormHeaderNote)}}<div class="note">{{text .Settings.FormHeaderNote}}</div>{{end}}
@@ -430,8 +469,8 @@ const publicFormPageHTML = `<!DOCTYPE html>
   <div id="success-overlay" class="success-overlay" aria-hidden="true">
     <div class="success-modal" role="dialog" aria-modal="true" aria-labelledby="success-title">
       <div class="success-head">
-        <h3 id="success-title">Submission Received</h3>
-        <p>Thank you for completing the form. Your entry has been recorded successfully.</p>
+        <h3 id="success-title">Registration Confirmed</h3>
+        <p>Thank you for submitting your registration. Your details have been recorded.</p>
       </div>
       <div class="success-body">
         <div id="lead-card" class="lead-card" style="display:none;">
@@ -441,8 +480,17 @@ const publicFormPageHTML = `<!DOCTYPE html>
             <p id="lead-role" class="lead-role">Leadership</p>
           </div>
         </div>
+
+        <div class="dp-cta-box" id="dp-cta-box">
+          <h4>Personalized "I Will Be Attending" Status Flyer</h4>
+          <p>Generate your custom badge and status flyer to share on WhatsApp, Instagram & Facebook!</p>
+          <a id="dp-generator-btn" class="link-btn gold-btn" href="{{.DPGeneratorURL}}">
+            ✨ Create Attendee DP & Flyer
+          </a>
+        </div>
+
         <div class="prompt-box" id="success-prompt">
-          Return back to homepage to continue exploring Wisdom Church resources.
+          A confirmation response has been dispatched. You can now return to the homepage or customize your status flyer.
         </div>
         <div class="success-actions">
           <button id="success-close" type="button" class="link-btn ghost-btn">Close</button>
@@ -629,6 +677,16 @@ const publicFormPageHTML = `<!DOCTYPE html>
         }
       } else if (leadCard) {
         leadCard.style.display = 'none';
+      }
+
+      const dpBtn = document.getElementById('dp-generator-btn');
+      if (dpBtn) {
+        const attendeeName = firstValue(values || {}, ['full_name', 'fullName', 'name']) ||
+          [firstValue(values || {}, ['first_name', 'firstName', 'firstname']), firstValue(values || {}, ['last_name', 'lastName', 'lastname'])].filter(Boolean).join(' ');
+        if (attendeeName) {
+          const base = {{printf "%q" .DPGeneratorURL}};
+          dpBtn.href = base + (base.includes('?') ? '&' : '?') + 'name=' + encodeURIComponent(attendeeName);
+        }
       }
 
       successOverlay.classList.add('open');
