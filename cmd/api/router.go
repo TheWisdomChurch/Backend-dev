@@ -529,6 +529,7 @@ func setupRouter(
 	admin.GET("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Get)
 	admin.POST("/events", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Create)
 	admin.PUT("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Update)
+	admin.PATCH("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Update)
 	admin.DELETE("/events/:id", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.Delete)
 	admin.POST("/events/:id/image", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.UploadImage)
 	admin.POST("/events/:id/banner", middleware.RequirePermission(middleware.PermissionEventsManage), eventHandler.UploadBanner)

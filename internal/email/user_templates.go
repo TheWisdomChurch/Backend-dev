@@ -282,17 +282,7 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		message = html.EscapeString(message)
 	}
 
-	topLinks := ""
-	if strings.TrimSpace(data.SubscribeURL) != "" || strings.TrimSpace(data.UnsubscribeURL) != "" {
-		var links []string
-		if strings.TrimSpace(data.SubscribeURL) != "" {
-			links = append(links, "<a href=\""+html.EscapeString(strings.TrimSpace(data.SubscribeURL))+"\" style=\"color:"+colorInk+";font-weight:700;text-decoration:underline;\">subscribe</a>")
-		}
-		if strings.TrimSpace(data.UnsubscribeURL) != "" {
-			links = append(links, "<a href=\""+html.EscapeString(strings.TrimSpace(data.UnsubscribeURL))+"\" style=\"color:"+colorInk+";font-weight:700;text-decoration:underline;\">unsubscribe</a>")
-		}
-		topLinks = "<tr><td style=\"padding:14px 40px 0;font-family:" + fontStack + ";\"><p style=\"margin:0;font-size:13px;color:" + colorInk + ";\">" + strings.Join(links, " &nbsp;|&nbsp; ") + "</p></td></tr>"
-	}
+	heroImg := renderHeroImageBlock(data.HeroImageURL, formTitle)
 
 	codeBlock := ""
 	if code := strings.TrimSpace(data.RegistrationCode); code != "" {
@@ -301,10 +291,10 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 
 	attendeeBadgeBlock := ""
 	if badgeURL := strings.TrimSpace(data.AttendingBadgeURL); badgeURL != "" {
-		attendeeBadgeBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";background:" + colorAccentSurface + ";border-radius:12px;\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";text-align:center;\">" +
+		attendeeBadgeBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";background:" + colorAccentSurface + ";border-radius:12px;\"><tr><td style=\"padding:20px 24px;font-family:" + fontStack + ";text-align:center;\">" +
 			"<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorAccent + ";margin-bottom:8px;\">Official Attendee Flyer</div>" +
-			"<p style=\"margin:0 0 14px;font-size:14px;font-weight:600;color:" + colorInk + ";\">Personalize your 'I Will Be Attending' status flyer & share to WhatsApp or Instagram</p>" +
-			renderButton("Get Your Personalized Flyer", badgeURL, colorAccent, "#ffffff") +
+			"<p style=\"margin:0 0 14px;font-size:15px;font-weight:600;color:" + colorInk + ";line-height:1.4;\">Personalize your 'I Will Be Attending' status flyer & share to WhatsApp, Facebook, or Instagram</p>" +
+			renderButton("✨ Get Your Personalized Flyer", badgeURL, colorAccent, "#ffffff") +
 			"</td></tr></table></td></tr>"
 	}
 
@@ -315,8 +305,8 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 			confirmLink = strings.TrimSpace(data.GoogleCalendarURL)
 		}
 		var inner strings.Builder
-		inner.WriteString("<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorMuted + ";margin-bottom:10px;\">Calendar reminders</div>")
-		inner.WriteString("<p style=\"margin:0 0 12px;font-size:14px;color:" + colorBody + ";\">Would you like calendar reminders before the event?</p>")
+		inner.WriteString("<div style=\"font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:" + colorMuted + ";margin-bottom:8px;\">Calendar reminders</div>")
+		inner.WriteString("<p style=\"margin:0 0 12px;font-size:14px;color:" + colorBody + ";line-height:1.5;\">Would you like calendar reminders before the event?</p>")
 		if confirmLink != "" {
 			inner.WriteString(renderTextLink("Add event to calendar", confirmLink))
 		}
@@ -326,15 +316,22 @@ func RenderFormResponseEmail(data FormResponseTemplateData) string {
 		calendarBlock = "<tr><td style=\"padding:20px 40px 0;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid " + colorLine + ";border-radius:12px;\"><tr><td style=\"padding:18px 20px;font-family:" + fontStack + ";\">" + inner.String() + "</td></tr></table></td></tr>"
 	}
 
-	body := topLinks +
-		renderHeroImageBlock(data.HeroImageURL, b.AppName+" registration") +
-		renderBodyOpen() +
-		renderHeading("Hi "+name+",") +
+	unsubscribeFooter := ""
+	if strings.TrimSpace(data.UnsubscribeURL) != "" {
+		unsubscribeFooter = "<tr><td style=\"padding:24px 40px 0;font-family:" + fontStack + ";text-align:center;\"><p style=\"margin:0;font-size:12px;color:" + colorFaint + ";\">If you received this by mistake or want to opt out, you can <a href=\"" + html.EscapeString(strings.TrimSpace(data.UnsubscribeURL)) + "\" style=\"color:" + colorMuted + ";text-decoration:underline;\">unsubscribe here</a>.</p></td></tr>"
+	}
+
+	body := renderBodyOpen() +
+		renderEyebrow("Registration Confirmed", "") +
+		renderHeading("Registration Confirmed") +
+		renderParagraph("Hi "+name+",") +
 		renderParagraph(message) +
 		renderBodyClose() +
+		heroImg +
 		codeBlock +
 		attendeeBadgeBlock +
-		calendarBlock
+		calendarBlock +
+		unsubscribeFooter
 
 	return renderEmailShell(b, "", body)
 }
