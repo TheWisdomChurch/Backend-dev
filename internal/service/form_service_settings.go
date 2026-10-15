@@ -391,7 +391,18 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.Capacity != nil && *s.Capacity < 0 {
 		return nil, errors.New("capacity cannot be negative")
 	}
-	if s.ResponseEmailEnabled == nil {
+	target := ""
+	if s.SubmissionTarget != nil {
+		target = strings.ToLower(strings.TrimSpace(*s.SubmissionTarget))
+	}
+	ftype := ""
+	if s.FormType != nil {
+		ftype = strings.ToLower(strings.TrimSpace(*s.FormType))
+	}
+	if target == "testimonial" || ftype == "testimonial" {
+		defaultResponseEmail := false
+		s.ResponseEmailEnabled = &defaultResponseEmail
+	} else if s.ResponseEmailEnabled == nil {
 		defaultResponseEmail := true
 		s.ResponseEmailEnabled = &defaultResponseEmail
 	}

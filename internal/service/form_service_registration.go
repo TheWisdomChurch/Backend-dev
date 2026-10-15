@@ -102,16 +102,28 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 	if !isTestimonial && settings != nil && settings.FormType != nil {
 		isTestimonial = strings.EqualFold(strings.TrimSpace(*settings.FormType), "testimonial")
 	}
+	if !isTestimonial && form != nil {
+		slug := strings.ToLower(strings.TrimSpace(valueOrEmpty(form.Slug)))
+		title := strings.ToLower(strings.TrimSpace(form.Title))
+		if strings.Contains(slug, "testimon") || strings.Contains(title, "testimon") {
+			isTestimonial = true
+		}
+	}
+
+	// 1. Testimonials must never receive auto-response emails.
+	if isTestimonial {
+		return
+	}
+
+	// 2. Forms where response email is disabled (internal processes, surveys, silent submissions)
+	// must never receive auto-response emails.
+	if settings != nil && settings.ResponseEmailEnabled != nil && !*settings.ResponseEmailEnabled {
+		return
+	}
 
 	subject := "Registration received"
 	if formTitle != "" {
 		subject = fmt.Sprintf("Registration received: %s", formTitle)
-	}
-	if isTestimonial {
-		subject = "Testimony received"
-		if formTitle != "" {
-			subject = fmt.Sprintf("Testimony received: %s", formTitle)
-		}
 	}
 	if settings != nil && settings.ResponseEmailSubject != nil {
 		if s := strings.TrimSpace(*settings.ResponseEmailSubject); s != "" {
@@ -296,10 +308,7 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 			message = strings.TrimSpace(*settings.SuccessMessage)
 		}
 
-		badgeURLToRender := ""
-		if badgeEnabled {
-			badgeURLToRender = attendingBadgeURL
-		}
+		badgeURLToRender := attendingBadgeURL
 
 		body = email.RenderFormResponseEmail(email.FormResponseTemplateData{
 			Branding:          s.branding,
