@@ -31,24 +31,19 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 		heading = "Registration Confirmed"
 	}
 
-	// Mirrors RenderFormResponseEmail's topLinks block.
-	topLinks := "<tr><td style=\"padding:14px 40px 0;font-family:" + fontStack + ";\">" +
-		"{{if .SubscribeURL}}<a href=\"{{.SubscribeURL}}\" style=\"color:" + colorInk + ";font-weight:700;text-decoration:underline;\">subscribe</a>{{end}}" +
-		"{{if .SubscribeURL}}{{if .UnsubscribeURL}}&nbsp;|&nbsp;{{end}}{{end}}" +
-		"{{if .UnsubscribeURL}}<a href=\"{{.UnsubscribeURL}}\" style=\"color:" + colorInk + ";font-weight:700;text-decoration:underline;\">unsubscribe</a>{{end}}" +
-		"</td></tr>"
-
 	// Section order mirrors the "Add New Member" reference template: greeting
-	// -> message -> scripture/spotlight callout -> a distinct "what happens
-	// next" section -> resources/registration/calendar -> a signed closing.
+	// -> framed hero flyer -> message -> scripture/spotlight callout -> a distinct "what happens
+	// next" section -> resources/registration/calendar -> a signed closing -> footer unsubscribe.
 	var body strings.Builder
-	body.WriteString(topLinks)
-	body.WriteString(renderHeroImageBlock(strings.TrimSpace(content.ImageURL), heading))
 	body.WriteString(renderBodyOpen())
 	body.WriteString(renderEyebrow(content.Eyebrow, ""))
 	body.WriteString(renderHeading(heading))
 	body.WriteString(renderParagraph("Hello {{.RecipientName}},"))
 	body.WriteString(renderBodyClose())
+
+	if img := strings.TrimSpace(content.ImageURL); img != "" {
+		body.WriteString(renderHeroImageBlock(img, heading))
+	}
 
 	body.WriteString(renderBodyOpen())
 	body.WriteString(renderMessageBlock(content))
@@ -85,6 +80,9 @@ func RenderFormEmailContent(b Branding, content models.FormEmailContent) (htmlBo
 	if closing := renderClosingBlock(b, content); closing != "" {
 		body.WriteString(closing)
 	}
+
+	footerLinks := "{{if .UnsubscribeURL}}<tr><td style=\"padding:16px 40px 0;font-family:" + fontStack + ";text-align:center;\"><p style=\"margin:0;font-size:12px;color:" + colorFaint + ";\">If you received this by mistake or want to opt out, you can <a href=\"{{.UnsubscribeURL}}\" style=\"color:" + colorMuted + ";text-decoration:underline;\">unsubscribe here</a>.</p></td></tr>{{end}}"
+	body.WriteString(footerLinks)
 
 	return renderEmailShellWithPreheader(b, "", strings.TrimSpace(content.Preheader), body.String()),
 		buildFormEmailText(content, heading)

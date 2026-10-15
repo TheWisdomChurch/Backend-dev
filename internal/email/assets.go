@@ -56,7 +56,7 @@ func renderHeroImageBlock(url string, alt string) string {
 	if altText == "" {
 		altText = "Email illustration"
 	}
-	return "<tr><td class=\"wc-hero-cell\" style=\"padding:0;\">" +
-		"<img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" class=\"wc-hero\" style=\"display:block;width:100%;max-width:100%;height:auto;border:0;margin:0;\">" +
+	return "<tr><td class=\"wc-hero-cell\" align=\"center\" style=\"padding:12px 40px 16px;text-align:center;\">" +
+		"<img src=\"" + html.EscapeString(trimmed) + "\" alt=\"" + html.EscapeString(altText) + "\" class=\"wc-hero\" style=\"display:block;width:100%;max-width:520px;max-height:420px;object-fit:cover;border-radius:12px;border:1px solid " + colorLine + ";margin:0 auto;\">" +
 		"</td></tr>"
 }
