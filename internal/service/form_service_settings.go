@@ -399,11 +399,11 @@ func encodeSettings(s *models.FormSettingsDTO) (datatypes.JSON, error) {
 	if s.FormType != nil {
 		ftype = strings.ToLower(strings.TrimSpace(*s.FormType))
 	}
-	if target == "testimonial" || ftype == "testimonial" {
-		defaultResponseEmail := false
-		s.ResponseEmailEnabled = &defaultResponseEmail
-	} else if s.ResponseEmailEnabled == nil {
+	if s.ResponseEmailEnabled == nil {
 		defaultResponseEmail := true
+		if target == "testimonial" || ftype == "testimonial" {
+			defaultResponseEmail = false
+		}
 		s.ResponseEmailEnabled = &defaultResponseEmail
 	}
 	applyCurrentFormArchitectureDefaults(s)

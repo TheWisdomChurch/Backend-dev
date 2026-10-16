@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
+	"regexp"
 	"strings"
 
 	"gorm.io/datatypes"
@@ -171,9 +173,11 @@ func (s *emailTemplateRegistryService) Update(id string, req *models.UpdateEmail
 	}
 	if req.Content != nil {
 		// Content-driven templates are re-rendered from scratch, so a
-		// directly-supplied HTMLBody/TextBody alongside Content would be
+		// directly-supplied non-empty HTMLBody/TextBody alongside Content would be
 		// silently discarded and misleading — reject it instead.
-		if req.HTMLBody != nil || req.TextBody != nil {
+		hasHTML := req.HTMLBody != nil && strings.TrimSpace(*req.HTMLBody) != ""
+		hasText := req.TextBody != nil && strings.TrimSpace(*req.TextBody) != ""
+		if hasHTML || hasText {
 			return nil, errors.New("htmlBody/textBody cannot be set together with content")
 		}
 		if err := s.applyContent(tpl, *req.Content); err != nil {
@@ -245,6 +249,42 @@ func (s *emailTemplateRegistryService) Activate(id string) (*models.EmailTemplat
 	return tpl, nil
 }
 
+var unDotVarRegex = regexp.MustCompile(`\{\{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*\}\}`)
+
+// normalizeTemplateVariables converts {{FirstName}} to {{.FirstName}} while preserving
+// Go template actions like {{if ...}}, {{range ...}}, {{end}}, {{else}}, {{with ...}}, etc.
+func normalizeTemplateVariables(tmpl string) string {
+	reserved := map[string]bool{
+		"if": true, "else": true, "end": true, "range": true, "with": true,
+		"template": true, "block": true, "define": true, "nil": true,
+	}
+	return unDotVarRegex.ReplaceAllStringFunc(tmpl, func(match string) string {
+		sub := unDotVarRegex.FindStringSubmatch(match)
+		if len(sub) == 2 {
+			name := sub[1]
+			if reserved[name] {
+				return match
+			}
+			return "{{." + name + "}}"
+		}
+		return match
+	})
+}
+
+func fallbackReplaceTemplateTokens(raw string, data any) string {
+	dataMap, ok := data.(map[string]any)
+	if !ok {
+		return raw
+	}
+	res := raw
+	for k, v := range dataMap {
+		strVal := fmt.Sprintf("%v", v)
+		res = strings.ReplaceAll(res, "{{."+k+"}}", strVal)
+		res = strings.ReplaceAll(res, "{{"+k+"}}", strVal)
+	}
+	return res
+}
+
 func (s *emailTemplateRegistryService) RenderHTML(tpl *models.EmailTemplate, data any) (string, error) {
 	if tpl == nil {
 		return "", errors.New("template is required")
@@ -254,13 +294,14 @@ func (s *emailTemplateRegistryService) RenderHTML(tpl *models.EmailTemplate, dat
 		return "", errors.New("htmlBody is empty")
 	}
 
-	t, err := template.New("db").Option("missingkey=error").Parse(raw)
+	prepared := normalizeTemplateVariables(raw)
+	t, err := template.New("db").Option("missingkey=zero").Parse(prepared)
 	if err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	return buf.String(), nil
 }

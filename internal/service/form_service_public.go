@@ -186,9 +186,6 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 
 	// Extract common fields into columns for analytics
 	name, email, phone, addr := extractCommonFields(fields, cleanValues)
-	if email == nil || strings.TrimSpace(*email) == "" {
-		return errors.New("an email address is required so we can send your confirmation")
-	}
 	if name != nil && strings.TrimSpace(*name) != "" {
 		if _, exists := cleanValues["fullName"]; !exists {
 			cleanValues["fullName"] = strings.TrimSpace(*name)
@@ -197,8 +194,10 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 			cleanValues["name"] = strings.TrimSpace(*name)
 		}
 	}
-	if _, exists := cleanValues["email"]; !exists {
-		cleanValues["email"] = strings.TrimSpace(*email)
+	if email != nil && strings.TrimSpace(*email) != "" {
+		if _, exists := cleanValues["email"]; !exists {
+			cleanValues["email"] = strings.TrimSpace(*email)
+		}
 	}
 	if phone != nil && strings.TrimSpace(*phone) != "" {
 		if _, exists := cleanValues["phone"]; !exists {
@@ -237,7 +236,9 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return err
 	}
 
-	s.sendResponseEmail(form, settings, cleanValues, name, *email, regCode, sub.ID)
+	if email != nil && strings.TrimSpace(*email) != "" {
+		s.sendResponseEmail(form, settings, cleanValues, name, strings.TrimSpace(*email), regCode, sub.ID)
+	}
 	if err := s.syncSubmissionTarget(form, settings, cleanValues, sub.ID); err != nil {
 		target := resolveSubmissionTargetForForm(form, settings)
 		applog.L().Warn("submission target sync failed",

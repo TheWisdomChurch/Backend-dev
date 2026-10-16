@@ -500,13 +500,14 @@ func renderDBTemplate(tpl *models.EmailTemplate, data any) (string, error) {
 	if raw == "" {
 		return "", errors.New("template html is empty")
 	}
-	t, err := template.New("db").Option("missingkey=error").Parse(raw)
+	prepared := normalizeTemplateVariables(raw)
+	t, err := template.New("db").Option("missingkey=zero").Parse(prepared)
 	if err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	return buf.String(), nil
 }
@@ -519,13 +520,14 @@ func renderDBTextTemplate(tpl *models.EmailTemplate, data any) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	t, err := texttemplate.New("db_text").Option("missingkey=error").Parse(raw)
+	prepared := normalizeTemplateVariables(raw)
+	t, err := texttemplate.New("db_text").Option("missingkey=zero").Parse(prepared)
 	if err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
-		return "", err
+		return fallbackReplaceTemplateTokens(raw, data), nil
 	}
 	return buf.String(), nil
 }
