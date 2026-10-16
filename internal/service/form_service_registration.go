@@ -110,14 +110,13 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 		}
 	}
 
-	// 1. Testimonials must never receive auto-response emails.
-	if isTestimonial {
-		return
-	}
-
-	// 2. Forms where response email is disabled (internal processes, surveys, silent submissions)
-	// must never receive auto-response emails.
-	if settings != nil && settings.ResponseEmailEnabled != nil && !*settings.ResponseEmailEnabled {
+	// 1. If response email is explicitly enabled or disabled by admin, respect that flag:
+	if settings != nil && settings.ResponseEmailEnabled != nil {
+		if !*settings.ResponseEmailEnabled {
+			return
+		}
+	} else if isTestimonial {
+		// Testimonials default to no auto-response email unless explicitly enabled by admin
 		return
 	}
 
