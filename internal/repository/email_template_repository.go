@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"wisdomHouse-backend/internal/database"
@@ -31,6 +32,9 @@ func NewEmailTemplateRepository(db *database.Database) EmailTemplateRepository {
 }
 
 func (r *emailTemplateRepository) Create(tpl *models.EmailTemplate) error {
+	if tpl != nil && strings.TrimSpace(tpl.ID) == "" {
+		tpl.ID = uuid.NewString()
+	}
 	return r.db.Create(tpl).Error
 }
 
@@ -106,7 +110,10 @@ func (r *emailTemplateRepository) GetActiveByKey(templateKey string) (*models.Em
 }
 
 func (r *emailTemplateRepository) DeactivateOthers(ownerType, ownerID, templateKey, keepID string) error {
-	q := r.db.Model(&models.EmailTemplate{}).Where("id <> ?", keepID)
+	q := r.db.Model(&models.EmailTemplate{})
+	if strings.TrimSpace(keepID) != "" {
+		q = q.Where("id <> ?", strings.TrimSpace(keepID))
+	}
 	if ownerType != "" && ownerID != "" {
 		q = q.Where("owner_type = ? AND owner_id = ?", ownerType, ownerID)
 	} else if templateKey != "" {
@@ -124,6 +131,9 @@ func (r *emailTemplateRepository) DeactivateOthers(ownerType, ownerID, templateK
 func (r *emailTemplateRepository) ActivateExclusive(tpl *models.EmailTemplate) error {
 	if tpl == nil {
 		return errors.New("template is required")
+	}
+	if strings.TrimSpace(tpl.ID) == "" {
+		tpl.ID = uuid.NewString()
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		// Serialize activations for the same logical scope. A transaction alone is

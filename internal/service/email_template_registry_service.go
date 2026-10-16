@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/datatypes"
 
 	"wisdomHouse-backend/internal/email"
@@ -96,6 +97,7 @@ func (s *emailTemplateRegistryService) Create(req *models.CreateEmailTemplateReq
 	}
 
 	tpl := &models.EmailTemplate{
+		ID:          uuid.NewString(),
 		TemplateKey: key,
 		OwnerType:   ownerType,
 		OwnerID:     ownerID,
