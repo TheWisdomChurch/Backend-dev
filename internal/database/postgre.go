@@ -141,6 +141,7 @@ func ensureDatabaseCompatibility(db *gorm.DB) error {
 		`ALTER TABLE IF EXISTS "members" DROP CONSTRAINT IF EXISTS "uni_members_email";`,
 		`ALTER TABLE IF EXISTS "workforce_members" DROP CONSTRAINT IF EXISTS "uni_workforce_members_email";`,
 		`ALTER TABLE IF EXISTS "leadership_members" DROP CONSTRAINT IF EXISTS "uni_leadership_members_email";`,
+		`ALTER TABLE IF EXISTS "email_templates" ADD COLUMN IF NOT EXISTS "content_json" jsonb;`,
 	}
 
 	for _, stmt := range statements {
