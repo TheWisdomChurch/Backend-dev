@@ -1,8 +1,10 @@
 package models
 
 import (
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -50,6 +52,13 @@ type EmailTemplate struct {
 
 func (EmailTemplate) TableName() string {
 	return "email_templates"
+}
+
+func (t *EmailTemplate) BeforeCreate(_ *gorm.DB) error {
+	if strings.TrimSpace(t.ID) == "" {
+		t.ID = uuid.NewString()
+	}
+	return nil
 }
 
 type EmailTemplateType string
