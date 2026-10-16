@@ -36,13 +36,15 @@ type EmailTemplate struct {
 	// JSON object over the API: datatypes.JSON marshals/unmarshals its raw
 	// bytes verbatim, so the admin portal reads and writes it as
 	// FormEmailContent with no HTML-comment-embedding trick needed.
-	ContentJSON datatypes.JSON `gorm:"type:jsonb" json:"content,omitempty"`
+	// ContentJSON is the structured content behind a form response email.
+	// It is mapped to the existing metadata jsonb column to prevent SQL 42703 errors
+	// in production environments where late-added migrations have not yet executed.
+	ContentJSON datatypes.JSON `gorm:"column:metadata;type:jsonb" json:"content,omitempty"`
 
 	Status   EmailTemplateStatus `gorm:"size:20;not null;default:'draft'" json:"status"`
 	Version  int                 `gorm:"not null;default:1" json:"version"`
 	IsActive bool                `gorm:"not null;default:false" json:"isActive"`
 
-	Metadata    datatypes.JSON `gorm:"type:jsonb" json:"metadata,omitempty"`
 	CreatedByID *string        `gorm:"type:uuid" json:"createdById,omitempty"`
 
 	CreatedAt time.Time      `gorm:"autoCreateTime" json:"createdAt"`

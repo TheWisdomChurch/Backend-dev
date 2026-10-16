@@ -8,6 +8,7 @@ import (
 	"wisdomHouse-backend/internal/database"
 	"wisdomHouse-backend/internal/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -168,6 +169,11 @@ func (r *formRepository) GetBySlug(slug string) (*models.Form, error) {
 			Where("form_slug_aliases.slug = ? AND forms.is_published = true", slug).
 			First(&f).Error
 	}
+	if err == gorm.ErrRecordNotFound {
+		if _, parseErr := uuid.Parse(slug); parseErr == nil {
+			err = r.db.DB.Preload("Fields", "deleted_at IS NULL").First(&f, "id = ? AND is_published = true", slug).Error
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +196,12 @@ func (r *formRepository) GetAnyBySlug(slug string) (*models.Form, error) {
 	var f models.Form
 	err := r.db.DB.Preload("Fields", "deleted_at IS NULL").
 		First(&f, "slug = ?", slug).Error
+	if err == gorm.ErrRecordNotFound {
+		if _, parseErr := uuid.Parse(slug); parseErr == nil {
+			err = r.db.DB.Preload("Fields", "deleted_at IS NULL").
+				First(&f, "id = ?", slug).Error
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
