@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 	"unicode/utf8"
 
 	"gorm.io/datatypes"
