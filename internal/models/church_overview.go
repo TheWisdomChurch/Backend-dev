@@ -19,6 +19,8 @@ type ChurchOverview struct {
 	Content    ChurchContent     `json:"content"`
 	Events     ChurchEventsBlock `json:"events"`
 
+	DegradedSections []string `json:"degradedSections,omitempty"`
+
 	Signals         DecisionSignalMetrics `json:"signals"`
 	Recommendations []string              `json:"recommendations"`
 }

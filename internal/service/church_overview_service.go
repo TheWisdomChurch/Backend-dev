@@ -25,14 +25,12 @@ type ChurchOverviewService interface {
 type churchOverviewService struct {
 	db       *database.Database
 	cache    *cache.RedisClient
-	decision DecisionSupportService
 }
 
 func NewChurchOverviewService(db *database.Database, redisCache *cache.RedisClient) ChurchOverviewService {
 	return &churchOverviewService{
 		db:       db,
 		cache:    redisCache,
-		decision: NewDecisionSupportService(db, redisCache),
 	}
 }
 
@@ -54,12 +52,12 @@ func resolveWindow(timeRange string, now time.Time) (curStart, curEnd, prevStart
 		curStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		curEnd = now
 		prevStart = curStart.AddDate(0, -1, 0)
-		prevEnd = curStart
+		prevEnd = prevStart.Add(now.Sub(curStart))
 	case "year":
 		curStart = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		curEnd = now
 		prevStart = curStart.AddDate(-1, 0, 0)
-		prevEnd = curStart
+		prevEnd = prevStart.Add(now.Sub(curStart))
 	default: // last30
 		curStart = now.AddDate(0, 0, -30)
 		curEnd = now
@@ -97,7 +95,7 @@ func zeroFillMoney(now time.Time, byMonth map[string]int64) []models.MoneyMonthP
 
 func (s *churchOverviewService) GetOverview(ctx context.Context, timeRange string) (*models.ChurchOverview, error) {
 	timeRange = normalizeRange(timeRange)
-	cacheKey := "analytics:church_overview:v1:" + timeRange
+	cacheKey := "analytics:church_overview:v3:" + timeRange
 
 	if s.cache != nil {
 		var cached models.ChurchOverview
@@ -122,6 +120,7 @@ func (s *churchOverviewService) GetOverview(ctx context.Context, timeRange strin
 
 	warn := func(block string, err error) {
 		if err != nil {
+			out.DegradedSections = append(out.DegradedSections, block)
 			slog.Warn("church overview aggregation failed", "block", block, "error", err)
 		}
 	}
@@ -134,19 +133,11 @@ func (s *churchOverviewService) GetOverview(ctx context.Context, timeRange strin
 	warn("content", s.fillContent(ctx, now, &out.Content))
 	warn("events", s.fillEvents(ctx, now, &out.Events))
 
-	// Signals + recommendations come from the (extended) decision engine, then
-	// get enriched with the giving / attendance / backlog deltas we just
-	// computed so the readiness score reflects the whole church, not just forms.
-	if insights, err := s.decision.GetInsights(ctx); err != nil {
-		warn("signals", err)
-	} else {
-		out.Signals = insights.Signals
-		out.Recommendations = insights.Recommendations
-	}
+	// Derive signals from the rows loaded for this overview so metrics and recommendations share one snapshot.
 	s.enrichSignals(out)
 
 	if s.cache != nil {
-		if err := s.cache.SetJSON(ctx, cacheKey, out, 3*time.Minute); err != nil {
+		if err := s.cache.SetJSON(ctx, cacheKey, out, 30*time.Second); err != nil {
 			slog.Warn("church overview cache write failed", "error", err)
 		}
 	}
@@ -257,20 +248,15 @@ func (s *churchOverviewService) newMemberMonthly(ctx context.Context, now time.T
 		  AND fs.created_at >= date_trunc('month', CURRENT_DATE) - INTERVAL '11 months'
 		  AND (
 			LOWER(COALESCE(f.settings->>'submissionTarget', '')) = 'member'
+			OR LOWER(COALESCE(f.settings->>'formType', '')) IN ('membership','member','new_member')
 			OR LOWER(COALESCE(f.slug, '')) = 'add-new-member'
 			OR trim(regexp_replace(LOWER(COALESCE(f.title, '')), '[^a-z0-9]+', ' ', 'g')) = 'add new member'
 		  )
 		GROUP BY month
 	`).Scan(&rows).Error
 	if err != nil {
-		rows = nil
-		_ = s.db.WithContext(ctx).Raw(`
-			SELECT to_char(created_at, 'YYYY-MM') AS month, COUNT(*) AS value
-			FROM form_submissions
-			WHERE deleted_at IS NULL
-			  AND created_at >= date_trunc('month', CURRENT_DATE) - INTERVAL '11 months'
-			GROUP BY month
-		`).Scan(&rows).Error
+		slog.Warn("new-member intake trend aggregation failed", "error", err)
+		return zeroFillCounts(now, nil)
 	}
 	byMonth := make(map[string]int64, len(rows))
 	for _, r := range rows {
@@ -284,6 +270,10 @@ func (s *churchOverviewService) newMemberMonthly(ctx context.Context, now time.T
 func (s *churchOverviewService) fillGiving(ctx context.Context, now time.Time, g *models.ChurchGiving) error {
 	thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	lastMonth := thisMonth.AddDate(0, -1, 0)
+	lastMonthEnd := lastMonth.Add(now.Sub(thisMonth))
+	if lastMonthEnd.After(thisMonth) {
+		lastMonthEnd = thisMonth
+	}
 	yearStart := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 
 	var core struct {
@@ -301,7 +291,7 @@ func (s *churchOverviewService) fillGiving(ctx context.Context, now time.Time, g
 			COALESCE(AVG(amount_kobo) FILTER (WHERE status = 'success'), 0)::bigint AS avg_gift_kobo
 		FROM giving_transactions
 		WHERE deleted_at IS NULL
-	`, thisMonth, lastMonth, thisMonth, yearStart).Scan(&core).Error; err != nil {
+	`, thisMonth, lastMonth, lastMonthEnd, yearStart).Scan(&core).Error; err != nil {
 		return err
 	}
 	g.ThisMonthKobo = core.ThisMonthKobo
@@ -629,9 +619,22 @@ func (s *churchOverviewService) namedCounts(ctx context.Context, table, col, whe
 	return out
 }
 
+func percentDelta(current, previous int64) float64 {
+	if previous == 0 {
+		if current > 0 {
+			return 100
+		}
+		return 0
+	}
+	return round((float64(current-previous)/float64(previous))*100, 2)
+}
+
 // enrichSignals folds giving / attendance / backlog momentum into the readiness
 // score so it reflects the whole church, not just form submissions.
 func (s *churchOverviewService) enrichSignals(o *models.ChurchOverview) {
+	o.Signals.MemberActivationRate = ratio(o.People.MembersActive, o.People.MembersTotal)
+	o.Signals.VolunteerCoverageRate = ratio(o.People.WorkforceServing, o.People.WorkforceTotal)
+	o.Signals.SubmissionDeltaPercent = percentDelta(o.Intake.SubmissionsCurrent, o.Intake.SubmissionsPrevious)
 	g := o.Giving
 	if g.LastMonthKobo > 0 {
 		o.Signals.GivingDeltaPercent = round(
@@ -681,5 +684,8 @@ func (s *churchOverviewService) enrichSignals(o *models.ChurchOverview) {
 	if o.Intake.WorkflowStalled >= 5 {
 		o.Recommendations = append(o.Recommendations,
 			fmt.Sprintf("%d new-member journeys have stalled for over two weeks — re-assign or close them.", o.Intake.WorkflowStalled))
+	}
+	if len(o.Recommendations) == 0 {
+		o.Recommendations = append(o.Recommendations, "No decision threshold is currently breached. Continue monitoring the same indicators and reporting window.")
 	}
 }
