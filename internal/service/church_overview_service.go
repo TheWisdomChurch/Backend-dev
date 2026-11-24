@@ -52,12 +52,12 @@ func resolveWindow(timeRange string, now time.Time) (curStart, curEnd, prevStart
 		curStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		curEnd = now
 		prevStart = curStart.AddDate(0, -1, 0)
-		prevEnd = prevStart.Add(now.Sub(curStart))
+		prevEnd = curStart
 	case "year":
 		curStart = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		curEnd = now
 		prevStart = curStart.AddDate(-1, 0, 0)
-		prevEnd = prevStart.Add(now.Sub(curStart))
+		prevEnd = curStart
 	default: // last30
 		curStart = now.AddDate(0, 0, -30)
 		curEnd = now
