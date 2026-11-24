@@ -260,14 +260,14 @@ func (s *formService) sendResponseEmail(form *models.Form, settings *models.Form
 
 	if s.templateRepo != nil {
 		var tpl *models.EmailTemplate
-		if tpl == nil && settings != nil && settings.ResponseEmailTemplateID != nil {
+		if settings != nil && settings.ResponseEmailTemplateID != nil {
 			if t, err := s.templateRepo.GetByID(strings.TrimSpace(*settings.ResponseEmailTemplateID)); err == nil && t != nil {
 				if t.Status != models.EmailTemplateArchived {
 					tpl = t
 				}
 			}
 		}
-		if templateKey != "" {
+		if tpl == nil && templateKey != "" {
 			if t, err := s.templateRepo.GetActiveByKey(templateKey); err == nil && t != nil {
 				tpl = t
 			}

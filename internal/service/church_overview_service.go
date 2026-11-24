@@ -130,8 +130,8 @@ func (s *churchOverviewService) GetOverview(ctx context.Context, timeRange strin
 	warn("intake", s.fillIntake(ctx, now, curStart, curEnd, prevStart, prevEnd, &out.Intake))
 	warn("giving", s.fillGiving(ctx, now, &out.Giving))
 	warn("engagement", s.fillEngagement(ctx, now, curStart, curEnd, prevStart, prevEnd, &out.Engagement))
-	warn("ministry", s.fillMinistry(ctx, now, &out.Ministry))
-	warn("content", s.fillContent(ctx, now, &out.Content))
+	warn("ministry", s.fillMinistry(ctx, &out.Ministry))
+	warn("content", s.fillContent(ctx, &out.Content))
 	warn("events", s.fillEvents(ctx, now, &out.Events))
 
 	// Signals + recommendations come from the (extended) decision engine, then
@@ -480,7 +480,7 @@ func (s *churchOverviewService) fillBacklog(ctx context.Context, b *models.Churc
 
 // ── Ministry health ────────────────────────────────────────────────────────
 
-func (s *churchOverviewService) fillMinistry(ctx context.Context, now time.Time, m *models.ChurchMinistry) error {
+func (s *churchOverviewService) fillMinistry(ctx context.Context, m *models.ChurchMinistry) error {
 	var core struct {
 		CellGroupsCount      int64
 		CellGroupMembers     int64
@@ -530,7 +530,7 @@ func (s *churchOverviewService) fillMinistry(ctx context.Context, now time.Time,
 
 // ── Content (testimonials + store) ─────────────────────────────────────────
 
-func (s *churchOverviewService) fillContent(ctx context.Context, now time.Time, c *models.ChurchContent) error {
+func (s *churchOverviewService) fillContent(ctx context.Context, c *models.ChurchContent) error {
 	var core struct {
 		TestimonialsApproved int64
 		TestimonialsPending  int64
