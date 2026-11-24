@@ -26,13 +26,18 @@ func TestResolveWindow(t *testing.T) {
 	if cs != time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC) || ce != now {
 		t.Errorf("month current window wrong: %v..%v", cs, ce)
 	}
-	if ps != time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC) || pe != cs {
-		t.Errorf("month previous window wrong: %v..%v", ps, pe)
+	wantMonthPrevStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	wantMonthPrevEnd := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	if ps != wantMonthPrevStart || pe != wantMonthPrevEnd {
+		t.Errorf("month previous window wrong: %v..%v, want %v..%v", ps, pe, wantMonthPrevStart, wantMonthPrevEnd)
 	}
 
-	cs, _, ps, pe = resolveWindow("year", now)
-	if cs != time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) || ps.Year() != 2025 || pe != cs {
-		t.Errorf("year window wrong: cur=%v prev=%v..%v", cs, ps, pe)
+	cs, ce, ps, pe = resolveWindow("year", now)
+	wantYearStart := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	wantYearPrevStart := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	wantYearPrevEnd := time.Date(2025, 9, 10, 12, 0, 0, 0, time.UTC)
+	if cs != wantYearStart || ce != now || ps != wantYearPrevStart || pe != wantYearPrevEnd {
+		t.Errorf("year window wrong: cur=%v..%v prev=%v..%v", cs, ce, ps, pe)
 	}
 
 	cs, ce, ps, pe = resolveWindow("last30", now)
