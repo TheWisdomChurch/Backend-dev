@@ -20,10 +20,10 @@ func CORS(cfg *config.CORSConfig) gin.HandlerFunc {
 	allowCredentials := cfg.AllowCredentials
 
 	if len(allowedMethods) == 0 {
-		allowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+		allowedMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 	}
 	if len(allowedHeaders) == 0 {
-		allowedHeaders = []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With"}
+		allowedHeaders = []string{"Origin", "Content-Type", "Authorization", "Accept", "X-Requested-With", "X-CSRF-Token", "X-Request-ID", "Idempotency-Key"}
 	}
 
 	if allowCredentials {

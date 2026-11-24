@@ -65,6 +65,27 @@ func setupRouter(
 	auditLogRepo repository.AuditLogRepository,
 ) *gin.Engine {
 	router := gin.New()
+	router.HandleMethodNotAllowed = true
+
+	router.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"code":    "not_found",
+			"message": "Resource not found",
+			"path":    c.Request.URL.Path,
+		})
+	})
+
+	router.NoMethod(func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"status":  "error",
+			"code":    "method_not_allowed",
+			"message": "Method not allowed",
+			"method":  c.Request.Method,
+			"path":    c.Request.URL.Path,
+		})
+	})
+
 	secure := strings.TrimSpace(cfg.App.Environment) == "production"
 
 	router.Use(otelgin.Middleware("wisdomhouse-backend"))
@@ -96,7 +117,9 @@ func setupRouter(
 
 	// Health
 	router.GET("/healthz", healthHandler.Liveness)
+	router.HEAD("/healthz", healthHandler.Liveness)
 	router.GET("/readyz", healthHandler.Readiness)
+	router.HEAD("/readyz", healthHandler.Readiness)
 
 	// Brand assets embedded in the binary (e.g. the logo referenced by email
 	// templates) — public, unauthenticated, since email clients fetch images
@@ -112,6 +135,10 @@ func setupRouter(
 	router.GET("/reports/forms/:slug/export.pdf", formHandler.ExportPublicFormReportPDF)
 
 	api := router.Group("/api/v1")
+	api.GET("/healthz", healthHandler.Liveness)
+	api.HEAD("/healthz", healthHandler.Liveness)
+	api.GET("/readyz", healthHandler.Readiness)
+	api.HEAD("/readyz", healthHandler.Readiness)
 
 	// Public route previews are deliberately isolated behind a stricter,
 	// Redis-backed limit because each request incurs an external provider cost.

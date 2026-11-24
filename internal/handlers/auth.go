@@ -527,16 +527,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				"/pending-approval",
 			)
 			return
-		} else if errors.Is(err, service.ErrUserNotFound) {
-			status = http.StatusNotFound
-		} else if errors.Is(err, service.ErrWrongPassword) {
+		} else if errors.Is(err, service.ErrUserNotFound) || errors.Is(err, service.ErrWrongPassword) {
 			status = http.StatusUnauthorized
 		} else if isAccountDeactivatedError(err) {
 			h.clearAuthCookie(c)
 			status = http.StatusForbidden
 		}
 
-		utils.ErrorResponse(c, status, err.Error())
+		errorMessage := err.Error()
+		if errors.Is(err, service.ErrUserNotFound) || errors.Is(err, service.ErrWrongPassword) {
+			errorMessage = "Invalid email or password"
+		}
+		utils.ErrorResponse(c, status, errorMessage)
 		return
 	}
 
@@ -1251,7 +1253,7 @@ func (h *AuthHandler) ResendLoginOTP(c *gin.Context) {
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, service.ErrUserNotFound) {
-			status = http.StatusNotFound
+			status = http.StatusUnauthorized
 		} else if errors.Is(err, service.ErrAdminPending) {
 			h.clearAuthCookie(c)
 			writeAuthBlockedResponse(c, http.StatusForbidden, "Your admin account is awaiting super-admin approval.", "admin_approval_pending", "/pending-approval")
