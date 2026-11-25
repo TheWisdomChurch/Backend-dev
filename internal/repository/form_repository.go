@@ -3,6 +3,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"wisdomHouse-backend/internal/database"
@@ -32,6 +33,7 @@ type FormRepository interface {
 
 	CountSubmissions(formID string) (int64, error)
 	CreateSubmission(sub *models.FormSubmission) error
+	EnsureNewMemberWorkflow(submissionID string) error
 	// UpsertFormBirthdaySubject records/updates the one birthday-capturing date
 	// field on a submission, keyed by submission ID, so the celebration
 	// automation's daily run can find it (see form_service_target_sync.go).
@@ -317,6 +319,18 @@ func (r *formRepository) CountSubmissions(formID string) (int64, error) {
 
 func (r *formRepository) CreateSubmission(sub *models.FormSubmission) error {
 	return r.db.DB.Create(sub).Error
+}
+
+func (r *formRepository) EnsureNewMemberWorkflow(submissionID string) error {
+	trimmed := strings.TrimSpace(submissionID)
+	if trimmed == "" {
+		return nil
+	}
+	return r.db.DB.Exec(`
+		INSERT INTO new_member_workflows (submission_id, next_action_at)
+		VALUES (?, now() + INTERVAL '1 day')
+		ON CONFLICT (submission_id) DO NOTHING
+	`, trimmed).Error
 }
 
 func (r *formRepository) UpsertFormBirthdaySubject(subject *models.FormBirthdaySubject) error {

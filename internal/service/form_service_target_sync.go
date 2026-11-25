@@ -490,23 +490,47 @@ func buildMemberRequest(values map[string]any) (*models.CreateMemberRequest, err
 			}
 		}
 	}
-
-	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
-	if strings.TrimSpace(first) == "" || strings.TrimSpace(last) == "" || strings.TrimSpace(emailAddr) == "" {
-		return nil, errors.New("missing required member fields")
+	if strings.TrimSpace(first) == "" && strings.TrimSpace(last) == "" {
+		first = "New"
+		last = "Member"
+	} else if strings.TrimSpace(first) == "" {
+		first = last
+	} else if strings.TrimSpace(last) == "" {
+		last = "-"
 	}
 
-	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "phoneNumber")
-	birthday := valueAsString(values, "birthday", "birthDate", "dob")
+	phone := valueAsString(values, "phone", "contactPhone", "contactNumber", "contact_number", "phoneNumber", "phone_number", "whatsapp", "field_12")
 
+	emailAddr := valueAsString(values, "email", "contactEmail", "emailAddress", "email_address")
+	if emailAddr == "" || !emailRe.MatchString(emailAddr) {
+		for _, raw := range values {
+			if s, ok := raw.(string); ok {
+				trimmed := strings.TrimSpace(s)
+				if emailRe.MatchString(trimmed) {
+					emailAddr = trimmed
+					break
+				}
+			}
+		}
+	}
+	if emailAddr == "" {
+		cleanDigits := regexp.MustCompile(`[^0-9]`).ReplaceAllString(phone, "")
+		if cleanDigits != "" {
+			emailAddr = fmt.Sprintf("member.%s@wisdomchurchhq.org", cleanDigits)
+		} else {
+			emailAddr = fmt.Sprintf("member.%d@wisdomchurchhq.org", time.Now().UnixNano())
+		}
+	}
+
+	birthday := valueAsString(values, "birthday", "birthDate", "birth_date", "dob", "field_13")
+
+	isActive := true
 	req := &models.CreateMemberRequest{
 		FirstName: strings.TrimSpace(first),
 		LastName:  strings.TrimSpace(last),
 		Email:     strings.TrimSpace(emailAddr),
+		IsActive:  &isActive,
 	}
-	// Form-created member records remain inactive until reviewed in admin.
-	isActive := false
-	req.IsActive = &isActive
 	if phone != "" {
 		p := strings.TrimSpace(phone)
 		req.Phone = &p
