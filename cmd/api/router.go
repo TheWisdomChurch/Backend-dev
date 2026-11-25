@@ -198,6 +198,7 @@ func setupRouter(
 		Blocklist:    tokenBlocklist,
 	}), authHandler.GetCurrentUser)
 	auth.POST("/token/refresh", authHandler.RotateRefreshToken)
+	auth.POST("/logout", authHandler.Logout)
 	auth.GET("/csrf-token", csrfProtector.Middleware(), authHandler.GetCSRFToken)
 
 	authProtected := auth.Group("")
@@ -207,7 +208,6 @@ func setupRouter(
 	authProtected.DELETE("/account", authHandler.DeleteAccount)
 	authProtected.POST("/clear-data", authHandler.ClearData)
 	authProtected.POST("/refresh", authHandler.RefreshToken)
-	authProtected.POST("/logout", authHandler.Logout)
 	authProtected.GET("/mfa", authHandler.GetMFASecurityProfile)
 	authProtected.POST("/mfa/totp/setup", authHandler.BeginTOTPSetup)
 	authProtected.POST("/mfa/totp/reconfigure", authHandler.ReconfigureTOTP)

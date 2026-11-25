@@ -236,11 +236,15 @@ func (s *formService) Submit(slug string, req *models.SubmitFormRequest) error {
 		return err
 	}
 
+	target := resolveSubmissionTargetForForm(form, settings)
+	if target == "member" {
+		_ = s.repo.EnsureNewMemberWorkflow(sub.ID)
+	}
+
 	if email != nil && strings.TrimSpace(*email) != "" {
 		s.sendResponseEmail(form, settings, cleanValues, name, strings.TrimSpace(*email), regCode, sub.ID)
 	}
 	if err := s.syncSubmissionTarget(form, settings, cleanValues, sub.ID); err != nil {
-		target := resolveSubmissionTargetForForm(form, settings)
 		applog.L().Warn("submission target sync failed",
 			"form_id", strings.TrimSpace(form.ID),
 			"slug", strings.TrimSpace(valueOrEmpty(form.Slug)),
