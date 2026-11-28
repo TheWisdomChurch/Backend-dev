@@ -76,3 +76,35 @@ func TestValidateConfig_RejectsShortAuthSecretKey(t *testing.T) {
 		t.Errorf("error = %q, want it to mention AUTH_SECRET_KEY", err.Error())
 	}
 }
+
+func TestLoadDefaultsMailcowToSubmissionPortAndTLS(t *testing.T) {
+	for _, key := range []string{"MAILCOW_PORT", "SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT", "SMTP_TLS", "APP_SMTP_TLS", "MAIL_TLS", "MAILCOW_TLS"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("ENVIRONMENT", "development")
+	t.Setenv("JWT_SECRET", strings.Repeat("j", 32))
+	t.Setenv("AUTH_SECRET_KEY", strings.Repeat("a", 32))
+	t.Setenv("MAILCOW_HOST", "mail.example.org")
+	t.Setenv("MAILCOW_USER", "mailer@example.org")
+	t.Setenv("MAILCOW_PASS", "test-password")
+	t.Setenv("MAILCOW_FROM", "mailer@example.org")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SMTP.Port != "587" || !cfg.SMTP.TLS {
+		t.Fatalf("Mailcow submission config = port %q TLS %v; want 587/true", cfg.SMTP.Port, cfg.SMTP.TLS)
+	}
+	if cfg.SMTP.PrimaryProvider != "mailcow" {
+		t.Fatalf("primary provider = %q, want mailcow", cfg.SMTP.PrimaryProvider)
+	}
+}
+
+func TestValidateConfigRejectsUnknownEmailProvider(t *testing.T) {
+	cfg := validConfig()
+	cfg.SMTP.PrimaryProvider = "unknown"
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "EMAIL_PRIMARY_PROVIDER") {
+		t.Fatalf("validateConfig() error = %v, want invalid EMAIL_PRIMARY_PROVIDER error", err)
+	}
+}

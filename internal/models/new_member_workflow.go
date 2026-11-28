@@ -17,19 +17,22 @@ const (
 )
 
 type NewMemberWorkflow struct {
-	ID                string     `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	SubmissionID      string     `gorm:"type:uuid;not null;uniqueIndex" json:"submissionId"`
-	Stage             string     `gorm:"size:40;not null" json:"stage"`
-	AssignedOwnerID   *string    `gorm:"type:uuid;index" json:"assignedOwnerId,omitempty"`
-	AssignedOwnerName *string    `gorm:"-" json:"assignedOwnerName,omitempty"`
-	NextActionAt      *time.Time `json:"nextActionAt,omitempty"`
-	EscalationStatus  string     `gorm:"size:30;not null" json:"escalationStatus"`
-	EscalatedAt       *time.Time `json:"escalatedAt,omitempty"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	LastContactedAt   *time.Time `json:"lastContactedAt,omitempty"`
-	LastReminderAt    *time.Time `json:"lastReminderAt,omitempty"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID                  string     `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	SubmissionID        string     `gorm:"type:uuid;not null;uniqueIndex" json:"submissionId"`
+	SubmissionName      *string    `gorm:"->;-:migration;column:submission_name" json:"submissionName,omitempty"`
+	SubmissionEmail     *string    `gorm:"->;-:migration;column:submission_email" json:"submissionEmail,omitempty"`
+	SubmissionFormTitle *string    `gorm:"->;-:migration;column:submission_form_title" json:"submissionFormTitle,omitempty"`
+	Stage               string     `gorm:"size:40;not null" json:"stage"`
+	AssignedOwnerID     *string    `gorm:"type:uuid;index" json:"assignedOwnerId,omitempty"`
+	AssignedOwnerName   *string    `gorm:"-" json:"assignedOwnerName,omitempty"`
+	NextActionAt        *time.Time `json:"nextActionAt,omitempty"`
+	EscalationStatus    string     `gorm:"size:30;not null" json:"escalationStatus"`
+	EscalatedAt         *time.Time `json:"escalatedAt,omitempty"`
+	CompletedAt         *time.Time `json:"completedAt,omitempty"`
+	LastContactedAt     *time.Time `json:"lastContactedAt,omitempty"`
+	LastReminderAt      *time.Time `json:"lastReminderAt,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }
 
 func (NewMemberWorkflow) TableName() string { return "new_member_workflows" }
@@ -61,9 +64,10 @@ type NewMemberWorkflowHistory struct {
 func (NewMemberWorkflowHistory) TableName() string { return "new_member_workflow_history" }
 
 type UpdateNewMemberWorkflowRequest struct {
-	Stage           *string    `json:"stage"`
-	AssignedOwnerID *string    `json:"assignedOwnerId"`
-	NextActionAt    *time.Time `json:"nextActionAt"`
+	Stage             *string    `json:"stage"`
+	AssignedOwnerID   *string    `json:"assignedOwnerId"`
+	NextActionAt      *time.Time `json:"nextActionAt"`
+	ClearNextActionAt bool       `json:"clearNextActionAt"`
 }
 
 type CreateNewMemberContactRequest struct {

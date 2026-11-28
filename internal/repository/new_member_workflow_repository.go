@@ -57,8 +57,14 @@ func (r *newMemberWorkflowRepository) List(ctx context.Context, page, limit int,
 		return nil, 0, err
 	}
 	var rows []models.NewMemberWorkflow
-	err := q.Select("new_member_workflows.*, NULLIF(trim(concat_ws(' ', owners.first_name, owners.last_name)), '') AS assigned_owner_name").
+	err := q.Select(`new_member_workflows.*,
+		NULLIF(trim(concat_ws(' ', owners.first_name, owners.last_name)), '') AS assigned_owner_name,
+		form_submissions.name AS submission_name,
+		form_submissions.email AS submission_email,
+		forms.title AS submission_form_title`).
 		Joins("LEFT JOIN users owners ON owners.id = new_member_workflows.assigned_owner_id").
+		Joins("LEFT JOIN form_submissions ON form_submissions.id = new_member_workflows.submission_id AND form_submissions.deleted_at IS NULL").
+		Joins("LEFT JOIN forms ON forms.id = form_submissions.form_id").
 		Order("CASE WHEN new_member_workflows.next_action_at IS NULL THEN 1 ELSE 0 END, new_member_workflows.next_action_at ASC, new_member_workflows.created_at DESC").
 		Offset((page - 1) * limit).Limit(limit).Scan(&rows).Error
 	return rows, total, err
@@ -67,8 +73,14 @@ func (r *newMemberWorkflowRepository) List(ctx context.Context, page, limit int,
 func (r *newMemberWorkflowRepository) Get(ctx context.Context, id string) (*models.NewMemberWorkflow, error) {
 	var row models.NewMemberWorkflow
 	if err := r.db.WithContext(ctx).Model(&models.NewMemberWorkflow{}).
-		Select("new_member_workflows.*, NULLIF(trim(concat_ws(' ', owners.first_name, owners.last_name)), '') AS assigned_owner_name").
+		Select(`new_member_workflows.*,
+		NULLIF(trim(concat_ws(' ', owners.first_name, owners.last_name)), '') AS assigned_owner_name,
+		form_submissions.name AS submission_name,
+		form_submissions.email AS submission_email,
+		forms.title AS submission_form_title`).
 		Joins("LEFT JOIN users owners ON owners.id = new_member_workflows.assigned_owner_id").
+		Joins("LEFT JOIN form_submissions ON form_submissions.id = new_member_workflows.submission_id AND form_submissions.deleted_at IS NULL").
+		Joins("LEFT JOIN forms ON forms.id = form_submissions.form_id").
 		Where("new_member_workflows.id = ?", id).Scan(&row).Error; err != nil {
 		return nil, err
 	}

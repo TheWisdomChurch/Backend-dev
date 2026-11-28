@@ -106,8 +106,8 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 	if !validation.BindJSON(c, &req) {
 		return
 	}
-	if !isSuperAdmin(c) && normalizeRole(req.Role) == "super_admin" {
-		utils.ErrorResponse(c, http.StatusForbidden, "Only super admin can create super admin users")
+	if normalizeRole(req.Role) == "super_admin" {
+		utils.ErrorResponse(c, http.StatusForbidden, "Super-admin accounts must be provisioned through a trusted server-side process")
 		return
 	}
 
@@ -163,6 +163,10 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 	actorSuper := isSuperAdmin(c)
+	if !actorSuper && (req.AdminApproved != nil || req.EmailConfirmed != nil) {
+		utils.ErrorResponse(c, http.StatusForbidden, "Only a super admin can change account approval or email verification")
+		return
+	}
 	if !actorSuper && normalizeRole(target.Role) == "super_admin" {
 		utils.ErrorResponse(c, http.StatusForbidden, "Insufficient permissions")
 		return
@@ -185,12 +189,8 @@ func (h *AdminHandler) UpdateUser(c *gin.Context) {
 	addString("email", req.Email)
 	addString("password", req.Password)
 	if req.Role != nil {
-		nextRole := normalizeRole(*req.Role)
-		if !actorSuper && nextRole == "super_admin" {
-			utils.ErrorResponse(c, http.StatusForbidden, "Only super admin can assign super admin role")
-			return
-		}
-		addString("role", req.Role)
+		utils.ErrorResponse(c, http.StatusForbidden, "Account roles cannot be changed through profile updates")
+		return
 	}
 	if req.IsActive != nil {
 		if currentExists && currentUserID == id && !*req.IsActive {

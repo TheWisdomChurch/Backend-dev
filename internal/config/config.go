@@ -110,12 +110,13 @@ type RateLimitConfig struct {
 /* ========================================================================== */
 
 type SMTPConfig struct {
-	Host     string `json:"host" env:"SMTP_HOST"`
-	Port     string `json:"port" env:"SMTP_PORT"`
-	User     string `json:"user" env:"SMTP_USER"`
-	Password string `json:"-" env:"SMTP_PASS"`
-	From     string `json:"from" env:"SMTP_FROM"`
-	TLS      bool   `json:"tls" env:"SMTP_TLS"`
+	Host            string `json:"host" env:"SMTP_HOST"`
+	Port            string `json:"port" env:"SMTP_PORT"`
+	User            string `json:"user" env:"SMTP_USER"`
+	Password        string `json:"-" env:"SMTP_PASS"`
+	From            string `json:"from" env:"SMTP_FROM"`
+	TLS             bool   `json:"tls" env:"SMTP_TLS"`
+	PrimaryProvider string `json:"primary_provider" env:"EMAIL_PRIMARY_PROVIDER"`
 }
 
 /* ========================================================================== */
@@ -204,24 +205,30 @@ func Load() (*Config, error) {
 	env := strings.ToLower(strings.TrimSpace(getEnv("ENVIRONMENT", "development")))
 
 	// -------------------------------------------------------------------------
-	// SMTP: support legacy SMTP_*, APP_SMTP_* and common MAIL_* aliases.
+	// SMTP / Mailcow: prefer explicit MAILCOW_*, then SMTP_*, APP_SMTP_*, MAIL_*.
 	// -------------------------------------------------------------------------
-	smtpHost := firstNonEmptyEnv("SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
+	mailcowHost := strings.TrimSpace(os.Getenv("MAILCOW_HOST"))
+	smtpHost := firstNonEmptyEnv("MAILCOW_HOST", "SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
 
-	smtpPort := firstNonEmptyEnv("SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
+	smtpPort := firstNonEmptyEnv("MAILCOW_PORT", "SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
 	if smtpPort == "" {
-		// Default to 25 (local MTA). You can override with APP_SMTP_PORT / SMTP_PORT.
-		smtpPort = "25"
+		if mailcowHost != "" {
+			// Mailcow submission port defaults to 587 (STARTTLS).
+			smtpPort = "587"
+		} else {
+			// Default to 25 (local MTA). You can override with APP_SMTP_PORT / SMTP_PORT.
+			smtpPort = "25"
+		}
 	}
 
-	smtpUser := firstNonEmptyEnv("SMTP_USER", "APP_SMTP_USER", "SMTP_USERNAME", "MAIL_USERNAME")
+	smtpUser := firstNonEmptyEnv("MAILCOW_USER", "MAILCOW_USERNAME", "SMTP_USER", "APP_SMTP_USER", "APP_SMTP_USERNAME", "SMTP_USERNAME", "MAIL_USERNAME")
 
-	smtpPass := firstNonEmptyEnv("SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
+	smtpPass := firstNonEmptyEnv("MAILCOW_PASS", "MAILCOW_PASSWORD", "SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
 
-	smtpFrom := firstNonEmptyEnv("SMTP_FROM", "MAIL_FROM")
+	smtpFrom := firstNonEmptyEnv("MAILCOW_FROM", "SMTP_FROM", "MAIL_FROM")
 	if smtpFrom == "" {
-		fromEmail := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
-		fromName := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
+		fromEmail := strings.TrimSpace(firstNonEmptyEnv("MAILCOW_FROM_EMAIL", "APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
+		fromName := strings.TrimSpace(firstNonEmptyEnv("MAILCOW_FROM_NAME", "APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
 		switch {
 		case fromEmail != "" && fromName != "":
 			smtpFrom = fmt.Sprintf("%s <%s>", fromName, fromEmail)
@@ -233,13 +240,19 @@ func Load() (*Config, error) {
 		smtpFrom = strings.TrimSpace(getEnv("APP_SUPPORT_EMAIL", ""))
 	}
 
-	// TLS: prefer explicit SMTP_TLS; then APP_SMTP_TLS; then MAIL_TLS.
-	smtpTLS := getEnvAsBool("SMTP_TLS", false)
-	if os.Getenv("SMTP_TLS") == "" {
-		smtpTLS = getEnvAsBool("APP_SMTP_TLS", smtpTLS)
-		if os.Getenv("APP_SMTP_TLS") == "" {
-			smtpTLS = getEnvAsBool("MAIL_TLS", smtpTLS)
+	// TLS: prefer explicit MAILCOW_TLS, then SMTP_TLS, APP_SMTP_TLS, MAIL_TLS.
+	// When none is explicitly set, default to true for submission/SMTPS ports (587, 465).
+	defaultTLS := smtpPort == "587" || smtpPort == "465"
+	smtpTLS := defaultTLS
+	if raw := firstNonEmptyEnv("MAILCOW_TLS", "SMTP_TLS", "APP_SMTP_TLS", "MAIL_TLS"); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			smtpTLS = parsed
 		}
+	}
+
+	emailPrimaryProvider := strings.ToLower(strings.TrimSpace(firstNonEmptyEnv("EMAIL_PRIMARY_PROVIDER", "MAIL_PRIMARY_PROVIDER")))
+	if emailPrimaryProvider == "" {
+		emailPrimaryProvider = "mailcow"
 	}
 
 	serverPort := strings.TrimSpace(getEnv("SERVER_PORT", ""))
@@ -317,12 +330,13 @@ func Load() (*Config, error) {
 			},
 		},
 		SMTP: SMTPConfig{
-			Host:     smtpHost,
-			Port:     smtpPort,
-			User:     smtpUser,
-			Password: smtpPass,
-			From:     smtpFrom,
-			TLS:      smtpTLS,
+			Host:            smtpHost,
+			Port:            smtpPort,
+			User:            smtpUser,
+			Password:        smtpPass,
+			From:            smtpFrom,
+			TLS:             smtpTLS,
+			PrimaryProvider: emailPrimaryProvider,
 		},
 		CORS: CORSConfig{
 			AllowedOrigins:   splitEnv("CORS_ALLOW_ORIGIN", []string{"http://localhost:3000", "http://localhost:3001"}),
@@ -476,6 +490,10 @@ func validateConfig(cfg *Config) error {
 	}
 	if strings.TrimSpace(cfg.Auth.MFAIssuer) == "" {
 		return fmt.Errorf("AUTH_MFA_ISSUER is required")
+	}
+	provider := strings.ToLower(strings.TrimSpace(cfg.SMTP.PrimaryProvider))
+	if provider != "" && provider != "mailcow" && provider != "smtp" && provider != "brevo" {
+		return fmt.Errorf("EMAIL_PRIMARY_PROVIDER must be mailcow or brevo")
 	}
 	if cfg.Navigation.Enabled {
 		if cfg.Navigation.GoogleRoutesAPIKey == "" {

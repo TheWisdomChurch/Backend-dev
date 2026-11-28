@@ -131,7 +131,19 @@ func (s *newMemberWorkflowService) Update(ctx context.Context, id, actorID strin
 		}
 		event = "owner_assigned"
 	}
-	if req.NextActionAt != nil {
+	targetStage := current.Stage
+	if req.Stage != nil {
+		targetStage = strings.TrimSpace(*req.Stage)
+	}
+	if targetStage == models.NewMemberStageIntegrated || targetStage == models.NewMemberStageClosed {
+		updates["next_action_at"] = nil
+		updates["escalation_status"] = "resolved"
+	} else if req.ClearNextActionAt {
+		updates["next_action_at"] = nil
+		updates["escalation_status"] = "none"
+		updates["escalated_at"] = nil
+		event = "next_action_cleared"
+	} else if req.NextActionAt != nil {
 		updates["next_action_at"] = req.NextActionAt.UTC()
 		updates["escalation_status"] = "none"
 		updates["escalated_at"] = nil

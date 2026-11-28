@@ -183,7 +183,13 @@ func (s *BrevoSender) sendHTMLTextContext(ctx context.Context, to, subject, html
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("brevo send failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		providerErr := fmt.Errorf("brevo send failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		// A client error is a definitive rejection. A 5xx may be returned after
+		// the provider accepted the message, so do not fail over on it.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return MarkFallbackEligible(providerErr)
+		}
+		return providerErr
 	}
 
 	return nil

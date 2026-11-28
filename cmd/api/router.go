@@ -404,8 +404,8 @@ func setupRouter(
 	admin.GET("/audit", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 	admin.GET("/activity", middleware.RequirePermission(middleware.PermissionAdminRead), auditLogsHandler)
 
-	admin.GET("/users", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.ListUsers)
-	admin.GET("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.GetUserByID)
+	admin.GET("/users", middleware.RequirePermission(middleware.PermissionUsersRead), adminHandler.ListUsers)
+	admin.GET("/users/:id", middleware.RequirePermission(middleware.PermissionUsersRead), adminHandler.GetUserByID)
 	admin.POST("/users", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.CreateUser)
 	admin.PATCH("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.UpdateUser)
 	admin.DELETE("/users/:id", middleware.RequirePermission(middleware.PermissionUsersManage), adminHandler.DeleteUser)
