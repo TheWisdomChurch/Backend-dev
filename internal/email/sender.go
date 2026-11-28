@@ -46,33 +46,37 @@ type MessageOptions struct {
 func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (*Sender, error) {
 	h := strings.TrimSpace(host)
 	if h == "" {
-		h = firstNonEmptyEnv("SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
+		h = firstNonEmptyEnv("MAILCOW_HOST", "SMTP_HOST", "APP_SMTP_HOST", "MAIL_HOST")
 	}
 
 	p := strings.TrimSpace(port)
 	if p == "" {
-		p = firstNonEmptyEnv("SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
+		p = firstNonEmptyEnv("MAILCOW_PORT", "SMTP_PORT", "APP_SMTP_PORT", "MAIL_PORT")
 	}
 	if p == "" {
-		p = "25"
+		if strings.TrimSpace(os.Getenv("MAILCOW_HOST")) != "" {
+			p = "587"
+		} else {
+			p = "25"
+		}
 	}
 
 	u := strings.TrimSpace(user)
 	if u == "" {
-		u = firstNonEmptyEnv("SMTP_USER", "APP_SMTP_USER", "SMTP_USERNAME", "MAIL_USERNAME")
+		u = firstNonEmptyEnv("MAILCOW_USER", "MAILCOW_USERNAME", "SMTP_USER", "APP_SMTP_USER", "APP_SMTP_USERNAME", "SMTP_USERNAME", "MAIL_USERNAME")
 	}
 
 	pw := strings.TrimSpace(pass)
 	if pw == "" {
-		pw = firstNonEmptyEnv("SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
+		pw = firstNonEmptyEnv("MAILCOW_PASS", "MAILCOW_PASSWORD", "SMTP_PASS", "APP_SMTP_PASS", "SMTP_PASSWORD", "MAIL_PASSWORD")
 	}
 
 	f := strings.TrimSpace(from)
 	if f == "" {
-		f = strings.TrimSpace(firstNonEmptyEnv("SMTP_FROM", "MAIL_FROM"))
+		f = strings.TrimSpace(firstNonEmptyEnv("MAILCOW_FROM", "SMTP_FROM", "MAIL_FROM"))
 		if f == "" {
-			fromEmail := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
-			fromName := strings.TrimSpace(firstNonEmptyEnv("APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
+			fromEmail := strings.TrimSpace(firstNonEmptyEnv("MAILCOW_FROM_EMAIL", "APP_SMTP_FROM_EMAIL", "SMTP_FROM_EMAIL"))
+			fromName := strings.TrimSpace(firstNonEmptyEnv("MAILCOW_FROM_NAME", "APP_SMTP_FROM_NAME", "SMTP_FROM_NAME", "MAIL_FROM_NAME"))
 			switch {
 			case fromEmail != "" && fromName != "":
 				f = fmt.Sprintf("%s <%s>", fromName, fromEmail)
@@ -86,18 +90,12 @@ func NewSender(redisURL, host, port, user, pass, from string, requireTLS bool) (
 	}
 
 	// TLS override from env if set
-	if raw := strings.TrimSpace(os.Getenv("SMTP_TLS")); raw != "" {
+	if raw := firstNonEmptyEnv("MAILCOW_TLS", "SMTP_TLS", "APP_SMTP_TLS", "MAIL_TLS"); raw != "" {
 		if parsed, err := strconv.ParseBool(raw); err == nil {
 			requireTLS = parsed
 		}
-	} else if raw := strings.TrimSpace(os.Getenv("APP_SMTP_TLS")); raw != "" {
-		if parsed, err := strconv.ParseBool(raw); err == nil {
-			requireTLS = parsed
-		}
-	} else if raw := strings.TrimSpace(os.Getenv("MAIL_TLS")); raw != "" {
-		if parsed, err := strconv.ParseBool(raw); err == nil {
-			requireTLS = parsed
-		}
+	} else if p == "587" || p == "465" {
+		requireTLS = true
 	}
 
 	if h == "" || p == "" {
@@ -563,9 +561,26 @@ func (s *Sender) sendInternal(to, subject, body string, mutate func(msg *gomail.
 		return fmt.Errorf("no email body provided")
 	}
 
-	if err := client.DialAndSend(msg); err != nil {
-		return fmt.Errorf("smtp send failed: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+	if err := client.DialWithContext(ctx); err != nil {
+		// No message was submitted; switching providers cannot duplicate it.
+		return MarkFallbackEligible(fmt.Errorf("smtp connection failed: %w", err))
 	}
+	if err := client.Send(msg); err != nil {
+		wrapped := fmt.Errorf("smtp send failed: %w", err)
+		var sendErr *gomail.SendError
+		if errors.As(err, &sendErr) && sendErr.ErrorCode() >= 400 && sendErr.ErrorCode() < 600 {
+			switch sendErr.Reason {
+			case gomail.ErrConnCheck, gomail.ErrSMTPMailFrom, gomail.ErrSMTPRcptTo, gomail.ErrSMTPData, gomail.ErrSMTPDataClose:
+				return MarkFallbackEligible(wrapped)
+			}
+		}
+		return wrapped
+	}
+	// SMTP has already confirmed acceptance. A later QUIT/close error must not
+	// turn an accepted send into a retry that could duplicate delivery.
+	_ = client.Close()
 	return nil
 }
 

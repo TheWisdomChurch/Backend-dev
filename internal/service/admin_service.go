@@ -96,6 +96,9 @@ func (s *adminServiceImpl) CreateUser(firstName, lastName, emailAddr, password, 
 	if err != nil {
 		return nil, err
 	}
+	if role != "admin" {
+		return nil, errors.New("super-admin accounts must be provisioned through a trusted server-side process")
+	}
 
 	firstName = strings.TrimSpace(firstName)
 	lastName = strings.TrimSpace(lastName)
@@ -326,6 +329,9 @@ func (s *adminServiceImpl) UpdateUser(id string, data map[string]interface{}) (i
 		role, err := normalizeRole(v)
 		if err != nil {
 			return nil, err
+		}
+		if role != oldRole {
+			return nil, errors.New("account role changes must be provisioned through a trusted server-side process")
 		}
 		user.Role = role
 	}

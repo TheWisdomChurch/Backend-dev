@@ -13,6 +13,7 @@ const (
 	PermissionAdminAccess         Permission = "admin:access"
 	PermissionAdminRead           Permission = "admin:read"
 	PermissionAdminWrite          Permission = "admin:write"
+	PermissionUsersRead           Permission = "admin:users:read"
 	PermissionUsersManage         Permission = "admin:users:manage"
 	PermissionSecurityRead        Permission = "admin:security:read"
 	PermissionAnalyticsRead       Permission = "admin:analytics:read"
@@ -43,7 +44,7 @@ var rolePermissions = map[string]map[Permission]struct{}{
 		PermissionAdminAccess:         {},
 		PermissionAdminRead:           {},
 		PermissionAdminWrite:          {},
-		PermissionUsersManage:         {},
+		PermissionUsersRead:           {},
 		PermissionSecurityRead:        {},
 		PermissionAnalyticsRead:       {},
 		PermissionContentManage:       {},
